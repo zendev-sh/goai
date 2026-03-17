@@ -2,6 +2,7 @@ node_modules/
 docs/.vitepress/cache/
 docs/.vitepress/dist/
 coverage.out
+cov.html
 .DS_Store
 
 # Local hook installs (source hooks/ is tracked, .git/hooks/ is auto-ignored by git)
