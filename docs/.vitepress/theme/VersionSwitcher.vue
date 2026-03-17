@@ -45,7 +45,7 @@ function navigate(tag: string) {
 </script>
 
 <template>
-  <div v-if="versions.length > 1" class="version-switcher">
+  <div v-if="versions.length > 0" class="version-switcher">
     <select :value="current" @change="navigate(($event.target as HTMLSelectElement).value)">
       <option value="latest">latest{{ latestTag ? ` (${latestTag})` : '' }}</option>
       <option v-for="v in versions" :key="v.tag" :value="v.tag">{{ v.tag }}</option>
