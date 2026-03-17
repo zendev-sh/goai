@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="https://goai.sh">Website</a> &middot;
-  <a href="https://goai.sh/getting-started/">Docs</a> &middot;
+  <a href="https://goai.sh/getting-started/installation">Docs</a> &middot;
   <a href="https://goai.sh/providers/">Providers</a> &middot;
   <a href="https://goai.sh/examples">Examples</a>
 </p>
