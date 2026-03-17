@@ -28,6 +28,7 @@ jobs:
         run: npm run build
         env:
           VITEPRESS_BASE: /${{ steps.version.outputs.tag }}/
+          VITE_GOAI_THEME: dev
 
       - name: Deploy versioned docs
         uses: cloudflare/wrangler-action@v3

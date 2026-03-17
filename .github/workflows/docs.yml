@@ -26,6 +26,8 @@ jobs:
 
       - name: Build docs
         run: npm run build
+        env:
+          VITE_GOAI_THEME: dev
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
