@@ -28,10 +28,16 @@ jobs:
       - name: Test
         run: go test -race -coverprofile=coverage.out ./...
 
-      - name: Coverage
+      - name: Coverage Summary
         run: |
           total=$(go tool cover -func=coverage.out | grep ^total | awk '{print $3}')
           echo "Coverage: $total"
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.out
+          fail_ci_if_error: true
 
   lint:
     runs-on: ubuntu-latest
