@@ -1,3 +1,8 @@
+---
+title: Structured Output
+description: "Generate type-safe structured responses using Go generics. Auto-generate JSON Schema from structs with GenerateObject and StreamObject."
+---
+
 # Structured Output
 
 GoAI can generate type-safe structured responses using Go generics. Define a Go struct, and GoAI auto-generates the JSON Schema, sends it to the model, and parses the response back into your type.

@@ -1,3 +1,8 @@
+---
+title: Google Gemini Provider
+description: "Use Google Gemini models in Go with GoAI. Supports chat, embeddings, image generation, Google Search grounding, and code execution tools."
+---
+
 # Google
 
 Google Gemini provider for GoAI - Gemini models via the Google AI REST API.

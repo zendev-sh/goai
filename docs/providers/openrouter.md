@@ -1,3 +1,8 @@
+---
+title: OpenRouter Provider
+description: "Access models from multiple AI providers through OpenRouter's unified gateway in Go with GoAI. One API key for OpenAI, Anthropic, Google, and more."
+---
+
 # OpenRouter
 
 OpenRouter multi-provider routing gateway using the OpenAI-compatible Chat Completions API. Access models from multiple providers through a single API key.

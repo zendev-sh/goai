@@ -1,3 +1,8 @@
+---
+title: Mistral Provider
+description: "Use Mistral AI models in Go with GoAI. Supports Mistral Large, Codestral, and Magistral via the OpenAI-compatible Chat Completions API."
+---
+
 # Mistral
 
 Mistral AI provider using the OpenAI-compatible Chat Completions API.

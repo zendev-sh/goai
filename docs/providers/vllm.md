@@ -1,3 +1,8 @@
+---
+title: vLLM Provider
+description: "Connect to self-hosted vLLM inference servers with GoAI. Supports chat and embeddings via the OpenAI-compatible API with optional auth."
+---
+
 # vLLM
 
 vLLM provider for local or self-hosted model inference. vLLM exposes an OpenAI-compatible API and authentication is optional.

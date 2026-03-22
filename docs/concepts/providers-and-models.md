@@ -1,3 +1,8 @@
+---
+title: Providers and Models
+description: "Understand GoAI's provider architecture, model interfaces, capabilities system, and the full list of 20+ supported LLM providers."
+---
+
 # Providers and Models
 
 A **provider** is an AI service (OpenAI, Anthropic, Google, etc.). A **model** is a specific model offered by that provider (gpt-4o, claude-sonnet-4-20250514, gemini-2.0-flash).

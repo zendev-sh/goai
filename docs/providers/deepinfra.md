@@ -1,3 +1,8 @@
+---
+title: DeepInfra Provider
+description: "Use DeepInfra serverless inference in Go with GoAI. Deploy and run Llama, Mixtral, and Qwen models via the OpenAI-compatible API."
+---
+
 # DeepInfra
 
 DeepInfra inference provider using the OpenAI-compatible Chat Completions API.

@@ -1,50 +1,57 @@
+---
+title: Supported Providers
+description: "GoAI SDK supports 20+ LLM providers: OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM and more."
+---
+
 # Providers
 
-GoAI ships 20 providers organized by tier.
+GoAI SDK supports 20+ LLM providers with a single unified API. All providers auto-resolve credentials from environment variables. No explicit API key configuration needed for standard deployments.
+
+All 7 core functions — `GenerateText`, `StreamText`, `GenerateObject[T]`, `StreamObject[T]`, `Embed`, `EmbedMany`, and `GenerateImage` — work identically across all providers.
 
 ## Tier 1
 
 Dedicated implementations with extended API support.
 
-| Provider | API | Features |
-|----------|-----|----------|
-| [OpenAI](openai.md) | Chat Completions + Responses API | Embedding, Image, 4 provider tools |
-| [Anthropic](anthropic.md) | Messages API | 10 provider tools, thinking, cache control |
-| [Google](google.md) | Gemini REST API | Embedding, Image, 3 provider tools, thinking |
-| [Bedrock](bedrock.md) | AWS Converse API | SigV4, EventStream, multi-vendor |
-| [Azure](azure.md) | Multi-endpoint routing | OpenAI + Claude + AI Services, Image |
-| [Vertex AI](vertex.md) | Vertex AI + Gemini fallback | Embedding, Image, ADC auth |
+| Provider | Chat | Embed | Image | Provider Tools | Auth Env Var |
+|----------|------|-------|-------|---------------|--------------|
+| [OpenAI](openai.md) | ✅ `gpt-4o`, `o3` | ✅ `text-embedding-3-*` | ✅ `gpt-image-1` | 4 tools | `OPENAI_API_KEY` |
+| [Anthropic](anthropic.md) | ✅ `claude-*` | — | — | 10 tools | `ANTHROPIC_API_KEY` |
+| [Google](google.md) | ✅ `gemini-*` | ✅ `text-embedding-004` | ✅ `imagen-*` | 3 tools | `GOOGLE_API_KEY` |
+| [Bedrock](bedrock.md) | ✅ `anthropic.*`, `meta.*` | — | — | — | `AWS_ACCESS_KEY_ID` |
+| [Azure](azure.md) | ✅ `gpt-4o`, `claude-*` | ✅ | ✅ | — | `AZURE_OPENAI_API_KEY` |
+| [Vertex AI](vertex.md) | ✅ `gemini-*` | ✅ | ✅ | — | ADC (Application Default Credentials) |
 
 ## Tier 2
 
-| Provider | API | Features |
-|----------|-----|----------|
-| [Cohere](cohere.md) | Native Chat v2 + Embed API | Embedding, citations, reasoning |
-| [Mistral](mistral.md) | OpenAI-compatible | |
-| [xAI (Grok)](xai.md) | OpenAI-compatible | 2 provider tools (pending Responses API) |
-| [Groq](groq.md) | OpenAI-compatible | BrowserSearch tool |
-| [DeepSeek](deepseek.md) | OpenAI-compatible | Reasoning (R1) |
+| Provider | Chat | Embed | Image | Provider Tools | Auth Env Var |
+|----------|------|-------|-------|---------------|--------------|
+| [Cohere](cohere.md) | ✅ `command-r-*` | ✅ `embed-*` | — | — | `COHERE_API_KEY` |
+| [Mistral](mistral.md) | ✅ `mistral-large`, `magistral-*` | — | — | — | `MISTRAL_API_KEY` |
+| [xAI (Grok)](xai.md) | ✅ `grok-*` | — | — | 2 tools | `XAI_API_KEY` |
+| [Groq](groq.md) | ✅ `llama-*`, `mixtral-*` | — | — | 1 tool | `GROQ_API_KEY` |
+| [DeepSeek](deepseek.md) | ✅ `deepseek-chat`, `deepseek-reasoner` | — | — | — | `DEEPSEEK_API_KEY` |
 
 ## Tier 3
 
 All use the shared `internal/openaicompat` codec.
 
-| Provider | Endpoint | Special Features |
-|----------|----------|-----------------|
-| [Fireworks](fireworks.md) | `api.fireworks.ai` | |
-| [Together](together.md) | `api.together.xyz` | |
-| [DeepInfra](deepinfra.md) | `api.deepinfra.com` | |
-| [OpenRouter](openrouter.md) | `openrouter.ai` | Multi-provider routing |
-| [Perplexity](perplexity.md) | `api.perplexity.ai` | Search-augmented, citations |
-| [Cerebras](cerebras.md) | `api.cerebras.ai` | |
+| Provider | Endpoint | Auth Env Var |
+|----------|----------|--------------|
+| [Fireworks](fireworks.md) | `api.fireworks.ai` | `FIREWORKS_API_KEY` |
+| [Together](together.md) | `api.together.xyz` | `TOGETHER_AI_API_KEY` |
+| [DeepInfra](deepinfra.md) | `api.deepinfra.com` | `DEEPINFRA_API_KEY` |
+| [OpenRouter](openrouter.md) | `openrouter.ai` | `OPENROUTER_API_KEY` |
+| [Perplexity](perplexity.md) | `api.perplexity.ai` | `PERPLEXITY_API_KEY` |
+| [Cerebras](cerebras.md) | `api.cerebras.ai` | `CEREBRAS_API_KEY` |
 
 ## Local / Custom
 
-| Provider | Default Endpoint | Features |
-|----------|-----------------|----------|
-| [Ollama](ollama.md) | `localhost:11434` | Embedding, no auth required |
-| [vLLM](vllm.md) | `localhost:8000` | Embedding, optional auth |
-| [Generic Compatible](compat.md) | (required) | Any OpenAI-compatible endpoint |
+| Provider | Default Endpoint | Auth | Features |
+|----------|-----------------|------|----------|
+| [Ollama](ollama.md) | `localhost:11434` | None required | Embedding support |
+| [vLLM](vllm.md) | `localhost:8000` | Optional | Embedding support |
+| [Generic Compatible](compat.md) | (required) | Configurable | Any OpenAI-compatible endpoint |
 
 ## Common Options
 

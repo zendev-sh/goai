@@ -1,3 +1,8 @@
+---
+title: Tool Calling
+description: "Define custom tools for LLM function calling in Go. Configure auto tool loops, tool choice, step callbacks, and multi-step agent workflows."
+---
+
 # Tools
 
 Tools let the model call functions defined in your code. The model decides when to use a tool based on the conversation, generates structured input, and GoAI executes the function and feeds the result back.

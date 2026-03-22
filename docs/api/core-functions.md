@@ -1,3 +1,8 @@
+---
+title: Core Functions
+description: "API reference for GoAI's core functions including GenerateText, StreamText, GenerateObject, StreamObject, Embed, EmbedMany, and GenerateImage."
+---
+
 # Core Functions
 
 This page documents every public function in the `goai` package.

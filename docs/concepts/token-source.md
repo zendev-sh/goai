@@ -1,3 +1,8 @@
+---
+title: TokenSource
+description: "Manage LLM authentication with GoAI's TokenSource interface. Support static API keys, OAuth tokens, Azure Managed Identity, and GCP credentials."
+---
+
 # TokenSource
 
 Most providers authenticate with a static API key. But some environments use expiring tokens: Azure Managed Identity, Google service accounts, OAuth flows. `TokenSource` abstracts over both patterns so provider code never needs to know the difference.

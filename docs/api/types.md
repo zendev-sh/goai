@@ -1,3 +1,8 @@
+---
+title: Types
+description: "Complete type reference for GoAI and provider packages. Covers TextResult, Message, Part, StreamChunk, Usage, ToolCall, and all public types."
+---
+
 # Types
 
 This page documents all public types in the `goai` and `goai/provider` packages.

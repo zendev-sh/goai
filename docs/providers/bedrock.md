@@ -1,3 +1,8 @@
+---
+title: AWS Bedrock Provider
+description: "Access 60+ models from 15 vendors on AWS Bedrock with GoAI. Pure Go SigV4 signing, EventStream streaming, and cross-region inference support."
+---
+
 # Bedrock
 
 AWS Bedrock provider for GoAI - multi-model access via the native Converse API with SigV4 signing. No AWS SDK dependency.

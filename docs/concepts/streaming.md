@@ -1,3 +1,8 @@
+---
+title: Streaming
+description: "Stream LLM responses in real time with GoAI's TextStream API. Choose from text-only, full chunk, or blocking consumption modes."
+---
+
 # Streaming
 
 `StreamText` returns a `*TextStream` that provides three ways to consume the response. Choose one based on what level of detail you need.

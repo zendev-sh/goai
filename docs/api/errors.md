@@ -1,3 +1,8 @@
+---
+title: Errors
+description: "API reference for GoAI error types. Covers APIError, ContextOverflowError, ParseHTTPError, ParseStreamError, and error handling patterns."
+---
+
 # Errors
 
 GoAI defines typed error values for API failures. Use `errors.As` to inspect error details and decide how to handle them.

@@ -1,3 +1,8 @@
+---
+title: Cohere Provider
+description: "Use Cohere Command and Embed models in Go with GoAI. Native Chat v2 API integration with reasoning, citations, and embedding support."
+---
+
 # Cohere
 
 Cohere provider using the native Chat v2 and Embed APIs. This is not an OpenAI-compatible provider - it uses Cohere's own wire format.

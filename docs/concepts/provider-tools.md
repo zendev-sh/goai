@@ -1,3 +1,8 @@
+---
+title: Provider-Defined Tools
+description: "Use built-in server-side tools from OpenAI, Anthropic, Google, xAI, and Groq including web search, code execution, and computer use."
+---
+
 # Provider-Defined Tools
 
 Provider-defined tools are built-in capabilities that execute server-side at the provider. Unlike regular tools where you supply an `Execute` function, provider tools are handled entirely by the provider's API. The model decides when to use them, and the provider executes them without any round-trip to your code.

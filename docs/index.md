@@ -1,5 +1,8 @@
 ---
 layout: home
+title: GoAI SDK — Go SDK for AI Applications. One API, 20+ LLM Providers.
+titleTemplate: false
+description: "Open-source Go SDK for AI applications. One unified API for OpenAI, Anthropic, Google Gemini, AWS Bedrock, and 20+ LLM providers. Zero dependencies."
 
 hero:
   name: GoAI
@@ -16,3 +19,63 @@ hero:
       text: GitHub
       link: https://github.com/zendev-sh/goai
 ---
+
+<div class="vp-doc" style="max-width: 688px; margin: 0 auto; padding: 2rem 1.5rem;">
+
+## What is GoAI SDK?
+
+GoAI SDK is an open-source Go library for building AI applications. It provides one unified API across 20+ LLM providers — OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM, and more.
+
+Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomatically for Go with generics, interfaces, and channels.
+
+## Core Features
+
+- **GenerateText** — non-streaming text generation across all providers
+- **StreamText** — real-time streaming via Go channels
+- **GenerateObject[T]** — type-safe structured output using Go generics
+- **StreamObject[T]** — partial object streaming with typed results
+- **Embed / EmbedMany** — text embeddings with auto-chunking
+- **GenerateImage** — image generation (OpenAI, Google, Azure)
+- **Tool Calling** — custom tools with auto tool loops (`MaxSteps`)
+- **20 Provider-Defined Tools** — web search, code execution, computer use, file search
+- **Prompt Caching** — automatic cache control for Anthropic and OpenAI
+
+## Why GoAI?
+
+- **One API, 20+ providers** — switch providers by changing one line of code
+- **Zero external dependencies** — stdlib only (except `golang.org/x/oauth2` for Vertex AI)
+- **Go-native design** — generics for type safety, channels for streaming, interfaces for extensibility
+- **24x faster cold start** than Vercel AI SDK (569μs vs 13.9ms)
+- **3x less memory** per request (220KB vs 676KB)
+
+## Quick Start
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/zendev-sh/goai"
+    "github.com/zendev-sh/goai/provider/openai"
+)
+
+func main() {
+    result, _ := goai.GenerateText(context.Background(),
+        openai.Chat("gpt-4o"),
+        goai.WithPrompt("Explain Go interfaces in one sentence."),
+    )
+    fmt.Println(result.Text)
+}
+```
+
+## Supported Providers
+
+OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Vertex AI, Cohere, Mistral, xAI (Grok), Groq, DeepSeek, Fireworks, Together AI, DeepInfra, OpenRouter, Perplexity, Cerebras, Ollama, vLLM, and any OpenAI-compatible endpoint.
+
+[View all providers →](/providers/)
+
+[Compare with other Go AI libraries →](/compare)
+
+</div>

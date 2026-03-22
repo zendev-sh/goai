@@ -1,3 +1,8 @@
+---
+title: Quick Start
+description: "Get started with GoAI in minutes. Generate and stream text with OpenAI, Anthropic, Google, and 20+ LLM providers using a unified Go API."
+---
+
 # Quick Start
 
 ## Generate Text

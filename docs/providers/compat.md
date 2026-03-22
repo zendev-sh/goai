@@ -1,3 +1,8 @@
+---
+title: Generic OpenAI-Compatible Provider
+description: "Connect to any OpenAI-compatible API with GoAI's generic compat provider. Works with LiteLLM, LocalAI, and custom LLM deployments."
+---
+
 # Generic OpenAI-Compatible
 
 Generic provider for any OpenAI-compatible API endpoint. Use this when connecting to services like LiteLLM, LocalAI, or custom deployments that follow the OpenAI Chat Completions format.

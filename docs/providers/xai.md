@@ -1,3 +1,8 @@
+---
+title: xAI Provider
+description: "Use xAI Grok models in Go with GoAI. Supports Grok-3 chat, vision capabilities, and provider-defined web search and X search tools."
+---
+
 # xAI (Grok)
 
 xAI provider for Grok models, using the OpenAI-compatible Chat Completions API. Includes provider-defined tools for web and X (Twitter) search.

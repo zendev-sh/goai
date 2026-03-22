@@ -1,3 +1,8 @@
+---
+title: Prompt Caching
+description: "Reduce cost and latency with prompt caching in GoAI. Enable cache control for Anthropic and OpenAI system prompts with a single option."
+---
+
 # Prompt Caching
 
 Prompt caching reduces cost and latency by reusing previously processed prompt content across requests. Enable it with a single option:

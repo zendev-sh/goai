@@ -1,3 +1,8 @@
+---
+title: Ollama Provider
+description: "Run local LLMs with Ollama and GoAI. Use Llama, Mistral, and other open models for chat and embeddings with no API key required."
+---
+
 # Ollama
 
 Ollama provider for local model inference. Ollama exposes an OpenAI-compatible API and requires no authentication by default.

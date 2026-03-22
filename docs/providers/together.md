@@ -1,3 +1,8 @@
+---
+title: Together AI Provider
+description: "Use Together AI inference in Go with GoAI. Run open-source Llama, Mixtral, and Qwen models via the OpenAI-compatible API."
+---
+
 # Together AI
 
 Together AI inference provider using the OpenAI-compatible Chat Completions API.

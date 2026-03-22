@@ -1,3 +1,8 @@
+---
+title: Options
+description: "Reference for all GoAI option functions. Configure prompts, tools, temperature, retries, streaming, structured output, embeddings, and image generation."
+---
+
 # Options
 
 All option functions for configuring GoAI calls. Options follow the functional options pattern - pass them as variadic arguments to `GenerateText`, `StreamText`, `GenerateObject`, `StreamObject`, `Embed`, or `EmbedMany`.

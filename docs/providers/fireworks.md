@@ -1,3 +1,8 @@
+---
+title: Fireworks AI Provider
+description: "Use Fireworks AI inference in Go with GoAI. Run Llama, Mixtral, and Qwen models via the OpenAI-compatible Chat Completions API."
+---
+
 # Fireworks AI
 
 Fireworks AI inference provider using the OpenAI-compatible Chat Completions API.

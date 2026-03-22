@@ -1,3 +1,8 @@
+---
+title: Examples
+description: "Runnable GoAI code examples covering chat, streaming, structured output, tool calling, web search, code execution, and image generation."
+---
+
 # Examples
 
 Runnable examples demonstrating GoAI features. Each example is a standalone `main.go` that you can run directly.

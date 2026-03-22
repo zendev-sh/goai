@@ -1,3 +1,8 @@
+---
+title: Azure OpenAI Provider
+description: "Use Azure OpenAI and Azure AI Services with GoAI. Auto-routes GPT, Claude, and third-party models with Managed Identity and API key auth."
+---
+
 # Azure
 
 Azure OpenAI and Azure AI Services provider for GoAI - multi-model access through Azure's managed endpoints.

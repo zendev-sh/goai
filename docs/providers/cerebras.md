@@ -1,3 +1,8 @@
+---
+title: Cerebras Provider
+description: "Use Cerebras wafer-scale inference in Go with GoAI. Run Llama models with ultra-fast inference via the OpenAI-compatible API."
+---
+
 # Cerebras
 
 Cerebras inference provider using the OpenAI-compatible Chat Completions API. Known for fast inference on Cerebras wafer-scale hardware.

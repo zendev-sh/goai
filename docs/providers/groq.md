@@ -1,3 +1,8 @@
+---
+title: Groq Provider
+description: "Use Groq's fast LPU inference in Go with GoAI. Run Llama, Mixtral, and Gemma models with low-latency via the OpenAI-compatible API."
+---
+
 # Groq
 
 Groq inference provider using the OpenAI-compatible Chat Completions API. Known for fast inference on custom LPU hardware.

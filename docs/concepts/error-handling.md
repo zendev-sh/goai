@@ -1,3 +1,8 @@
+---
+title: Error Handling
+description: "Handle API errors and context overflow in GoAI. Learn about automatic retries with exponential backoff, error types, and retry configuration."
+---
+
 # Error Handling
 
 GoAI returns two error types from generation calls. Use `errors.As` to inspect them.
