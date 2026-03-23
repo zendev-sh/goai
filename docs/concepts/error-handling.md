@@ -93,8 +93,9 @@ These errors are never retried:
 
 Retries use exponential backoff with jitter:
 
-- Base delay: 1s, 2s, 4s, 8s, ... capped at 30s
+- Base delay: 2s, 4s, 8s, 16s, ... capped at 60s
 - Jitter: 0.5x to 1.5x of the base delay
+- Respects `Retry-After` / `Retry-After-ms` headers when present
 - Respects context cancellation during the wait
 
 ### Disabling retries

@@ -74,7 +74,7 @@ Providers auto-read API keys from env vars. No explicit config needed:
 | --------- | ------------------------------------------------------------ |
 | OpenAI    | `OPENAI_API_KEY`                                             |
 | Anthropic | `ANTHROPIC_API_KEY`                                          |
-| Google    | `GOOGLE_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`           |
+| Google    | `GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY`           |
 | Bedrock   | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` + `AWS_REGION` |
 | Azure     | `AZURE_OPENAI_API_KEY`                                       |
 | Vertex AI | Application Default Credentials (ADC)                        |

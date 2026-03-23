@@ -21,11 +21,11 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 
 **Parameters:**
 
-| Name | Type | Description |
-|------|------|-------------|
-| `ctx` | `context.Context` | Request context for cancellation and deadlines. |
-| `model` | `provider.LanguageModel` | The language model to use. |
-| `opts` | `...Option` | Configuration options (system prompt, messages, tools, etc.). |
+| Name    | Type                     | Description                                                   |
+| ------- | ------------------------ | ------------------------------------------------------------- |
+| `ctx`   | `context.Context`        | Request context for cancellation and deadlines.               |
+| `model` | `provider.LanguageModel` | The language model to use.                                    |
+| `opts`  | `...Option`              | Configuration options (system prompt, messages, tools, etc.). |
 
 **Returns:** `*TextResult` containing generated text, tool calls, step history, and usage. Returns an error on API failure or context cancellation.
 
@@ -232,12 +232,12 @@ func Embed(ctx context.Context, model provider.EmbeddingModel, value string, opt
 
 **Parameters:**
 
-| Name | Type | Description |
-|------|------|-------------|
-| `ctx` | `context.Context` | Request context. |
-| `model` | `provider.EmbeddingModel` | The embedding model to use. |
-| `value` | `string` | The text to embed. |
-| `opts` | `...Option` | Options (`WithTimeout`, `WithMaxRetries`, `WithEmbeddingProviderOptions`). |
+| Name    | Type                      | Description                                                                |
+| ------- | ------------------------- | -------------------------------------------------------------------------- |
+| `ctx`   | `context.Context`         | Request context.                                                           |
+| `model` | `provider.EmbeddingModel` | The embedding model to use.                                                |
+| `value` | `string`                  | The text to embed.                                                         |
+| `opts`  | `...Option`               | Options (`WithTimeout`, `WithMaxRetries`, `WithEmbeddingProviderOptions`). |
 
 **Returns:** `*EmbedResult` containing the embedding vector and usage.
 
@@ -265,12 +265,12 @@ func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []stri
 
 **Parameters:**
 
-| Name | Type | Description |
-|------|------|-------------|
-| `ctx` | `context.Context` | Request context. |
-| `model` | `provider.EmbeddingModel` | The embedding model to use. |
-| `values` | `[]string` | The texts to embed. |
-| `opts` | `...Option` | Options (`WithMaxParallelCalls`, `WithTimeout`, `WithMaxRetries`, `WithEmbeddingProviderOptions`). |
+| Name     | Type                      | Description                                                                                        |
+| -------- | ------------------------- | -------------------------------------------------------------------------------------------------- |
+| `ctx`    | `context.Context`         | Request context.                                                                                   |
+| `model`  | `provider.EmbeddingModel` | The embedding model to use.                                                                        |
+| `values` | `[]string`                | The texts to embed.                                                                                |
+| `opts`   | `...Option`               | Options (`WithMaxParallelCalls`, `WithTimeout`, `WithMaxRetries`, `WithEmbeddingProviderOptions`). |
 
 **Returns:** `*EmbedManyResult` containing one embedding vector per input value and aggregated usage.
 
@@ -302,11 +302,11 @@ func GenerateImage(ctx context.Context, model provider.ImageModel, opts ...Image
 
 **Parameters:**
 
-| Name | Type | Description |
-|------|------|-------------|
-| `ctx` | `context.Context` | Request context. |
-| `model` | `provider.ImageModel` | The image model to use. |
-| `opts` | `...ImageOption` | Image-specific options (prompt, count, size, aspect ratio). |
+| Name    | Type                  | Description                                                 |
+| ------- | --------------------- | ----------------------------------------------------------- |
+| `ctx`   | `context.Context`     | Request context.                                            |
+| `model` | `provider.ImageModel` | The image model to use.                                     |
+| `opts`  | `...ImageOption`      | Image-specific options (prompt, count, size, aspect ratio). |
 
 Note: `GenerateImage` uses `ImageOption` instead of `Option`. See the [Options](options.md) page for image-specific options.
 
@@ -391,12 +391,12 @@ func SchemaFrom[T any]() json.RawMessage
 
 **Supported struct tags:**
 
-| Tag | Example | Description |
-|-----|---------|-------------|
-| `json:"name"` | `json:"city"` | Sets the property name in the schema. |
-| `json:"-"` | `json:"-"` | Excludes the field from the schema. |
-| `jsonschema:"description=..."` | `jsonschema:"description=City name"` | Adds a description to the property. |
-| `jsonschema:"enum=a\|b\|c"` | `jsonschema:"enum=easy\|medium\|hard"` | Restricts values to an enum. |
+| Tag                            | Example                                | Description                           |
+| ------------------------------ | -------------------------------------- | ------------------------------------- |
+| `json:"name"`                  | `json:"city"`                          | Sets the property name in the schema. |
+| `json:"-"`                     | `json:"-"`                             | Excludes the field from the schema.   |
+| `jsonschema:"description=..."` | `jsonschema:"description=City name"`   | Adds a description to the property.   |
+| `jsonschema:"enum=a\|b\|c"`    | `jsonschema:"enum=easy\|medium\|hard"` | Restricts values to an enum.          |
 
 **Supported types:** string, bool, int (all sizes), uint (all sizes), float32/64, slices, maps with string keys, structs. Embedded structs are flattened. Pointer types produce nullable schemas (`type: ["<base>", "null"]`).
 
@@ -420,4 +420,4 @@ schema := goai.SchemaFrom[City]()
 
 ## Error Utility Functions
 
-See [Errors](errors.md) for `IsOverflow`, `ParseHTTPError`, `ParseStreamError`, and error type documentation.
+See [Errors](errors.md) for `IsOverflow`, `ParseHTTPError`, `ParseHTTPErrorWithHeaders`, `ParseStreamError`, `ClassifyStreamError`, `ErrUnknownTool`, and error type documentation.

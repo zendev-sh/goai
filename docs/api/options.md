@@ -91,12 +91,12 @@ func WithToolChoice(tc string) Option
 
 **Values:**
 
-| Value | Behavior |
-|-------|----------|
-| `"auto"` | Model decides whether to use tools (default when tools are present). |
-| `"none"` | Model does not use tools. |
-| `"required"` | Model must use at least one tool. |
-| `"<tool_name>"` | Model must use the specified tool. |
+| Value           | Behavior                                                             |
+| --------------- | -------------------------------------------------------------------- |
+| `"auto"`        | Model decides whether to use tools (default when tools are present). |
+| `"none"`        | Model does not use tools.                                            |
+| `"required"`    | Model must use at least one tool.                                    |
+| `"<tool_name>"` | Model must use the specified tool.                                   |
 
 **Default:** provider-dependent (typically `"auto"` when tools are present).
 
@@ -130,6 +130,46 @@ Controls nucleus sampling. Only tokens with cumulative probability up to `p` are
 
 ```go
 func WithTopP(p float64) Option
+```
+
+**Default:** `nil` (provider default).
+
+### WithTopK
+
+Limits sampling to the top K tokens. Only available with some providers (e.g., Google, Anthropic).
+
+```go
+func WithTopK(k int) Option
+```
+
+**Default:** `nil` (provider default).
+
+### WithFrequencyPenalty
+
+Penalizes tokens based on how frequently they appear in the text so far.
+
+```go
+func WithFrequencyPenalty(p float64) Option
+```
+
+**Default:** `nil` (provider default).
+
+### WithPresencePenalty
+
+Penalizes tokens that have already appeared in the text so far.
+
+```go
+func WithPresencePenalty(p float64) Option
+```
+
+**Default:** `nil` (provider default).
+
+### WithSeed
+
+Sets the seed for deterministic generation. Not all providers support this.
+
+```go
+func WithSeed(s int) Option
 ```
 
 **Default:** `nil` (provider default).
