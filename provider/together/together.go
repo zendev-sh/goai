@@ -2,6 +2,7 @@
 package together
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -77,7 +78,7 @@ func Chat(modelID string, opts ...Option) provider.LanguageModel {
 	}
 	// Resolve API key from env if not set.
 	if o.tokenSource == nil {
-		if key := os.Getenv("TOGETHER_AI_API_KEY"); key != "" {
+		if key := cmp.Or(os.Getenv("TOGETHER_AI_API_KEY"), os.Getenv("TOGETHER_API_KEY")); key != "" {
 			o.tokenSource = provider.StaticToken(key)
 		}
 	}

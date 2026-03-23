@@ -644,7 +644,7 @@ func TestConvertMessages_ToolCallAndResult(t *testing.T) {
 func TestConvertMessages_Reasoning(t *testing.T) {
 	msgs := convertMessages([]provider.Message{
 		{Role: provider.RoleAssistant, Content: []provider.Part{
-			{Type: provider.PartReasoning, Text: "thinking..."},
+			{Type: provider.PartReasoning, Text: "thinking...", ProviderOptions: map[string]any{"signature": "sig123"}},
 			{Type: provider.PartText, Text: "answer"},
 		}},
 	})
@@ -658,6 +658,27 @@ func TestConvertMessages_Reasoning(t *testing.T) {
 	}
 	if content[0]["thinking"] != "thinking..." {
 		t.Errorf("part[0].thinking = %v, want thinking...", content[0]["thinking"])
+	}
+	if content[0]["signature"] != "sig123" {
+		t.Errorf("part[0].signature = %v, want sig123", content[0]["signature"])
+	}
+}
+
+func TestConvertMessages_ReasoningWithoutSignature(t *testing.T) {
+	// Reasoning from other providers (e.g. Gemini) may lack signature.
+	// These should be skipped to avoid API validation errors.
+	msgs := convertMessages([]provider.Message{
+		{Role: provider.RoleAssistant, Content: []provider.Part{
+			{Type: provider.PartReasoning, Text: "gemini thinking"},
+			{Type: provider.PartText, Text: "answer"},
+		}},
+	})
+	content := msgs[0]["content"].([]map[string]any)
+	if len(content) != 1 {
+		t.Fatalf("got %d parts, want 1 (reasoning without signature skipped)", len(content))
+	}
+	if content[0]["type"] != "text" {
+		t.Errorf("part[0].type = %v, want text", content[0]["type"])
 	}
 }
 
