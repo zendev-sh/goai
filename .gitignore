@@ -7,3 +7,6 @@ cov.html
 
 # Local hook installs
 hooks/
+
+# AI agent sessions
+.zenbot/
