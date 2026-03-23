@@ -72,8 +72,10 @@ func TestChat_Generate(t *testing.T) {
 }
 
 func TestNoProject(t *testing.T) {
+	t.Setenv("GOOGLE_VERTEX_PROJECT", "")
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "")
 	t.Setenv("GCLOUD_PROJECT", "")
+	t.Setenv("GOOGLE_VERTEX_LOCATION", "")
 	model := Chat("model", WithTokenSource(provider.StaticToken("tok")))
 	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
 		Messages: []provider.Message{
@@ -107,6 +109,7 @@ func TestChat_HTTPError(t *testing.T) {
 }
 
 func TestDefaultLocation(t *testing.T) {
+	t.Setenv("GOOGLE_VERTEX_LOCATION", "")
 	t.Setenv("GOOGLE_CLOUD_LOCATION", "")
 	model := Chat("m", WithTokenSource(provider.StaticToken("tok")), WithProject("proj"))
 	cm := model.(*chatModel)
@@ -244,8 +247,10 @@ func TestDefaultURLWithProject(t *testing.T) {
 	defer server.Close()
 
 	// Use baseURL to point at test server, but verify project/location env fallbacks work.
+	t.Setenv("GOOGLE_VERTEX_PROJECT", "")
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "")
 	t.Setenv("GCLOUD_PROJECT", "my-project")
+	t.Setenv("GOOGLE_VERTEX_LOCATION", "")
 	t.Setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
 	model := Chat("m", WithTokenSource(provider.StaticToken("tok")), WithBaseURL(server.URL))
 	cm := model.(*chatModel)
