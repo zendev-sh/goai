@@ -2417,6 +2417,50 @@ func TestConvertParts_File(t *testing.T) {
 	}
 }
 
+func TestConvertParts_FileDuplicateNames(t *testing.T) {
+	docNames := make(map[string]int)
+	parts := convertParts([]provider.Part{
+		{Type: provider.PartFile, URL: "data1", MediaType: "application/pdf", Filename: "report.pdf"},
+		{Type: provider.PartFile, URL: "data2", MediaType: "application/pdf", Filename: "report.pdf"},
+		{Type: provider.PartFile, URL: "data3", MediaType: "application/pdf", Filename: "report.pdf"},
+	}, docNames)
+	if len(parts) != 3 {
+		t.Fatalf("parts = %d, want 3", len(parts))
+	}
+	names := make([]string, 3)
+	for i, p := range parts {
+		names[i] = p["document"].(map[string]any)["name"].(string)
+	}
+	if names[0] != "report-pdf" {
+		t.Errorf("first name = %q, want report-pdf", names[0])
+	}
+	if names[1] != "report-pdf-2" {
+		t.Errorf("second name = %q, want report-pdf-2", names[1])
+	}
+	if names[2] != "report-pdf-3" {
+		t.Errorf("third name = %q, want report-pdf-3", names[2])
+	}
+}
+
+func TestConvertParts_FileDataURLStripped(t *testing.T) {
+	parts := convertParts([]provider.Part{
+		{
+			Type:      provider.PartFile,
+			URL:       "data:application/pdf;base64,AQIDBA==",
+			MediaType: "application/pdf",
+			Filename:  "report.pdf",
+		},
+	}, make(map[string]int))
+	if len(parts) != 1 {
+		t.Fatalf("parts = %d, want 1", len(parts))
+	}
+	doc := parts[0]["document"].(map[string]any)
+	src := doc["source"].(map[string]any)
+	if src["bytes"] != "AQIDBA==" {
+		t.Errorf("source.bytes = %v, want raw base64 without data URL prefix", src["bytes"])
+	}
+}
+
 func TestConvertParts_FileNoFilename(t *testing.T) {
 	parts := convertParts([]provider.Part{
 		{
