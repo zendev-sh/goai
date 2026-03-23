@@ -1379,7 +1379,7 @@ func TestConvertParts_ImageDataURL(t *testing.T) {
 	parts := []provider.Part{
 		{Type: provider.PartImage, URL: "data:image/jpeg;base64,/9j/abc123"},
 	}
-	blocks := convertParts(parts)
+	blocks := convertParts(parts, make(map[string]int))
 	if len(blocks) != 1 {
 		t.Fatalf("blocks = %d, want 1", len(blocks))
 	}
@@ -1400,7 +1400,7 @@ func TestConvertParts_ImageWithMediaType(t *testing.T) {
 	parts := []provider.Part{
 		{Type: provider.PartImage, URL: "data:image/png;base64,iVBOR", MediaType: "image/webp"},
 	}
-	blocks := convertParts(parts)
+	blocks := convertParts(parts, make(map[string]int))
 	img, _ := blocks[0]["image"].(map[string]any)
 	// MediaType should take precedence over data URL format.
 	if img["format"] != "webp" {
@@ -1416,7 +1416,7 @@ func TestConvertParts_Document(t *testing.T) {
 	parts := []provider.Part{
 		{Type: provider.PartFile, URL: "base64data", MediaType: "application/pdf", Filename: "report.pdf"},
 	}
-	blocks := convertParts(parts)
+	blocks := convertParts(parts, make(map[string]int))
 	if len(blocks) != 1 {
 		t.Fatalf("blocks = %d, want 1", len(blocks))
 	}
@@ -2327,7 +2327,7 @@ func TestConvertParts_ReasoningWithSignature(t *testing.T) {
 				"signature": "sig123",
 			},
 		},
-	})
+	}, make(map[string]int))
 	if len(parts) != 1 {
 		t.Fatalf("parts = %d, want 1", len(parts))
 	}
@@ -2350,7 +2350,7 @@ func TestConvertParts_ReasoningRedacted(t *testing.T) {
 				"redactedData": "encrypted123",
 			},
 		},
-	})
+	}, make(map[string]int))
 	if len(parts) != 1 {
 		t.Fatalf("parts = %d, want 1", len(parts))
 	}
@@ -2369,7 +2369,7 @@ func TestConvertParts_ToolCall(t *testing.T) {
 			ToolName:   "search",
 			ToolInput:  []byte(`{"q":"test"}`),
 		},
-	})
+	}, make(map[string]int))
 	if len(parts) != 1 {
 		t.Fatalf("parts = %d", len(parts))
 	}
@@ -2389,7 +2389,7 @@ func TestConvertParts_ToolResult(t *testing.T) {
 			ToolCallID: "tc1",
 			ToolOutput: "result text",
 		},
-	})
+	}, make(map[string]int))
 	if len(parts) != 1 {
 		t.Fatalf("parts = %d", len(parts))
 	}
@@ -2407,7 +2407,7 @@ func TestConvertParts_File(t *testing.T) {
 			MediaType: "text/csv",
 			Filename:  "data.csv",
 		},
-	})
+	}, make(map[string]int))
 	if len(parts) != 1 {
 		t.Fatalf("parts = %d", len(parts))
 	}
@@ -2424,7 +2424,7 @@ func TestConvertParts_FileNoFilename(t *testing.T) {
 			URL:       "base64data",
 			MediaType: "application/pdf",
 		},
-	})
+	}, make(map[string]int))
 	doc := parts[0]["document"].(map[string]any)
 	name := doc["name"].(string)
 	if !strings.HasPrefix(name, "document-") {
@@ -2492,7 +2492,7 @@ func TestConvertParts_CacheControl(t *testing.T) {
 			Text:         "cached text",
 			CacheControl: "ephemeral",
 		},
-	})
+	}, make(map[string]int))
 	if len(parts) != 2 {
 		t.Fatalf("parts = %d, want 2 (text + cachePoint)", len(parts))
 	}
@@ -3190,7 +3190,7 @@ func TestConvertParts_ToolCallNilInput(t *testing.T) {
 			ToolName:   "test",
 			ToolInput:  nil, // nil input
 		},
-	})
+	}, make(map[string]int))
 	tu := parts[0]["toolUse"].(map[string]any)
 	input, ok := tu["input"].(map[string]any)
 	if !ok {

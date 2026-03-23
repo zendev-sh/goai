@@ -159,10 +159,13 @@ func buildConverseRequest(params provider.GenerateParams, modelID string) map[st
 // Tool-role messages are merged into user role per Bedrock convention.
 func convertMessages(msgs []provider.Message) []map[string]any {
 	var result []map[string]any
+	// Track document names across the conversation for uniqueness.
+	// Bedrock rejects duplicate names; append "-N" suffix when needed.
+	docNames := make(map[string]int)
 
 	for _, msg := range msgs {
 		role := string(msg.Role)
-		content := convertParts(msg.Content)
+		content := convertParts(msg.Content, docNames)
 
 		if len(content) == 0 {
 			continue
@@ -193,7 +196,8 @@ func convertMessages(msgs []provider.Message) []map[string]any {
 }
 
 // convertParts maps provider.Part slice to Bedrock content blocks.
-func convertParts(parts []provider.Part) []map[string]any {
+// docNames tracks document names across the conversation for uniqueness.
+func convertParts(parts []provider.Part, docNames map[string]int) []map[string]any {
 	var blocks []map[string]any
 
 	for _, p := range parts {
@@ -276,8 +280,18 @@ func convertParts(parts []provider.Part) []map[string]any {
 		case provider.PartFile:
 			format := bedrockDocumentFormat(p.MediaType)
 			name := sanitizeDocumentName(p.Filename)
-			// Data may be base64 string or raw bytes depending on caller.
-			data := p.URL // URL field holds the data for file parts.
+			// Bedrock requires unique document names across the conversation.
+			// Append "-N" suffix for duplicates.
+			docNames[name]++
+			if docNames[name] > 1 {
+				name = fmt.Sprintf("%s-%d", name, docNames[name])
+			}
+			// p.URL may be a data URL ("data:mime;base64,...") or raw base64.
+			// Bedrock Converse API expects raw base64 in source.bytes.
+			data := p.URL
+			if idx := strings.Index(data, ";base64,"); idx >= 0 && strings.HasPrefix(data, "data:") {
+				data = data[idx+8:]
+			}
 			blocks = append(blocks, map[string]any{
 				"document": map[string]any{
 					"format": format,
@@ -411,10 +425,13 @@ func parseEventStream(ctx context.Context, body io.ReadCloser, out chan<- provid
 	decoder := newEventStreamDecoder(body)
 
 	// Track content blocks by index to know if a block is text or toolUse.
+	// For tool blocks, accumulate input deltas so the final ChunkToolCall
+	// includes the full tool input (matches openaicompat accumulation pattern).
 	type blockInfo struct {
 		isToolUse  bool
 		toolUseID  string
 		toolName   string
+		inputBuf   strings.Builder // accumulated tool input JSON fragments
 	}
 	blocks := make(map[int]*blockInfo)
 
@@ -484,9 +501,13 @@ func parseEventStream(ctx context.Context, body io.ReadCloser, out chan<- provid
 				}
 				if tu, ok := delta["toolUse"].(map[string]any); ok {
 					bi := blocks[idx]
+					inputFrag := strVal(tu, "input")
+					if bi != nil {
+						bi.inputBuf.WriteString(inputFrag)
+					}
 					chunk := provider.StreamChunk{
 						Type:      provider.ChunkToolCallDelta,
-						ToolInput: strVal(tu, "input"),
+						ToolInput: inputFrag,
 					}
 					if bi != nil {
 						chunk.ToolCallID = bi.toolUseID
@@ -542,6 +563,7 @@ func parseEventStream(ctx context.Context, body io.ReadCloser, out chan<- provid
 					Type:       provider.ChunkToolCall,
 					ToolCallID: bi.toolUseID,
 					ToolName:   bi.toolName,
+					ToolInput:  bi.inputBuf.String(),
 				}) {
 					return
 				}
