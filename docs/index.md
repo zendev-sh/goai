@@ -76,6 +76,8 @@ OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Vertex AI, Cohere, 
 
 [View all providers →](/providers/)
 
+[Explore the architecture →](/architecture)
+
 [Compare with other Go AI libraries →](/compare)
 
 </div>

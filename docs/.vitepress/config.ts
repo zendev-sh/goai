@@ -106,6 +106,10 @@ export default defineConfig({
           ],
         },
         {
+          text: 'Architecture',
+          link: '/architecture',
+        },
+        {
           text: 'Concepts',
           items: [
             { text: 'Providers & Models', link: '/concepts/providers-and-models' },
