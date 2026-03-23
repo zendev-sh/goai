@@ -1,0 +1,456 @@
+# GoAI SDK
+
+> Go SDK for building AI applications. One unified API across 20+ LLM providers.
+
+GoAI SDK is an open-source Go library inspired by the Vercel AI SDK, designed idiomatically for Go with generics, interfaces, and channels. It provides a single API surface for text generation, streaming, structured output, embeddings, image generation, and tool calling across 20+ providers.
+
+- Website: https://goai.sh
+- GitHub: https://github.com/zendev-sh/goai
+- GoDoc: https://pkg.go.dev/github.com/zendev-sh/goai
+- License: MIT
+- Go version: 1.25+
+- Dependencies: zero external (stdlib only, except golang.org/x/oauth2 for Vertex AI)
+
+## Install
+
+```
+go get github.com/zendev-sh/goai@latest
+```
+
+Provider packages are included — no separate installs needed.
+
+```go
+import (
+    "github.com/zendev-sh/goai"
+    "github.com/zendev-sh/goai/provider/openai"
+    "github.com/zendev-sh/goai/provider/anthropic"
+    "github.com/zendev-sh/goai/provider/google"
+    "github.com/zendev-sh/goai/provider/bedrock"
+    "github.com/zendev-sh/goai/provider/azure"
+    "github.com/zendev-sh/goai/provider/vertex"
+)
+```
+
+All providers auto-resolve API keys from environment variables. No explicit configuration needed.
+
+---
+
+## Core Functions
+
+### GenerateText
+
+Non-streaming text generation with optional auto tool loop.
+
+```go
+func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Option) (*TextResult, error)
+```
+
+When tools with `Execute` functions are provided and `MaxSteps > 1`, it automatically runs a tool loop: generate → execute tools → re-generate, up to MaxSteps times.
+
+Example:
+```go
+model := openai.Chat("gpt-4o") // auto-reads OPENAI_API_KEY
+
+result, err := goai.GenerateText(context.Background(), model,
+    goai.WithSystem("You are a helpful assistant."),
+    goai.WithPrompt("What is the capital of France?"),
+)
+fmt.Println(result.Text)
+fmt.Printf("Tokens: %d in, %d out\n", result.TotalUsage.InputTokens, result.TotalUsage.OutputTokens)
+```
+
+### StreamText
+
+Streaming text generation via Go channels.
+
+```go
+func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Option) (*TextStream, error)
+```
+
+TextStream provides three consumption modes:
+- `Stream()` — channel of raw `provider.StreamChunk` (all chunk types)
+- `TextStream()` — channel of `string` (text only)
+- `Result()` — blocks until complete, returns final `*TextResult`
+
+`Stream()` and `TextStream()` are mutually exclusive. `Result()` can always be called after either.
+
+Example:
+```go
+stream, err := goai.StreamText(ctx, model,
+    goai.WithPrompt("Write a haiku about Go."),
+)
+for text := range stream.TextStream() {
+    fmt.Print(text)
+}
+result := stream.Result()
+fmt.Printf("Tokens: %d in, %d out\n", result.TotalUsage.InputTokens, result.TotalUsage.OutputTokens)
+```
+
+### GenerateObject[T]
+
+Type-safe structured output using Go generics. Auto-generates JSON Schema from T.
+
+```go
+func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, opts ...Option) (*ObjectResult[T], error)
+```
+
+Example:
+```go
+type Recipe struct {
+    Name        string   `json:"name" jsonschema:"description=Recipe name"`
+    Ingredients []string `json:"ingredients"`
+    Steps       []string `json:"steps"`
+    Difficulty  string   `json:"difficulty" jsonschema:"enum=easy|medium|hard"`
+}
+
+result, err := goai.GenerateObject[Recipe](ctx, model,
+    goai.WithPrompt("Chocolate chip cookies recipe"),
+)
+fmt.Printf("Recipe: %s (Difficulty: %s)\n", result.Object.Name, result.Object.Difficulty)
+```
+
+### StreamObject[T]
+
+Streaming structured output with partial objects.
+
+```go
+func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts ...Option) (*ObjectStream[T], error)
+```
+
+- `PartialObjectStream()` — channel emitting progressively populated partial objects
+- `Result()` — blocks until complete, returns final validated object
+
+### Embed
+
+Single text embedding.
+
+```go
+func Embed(ctx context.Context, model provider.EmbeddingModel, value string, opts ...Option) (*EmbedResult, error)
+```
+
+### EmbedMany
+
+Batch text embeddings with auto-chunking and parallel processing.
+
+```go
+func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []string, opts ...Option) (*EmbedManyResult, error)
+```
+
+### GenerateImage
+
+Image generation from text prompt.
+
+```go
+func GenerateImage(ctx context.Context, model provider.ImageModel, opts ...ImageOption) (*ImageResult, error)
+```
+
+Uses `ImageOption` (not `Option`): `WithImagePrompt`, `WithImageCount`, `WithImageSize`, `WithAspectRatio`, `WithImageProviderOptions`.
+
+### Message Builders
+
+```go
+goai.SystemMessage(text string) provider.Message
+goai.UserMessage(text string) provider.Message
+goai.AssistantMessage(text string) provider.Message
+goai.ToolMessage(toolCallID, toolName, output string) provider.Message
+```
+
+### SchemaFrom[T]
+
+Generates JSON Schema from Go type via reflection. Compatible with OpenAI strict mode.
+
+```go
+func SchemaFrom[T any]() json.RawMessage
+```
+
+Supported struct tags:
+- `json:"name"` — property name
+- `json:"-"` — exclude field
+- `jsonschema:"description=..."` — adds description
+- `jsonschema:"enum=a|b|c"` — restricts to enum values
+
+Supported types: string, bool, int/uint (all sizes), float32/64, slices, maps (string keys), structs (embedded structs flattened), pointers (nullable).
+
+---
+
+## Options
+
+All options use the functional options pattern: `goai.With*(...)`.
+
+### Core Options
+- `WithSystem(s string)` — system prompt
+- `WithPrompt(s string)` — single user message (shorthand)
+- `WithMessages(msgs ...provider.Message)` — conversation history
+- `WithPromptCaching(bool)` — enable provider-specific prompt caching
+
+### Tool Options
+- `WithTools(tools ...Tool)` — available tools
+- `WithMaxSteps(n int)` — max auto tool loop iterations (default: 1 = no loop)
+- `WithToolChoice(tc string)` — "auto" | "none" | "required" | "<tool_name>"
+
+### Generation Options
+- `WithMaxOutputTokens(n int)` — response length limit
+- `WithTemperature(t float64)` — randomness control
+- `WithTopP(p float64)` — nucleus sampling
+- `WithTopK(k int)` — limit sampling to top K tokens
+- `WithFrequencyPenalty(p float64)` — penalize tokens by frequency
+- `WithPresencePenalty(p float64)` — penalize tokens already present
+- `WithSeed(s int)` — seed for deterministic generation
+- `WithStopSequences(seqs ...string)` — stop sequences
+
+### Infrastructure Options
+- `WithMaxRetries(n int)` — retry count for transient errors (default: 2)
+- `WithTimeout(d time.Duration)` — request timeout
+- `WithHeaders(h map[string]string)` — additional HTTP headers
+- `WithProviderOptions(opts map[string]any)` — provider-specific parameters
+
+### Telemetry Hooks
+- `WithOnRequest(fn func(RequestInfo))` — before each API call
+- `WithOnResponse(fn func(ResponseInfo))` — after each API call
+- `WithOnStepFinish(fn func(StepResult))` — after each generation step
+- `WithOnToolCall(fn func(ToolCallInfo))` — after each tool execution
+
+### Structured Output Options
+- `WithExplicitSchema(schema json.RawMessage)` — override auto-generated schema
+- `WithSchemaName(name string)` — schema name (default: "response")
+
+### Embedding Options
+- `WithMaxParallelCalls(n int)` — max concurrent API calls for EmbedMany (default: 4)
+- `WithEmbeddingProviderOptions(opts map[string]any)` — provider-specific embedding params
+
+### Image Options (ImageOption type)
+- `WithImagePrompt(prompt string)` — text prompt
+- `WithImageCount(n int)` — number of images (default: 1)
+- `WithImageSize(size string)` — dimensions (e.g., "1024x1024")
+- `WithAspectRatio(ratio string)` — aspect ratio (e.g., "16:9")
+- `WithImageProviderOptions(opts map[string]any)` — provider-specific image params
+
+---
+
+## Tools
+
+Tools let the model call functions defined in your code.
+
+### Defining a Tool
+
+```go
+tool := goai.Tool{
+    Name:        "get_weather",
+    Description: "Get weather for a city.",
+    InputSchema: json.RawMessage(`{
+        "type": "object",
+        "properties": {
+            "city": {"type": "string", "description": "City name"}
+        },
+        "required": ["city"]
+    }`),
+    Execute: func(ctx context.Context, input json.RawMessage) (string, error) {
+        var params struct { City string `json:"city"` }
+        json.Unmarshal(input, &params)
+        return fmt.Sprintf("72F and sunny in %s", params.City), nil
+    },
+}
+```
+
+### Auto Tool Loop
+
+Set `WithMaxSteps(n)` where n > 1 to enable automatic tool execution:
+
+```go
+result, err := goai.GenerateText(ctx, model,
+    goai.WithPrompt("What's the weather in Tokyo and London?"),
+    goai.WithTools(weatherTool),
+    goai.WithMaxSteps(5),
+)
+```
+
+Loop: generate → execute tools → append results → re-generate → repeat until model stops or MaxSteps reached.
+
+### Tools Without Execute
+
+If a tool has no `Execute` function, it's sent to the model as a definition only. Tool calls appear in `result.ToolCalls` for manual handling.
+
+### StepResult Fields
+- `Number` (int) — 1-based step index
+- `Text` (string) — text generated in this step
+- `ToolCalls` ([]provider.ToolCall) — tool calls requested
+- `FinishReason` (provider.FinishReason) — why this step stopped
+- `Usage` (provider.Usage) — token usage
+- `Response` (provider.ResponseMetadata) — provider metadata
+- `Sources` ([]provider.Source) — citations
+
+---
+
+## Providers
+
+All providers auto-resolve credentials from environment variables.
+
+### Tier 1 — Dedicated implementations
+
+| Provider | Import | Chat | Embed | Image | Provider Tools | Auth Env Var |
+|----------|--------|------|-------|-------|----------------|--------------|
+| OpenAI | `provider/openai` | ✅ gpt-4o, o3 | ✅ text-embedding-3-* | ✅ gpt-image-1 | 4 (web search, code interpreter, image gen, file search) | `OPENAI_API_KEY` |
+| Anthropic | `provider/anthropic` | ✅ claude-* | — | — | 10 (web search, web fetch, computer use, bash, text editor, code execution) | `ANTHROPIC_API_KEY` |
+| Google | `provider/google` | ✅ gemini-* | ✅ text-embedding-004 | ✅ imagen-* | 3 (google search, code execution) | `GOOGLE_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` |
+| Bedrock | `provider/bedrock` | ✅ anthropic.*, meta.* | — | — | — | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
+| Azure | `provider/azure` | ✅ gpt-4o, claude-* | ✅ | ✅ | — | `AZURE_OPENAI_API_KEY` |
+| Vertex AI | `provider/vertex` | ✅ gemini-* | ✅ | ✅ | — | ADC (Application Default Credentials) |
+
+### Tier 2
+
+| Provider | Import | Auth Env Var |
+|----------|--------|--------------|
+| Cohere | `provider/cohere` | `COHERE_API_KEY` |
+| Mistral | `provider/mistral` | `MISTRAL_API_KEY` |
+| xAI (Grok) | `provider/xai` | `XAI_API_KEY` |
+| Groq | `provider/groq` | `GROQ_API_KEY` |
+| DeepSeek | `provider/deepseek` | `DEEPSEEK_API_KEY` |
+
+### Tier 3 — OpenAI-compatible
+
+Fireworks (`FIREWORKS_API_KEY`), Together (`TOGETHER_AI_API_KEY`), DeepInfra (`DEEPINFRA_API_KEY`), OpenRouter (`OPENROUTER_API_KEY`), Perplexity (`PERPLEXITY_API_KEY`), Cerebras (`CEREBRAS_API_KEY`).
+
+### Local / Custom
+
+- Ollama — `localhost:11434`, no auth, embed support
+- vLLM — `localhost:8000`, optional auth, embed support
+- Compatible — any OpenAI-compatible endpoint via `provider/compat`
+
+### Common Provider Options
+
+```go
+provider.WithAPIKey(key)        // static API key
+provider.WithTokenSource(ts)    // dynamic auth (OAuth, service accounts)
+provider.WithBaseURL(url)       // override endpoint
+provider.WithHeaders(h)         // custom HTTP headers
+provider.WithHTTPClient(c)      // custom HTTP transport
+```
+
+---
+
+## Provider-Defined Tools
+
+Built-in tools provided by specific providers, executed server-side.
+
+### OpenAI
+- `openai.Tools.WebSearch()` — web search
+- `openai.Tools.CodeInterpreter()` — sandboxed Python execution
+- `openai.Tools.ImageGeneration()` — image generation via Responses API
+- `openai.Tools.FileSearch(vectorStoreIDs)` — semantic search over vector stores
+
+### Anthropic
+- `anthropic.Tools.WebSearch()` — web search
+- `anthropic.Tools.WebFetch()` — fetch and process URLs
+- `anthropic.Tools.Computer(w, h)` — mouse/keyboard control
+- `anthropic.Tools.Bash()` — shell execution
+- `anthropic.Tools.TextEditor()` — file editing
+- `anthropic.Tools.CodeExecution()` — sandboxed Python execution
+
+### Google
+- `google.Tools.GoogleSearch()` — Google Search grounding
+- `google.Tools.URLContext()` — fetch and process URLs from prompt
+- `google.Tools.CodeExecution()` — sandboxed Python execution
+
+### xAI
+- `xai.Tools.WebSearch()` — web search
+- `xai.Tools.XSearch()` — X (Twitter) search
+
+### Groq
+- `groq.Tools.BrowserSearch()` — interactive browser search
+
+---
+
+## Quick Start Examples
+
+### Basic chat
+```go
+result, _ := goai.GenerateText(ctx,
+    openai.Chat("gpt-4o"),
+    goai.WithPrompt("Hello!"),
+)
+fmt.Println(result.Text)
+```
+
+### Streaming
+```go
+stream, _ := goai.StreamText(ctx,
+    anthropic.Chat("claude-sonnet-4-6"),
+    goai.WithMessages(goai.UserMessage("Write a poem.")),
+)
+for chunk := range stream.TextStream() {
+    fmt.Print(chunk)
+}
+```
+
+### Structured output
+```go
+type City struct {
+    Name       string `json:"name"`
+    Country    string `json:"country"`
+    Population int    `json:"population"`
+}
+result, _ := goai.GenerateObject[City](ctx,
+    google.Chat("gemini-2.5-flash"),
+    goai.WithPrompt("Info about Tokyo"),
+)
+fmt.Printf("%s, %s — pop: %d\n", result.Object.Name, result.Object.Country, result.Object.Population)
+```
+
+### Tool calling with agent loop
+```go
+result, _ := goai.GenerateText(ctx, model,
+    goai.WithTools(weatherTool, calculatorTool),
+    goai.WithMaxSteps(5),
+    goai.WithPrompt("What's 72F in Celsius? Then check Tokyo weather."),
+)
+fmt.Println(result.Text)
+```
+
+### Embeddings
+```go
+model := google.Embedding("text-embedding-004")
+result, _ := goai.Embed(ctx, model, "Hello world")
+fmt.Printf("Dimensions: %d\n", len(result.Embedding))
+```
+
+### Switching providers (one line change)
+```go
+// Just change the model — all functions work identically
+model := openai.Chat("gpt-4o")
+model := anthropic.Chat("claude-sonnet-4-6")
+model := google.Chat("gemini-2.5-flash")
+model := groq.Chat("llama-3.3-70b-versatile")
+model := ollama.Chat("llama3.2")
+```
+
+---
+
+## Runnable Examples
+
+All examples at https://github.com/zendev-sh/goai/tree/main/examples:
+
+- `examples/chat/` — basic GenerateText
+- `examples/streaming/` — StreamText with TextStream()
+- `examples/structured/` — GenerateObject[T] and StreamObject[T]
+- `examples/embedding/` — Embed, EmbedMany, cosine similarity
+- `examples/citations/` — Sources from grounded responses
+- `examples/tools/` — single-step tool call
+- `examples/agent-loop/` — multi-step agent with callbacks
+- `examples/web-search/` — web search across OpenAI, Anthropic, Google
+- `examples/web-fetch/` — Anthropic URL fetching
+- `examples/computer-use/` — Anthropic computer use tools
+- `examples/code-execution/` — Anthropic code execution
+- `examples/code-interpreter/` — OpenAI code interpreter
+- `examples/google-search/` — Google Search grounding
+- `examples/google-code-execution/` — Gemini code execution
+- `examples/image-generation/` — OpenAI image generation tool
+- `examples/file-search/` — OpenAI vector store file search
+
+---
+
+## Links
+
+- Docs: https://goai.sh
+- GitHub: https://github.com/zendev-sh/goai
+- GoDoc: https://pkg.go.dev/github.com/zendev-sh/goai
+- Compare: https://goai.sh/compare.html
