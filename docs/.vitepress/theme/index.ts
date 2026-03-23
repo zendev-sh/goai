@@ -6,7 +6,6 @@ import InstallBlock from './InstallBlock.vue'
 import HomeFeatures from './HomeFeatures.vue'
 import HomeContent from './HomeContent.vue'
 import HomeRaw from './HomeRaw.vue'
-import VersionSwitcher from './VersionSwitcher.vue'
 import ThemeVariantToggle from './ThemeVariantToggle.vue'
 
 import './custom.css'
@@ -78,7 +77,6 @@ export default {
       'nav-bar-content-after': () => [
         // Hide toggle when theme is locked via env
         isLocked ? null : h(ThemeVariantToggle),
-        h(VersionSwitcher),
       ],
       'home-hero-before': () => h(HomeSwitcher),
       'home-hero-after': () => h(CraftHomeHero),
