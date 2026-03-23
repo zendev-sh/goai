@@ -50,7 +50,7 @@ Requires Go 1.25+. Zero external dependencies (stdlib only, except golang.org/x/
 ### Tier 1 (dedicated implementations)
 - OpenAI (`OPENAI_API_KEY`) — Chat, Embed, Image, 4 provider tools
 - Anthropic (`ANTHROPIC_API_KEY`) — Chat, 10 provider tools
-- Google Gemini (`GOOGLE_API_KEY`) — Chat, Embed, Image, 3 provider tools
+- Google Gemini (`GOOGLE_API_KEY`) - Chat, Embed, Image, 3 provider tools (google search, URL context, code execution)
 - AWS Bedrock (`AWS_ACCESS_KEY_ID`) — Chat
 - Azure OpenAI (`AZURE_OPENAI_API_KEY`) — Chat, Embed, Image
 - Vertex AI (ADC) — Chat, Embed, Image

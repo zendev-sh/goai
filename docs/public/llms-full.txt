@@ -291,7 +291,7 @@ All providers auto-resolve credentials from environment variables.
 |----------|--------|------|-------|-------|----------------|--------------|
 | OpenAI | `provider/openai` | ✅ gpt-4o, o3 | ✅ text-embedding-3-* | ✅ gpt-image-1 | 4 (web search, code interpreter, image gen, file search) | `OPENAI_API_KEY` |
 | Anthropic | `provider/anthropic` | ✅ claude-* | — | — | 10 (web search, web fetch, computer use, bash, text editor, code execution) | `ANTHROPIC_API_KEY` |
-| Google | `provider/google` | ✅ gemini-* | ✅ text-embedding-004 | ✅ imagen-* | 3 (google search, code execution) | `GOOGLE_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` |
+| Google | `provider/google` | ✅ gemini-* | ✅ text-embedding-004 | ✅ imagen-* | 3 (google search, URL context, code execution) | `GOOGLE_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` |
 | Bedrock | `provider/bedrock` | ✅ anthropic.*, meta.* | — | — | — | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
 | Azure | `provider/azure` | ✅ gpt-4o, claude-* | ✅ | ✅ | — | `AZURE_OPENAI_API_KEY` |
 | Vertex AI | `provider/vertex` | ✅ gemini-* | ✅ | ✅ | — | ADC (Application Default Credentials) |
@@ -336,12 +336,12 @@ Built-in tools provided by specific providers, executed server-side.
 - `openai.Tools.WebSearch()` — web search
 - `openai.Tools.CodeInterpreter()` — sandboxed Python execution
 - `openai.Tools.ImageGeneration()` — image generation via Responses API
-- `openai.Tools.FileSearch(vectorStoreIDs)` — semantic search over vector stores
+- `openai.Tools.FileSearch(opts...)` - semantic search over vector stores
 
 ### Anthropic
 - `anthropic.Tools.WebSearch()` — web search
 - `anthropic.Tools.WebFetch()` — fetch and process URLs
-- `anthropic.Tools.Computer(w, h)` — mouse/keyboard control
+- `anthropic.Tools.Computer(opts)` - mouse/keyboard control
 - `anthropic.Tools.Bash()` — shell execution
 - `anthropic.Tools.TextEditor()` — file editing
 - `anthropic.Tools.CodeExecution()` — sandboxed Python execution
