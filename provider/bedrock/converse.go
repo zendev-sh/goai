@@ -159,8 +159,8 @@ func buildConverseRequest(params provider.GenerateParams, modelID string) map[st
 // Tool-role messages are merged into user role per Bedrock convention.
 func convertMessages(msgs []provider.Message) []map[string]any {
 	var result []map[string]any
-	// Track document names across the conversation for uniqueness.
-	// Bedrock rejects duplicate names; append "-N" suffix when needed.
+	// Track document names across the conversation. Bedrock requires
+	// unique names. Append "-N" suffix for duplicates.
 	docNames := make(map[string]int)
 
 	for _, msg := range msgs {
@@ -208,12 +208,18 @@ func convertParts(parts []provider.Part, docNames map[string]int) []map[string]a
 			}
 		case provider.PartReasoning:
 			if p.Text != "" {
-				reasoningText := map[string]any{"text": p.Text}
-				// Include signature from provider options if present.
+				// Bedrock requires signature for reasoning replay.
+				// Skip reasoning blocks without signature to avoid validation errors.
+				var sig string
 				if p.ProviderOptions != nil {
-					if sig, ok := p.ProviderOptions["signature"].(string); ok && sig != "" {
-						reasoningText["signature"] = sig
-					}
+					sig, _ = p.ProviderOptions["signature"].(string)
+				}
+				if sig == "" {
+					continue
+				}
+				reasoningText := map[string]any{
+					"text":      p.Text,
+					"signature": sig,
 				}
 				blocks = append(blocks, map[string]any{"reasoningContent": map[string]any{
 					"reasoningText": reasoningText,

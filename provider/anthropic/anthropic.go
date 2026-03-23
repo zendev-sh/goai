@@ -446,14 +446,16 @@ func convertMessages(msgs []provider.Message) []map[string]any {
 
 			case provider.PartReasoning:
 				if part.Text != "" {
-					p := map[string]any{"type": "thinking", "thinking": part.Text}
-					// Include signature from provider options if present (required for
-					// replaying conversation history with thinking blocks).
+					// Signature is required for replaying thinking blocks.
+					// Skip reasoning from other providers (e.g. Gemini) that lack signatures.
+					var sig string
 					if part.ProviderOptions != nil {
-						if sig, ok := part.ProviderOptions["signature"].(string); ok && sig != "" {
-							p["signature"] = sig
-						}
+						sig, _ = part.ProviderOptions["signature"].(string)
 					}
+					if sig == "" {
+						continue
+					}
+					p := map[string]any{"type": "thinking", "thinking": part.Text, "signature": sig}
 					applyCacheControl(p, part.CacheControl, msgCacheControl, isLast)
 					content = append(content, p)
 				} else if part.ProviderOptions != nil {
