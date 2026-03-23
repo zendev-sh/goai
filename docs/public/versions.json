@@ -1,16 +1,16 @@
 {
-  "latest": "v0.4.2",
+  "latest": "v0.4.1",
   "branchBaseURL": "https://{branch}.goai-2lz.pages.dev",
   "versions": [
     {
       "tag": "v0.4.2",
       "date": "2026-03-23",
-      "label": "v0.4.2 (latest)"
+      "label": "v0.4.2"
     },
     {
       "tag": "v0.4.1",
       "date": "2026-03-23",
-      "label": "v0.4.1"
+      "label": "v0.4.1 (latest)"
     },
     {
       "tag": "v0.4.0",
