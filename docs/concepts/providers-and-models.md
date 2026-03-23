@@ -36,11 +36,12 @@ type LanguageModel interface {
     ModelID() string
     DoGenerate(ctx context.Context, params GenerateParams) (*GenerateResult, error)
     DoStream(ctx context.Context, params GenerateParams) (*StreamResult, error)
-    Capabilities() ModelCapabilities
 }
 ```
 
 Used with `GenerateText`, `StreamText`, `GenerateObject`, and `StreamObject`.
+
+Models may also implement the optional `CapableModel` interface to declare capabilities. Use `provider.ModelCapabilitiesOf(model)` to query safely.
 
 ### EmbeddingModel
 
@@ -71,10 +72,10 @@ Used with `GenerateImage`.
 
 ## Capabilities
 
-Every `LanguageModel` exposes a `Capabilities()` method that describes what the model supports:
+Models that implement the optional `CapableModel` interface expose their capabilities. Use `provider.ModelCapabilitiesOf` to query safely (returns zero-value if not implemented):
 
 ```go
-caps := model.Capabilities()
+caps := provider.ModelCapabilitiesOf(model)
 if caps.ToolCall {
     // safe to pass tools
 }
@@ -85,14 +86,14 @@ if caps.Reasoning {
 
 The `ModelCapabilities` struct includes:
 
-| Field              | Type         | Description                                |
-|--------------------|-------------|---------------------------------------------|
-| `Temperature`      | `bool`       | Accepts temperature parameter               |
-| `Reasoning`        | `bool`       | Extended thinking / chain-of-thought        |
-| `Attachment`       | `bool`       | File attachment support                     |
-| `ToolCall`         | `bool`       | Tool / function calling                     |
-| `InputModalities`  | `ModalitySet`| Supported input types (text, image, etc.)   |
-| `OutputModalities` | `ModalitySet`| Supported output types                      |
+| Field              | Type          | Description                               |
+| ------------------ | ------------- | ----------------------------------------- |
+| `Temperature`      | `bool`        | Accepts temperature parameter             |
+| `Reasoning`        | `bool`        | Extended thinking / chain-of-thought      |
+| `Attachment`       | `bool`        | File attachment support                   |
+| `ToolCall`         | `bool`        | Tool / function calling                   |
+| `InputModalities`  | `ModalitySet` | Supported input types (text, image, etc.) |
+| `OutputModalities` | `ModalitySet` | Supported output types                    |
 
 ## Provider Configuration
 
@@ -113,28 +114,28 @@ If no API key or token source is provided, providers read from environment varia
 
 ## Provider List
 
-| Provider    | Import Path                                          | Factory Functions             |
-|-------------|------------------------------------------------------|-------------------------------|
-| OpenAI      | `github.com/zendev-sh/goai/provider/openai`          | `Chat`, `Embedding`, `Image`  |
-| Anthropic   | `github.com/zendev-sh/goai/provider/anthropic`        | `Chat`                        |
-| Google      | `github.com/zendev-sh/goai/provider/google`           | `Chat`, `Embedding`, `Image`  |
-| Azure       | `github.com/zendev-sh/goai/provider/azure`            | `Chat`, `Image`               |
-| Vertex AI   | `github.com/zendev-sh/goai/provider/vertex`           | `Chat`, `Embedding`, `Image`  |
-| Bedrock     | `github.com/zendev-sh/goai/provider/bedrock`          | `Chat`                        |
-| Mistral     | `github.com/zendev-sh/goai/provider/mistral`          | `Chat`                        |
-| xAI         | `github.com/zendev-sh/goai/provider/xai`              | `Chat`                        |
-| Groq        | `github.com/zendev-sh/goai/provider/groq`             | `Chat`                        |
-| DeepInfra   | `github.com/zendev-sh/goai/provider/deepinfra`        | `Chat`                        |
-| OpenRouter  | `github.com/zendev-sh/goai/provider/openrouter`       | `Chat`                        |
-| DeepSeek    | `github.com/zendev-sh/goai/provider/deepseek`         | `Chat`                        |
-| Fireworks   | `github.com/zendev-sh/goai/provider/fireworks`        | `Chat`                        |
-| Together    | `github.com/zendev-sh/goai/provider/together`         | `Chat`                        |
-| Cohere      | `github.com/zendev-sh/goai/provider/cohere`           | `Chat`, `Embedding`           |
-| Cerebras    | `github.com/zendev-sh/goai/provider/cerebras`         | `Chat`                        |
-| Perplexity  | `github.com/zendev-sh/goai/provider/perplexity`       | `Chat`                        |
-| Ollama      | `github.com/zendev-sh/goai/provider/ollama`           | `Chat`, `Embedding`           |
-| vLLM        | `github.com/zendev-sh/goai/provider/vllm`             | `Chat`, `Embedding`           |
-| Compat      | `github.com/zendev-sh/goai/provider/compat`           | `Chat`, `Embedding`           |
+| Provider   | Import Path                                     | Factory Functions            |
+| ---------- | ----------------------------------------------- | ---------------------------- |
+| OpenAI     | `github.com/zendev-sh/goai/provider/openai`     | `Chat`, `Embedding`, `Image` |
+| Anthropic  | `github.com/zendev-sh/goai/provider/anthropic`  | `Chat`                       |
+| Google     | `github.com/zendev-sh/goai/provider/google`     | `Chat`, `Embedding`, `Image` |
+| Azure      | `github.com/zendev-sh/goai/provider/azure`      | `Chat`, `Image`              |
+| Vertex AI  | `github.com/zendev-sh/goai/provider/vertex`     | `Chat`, `Embedding`, `Image` |
+| Bedrock    | `github.com/zendev-sh/goai/provider/bedrock`    | `Chat`                       |
+| Mistral    | `github.com/zendev-sh/goai/provider/mistral`    | `Chat`                       |
+| xAI        | `github.com/zendev-sh/goai/provider/xai`        | `Chat`                       |
+| Groq       | `github.com/zendev-sh/goai/provider/groq`       | `Chat`                       |
+| DeepInfra  | `github.com/zendev-sh/goai/provider/deepinfra`  | `Chat`                       |
+| OpenRouter | `github.com/zendev-sh/goai/provider/openrouter` | `Chat`                       |
+| DeepSeek   | `github.com/zendev-sh/goai/provider/deepseek`   | `Chat`                       |
+| Fireworks  | `github.com/zendev-sh/goai/provider/fireworks`  | `Chat`                       |
+| Together   | `github.com/zendev-sh/goai/provider/together`   | `Chat`                       |
+| Cohere     | `github.com/zendev-sh/goai/provider/cohere`     | `Chat`, `Embedding`          |
+| Cerebras   | `github.com/zendev-sh/goai/provider/cerebras`   | `Chat`                       |
+| Perplexity | `github.com/zendev-sh/goai/provider/perplexity` | `Chat`                       |
+| Ollama     | `github.com/zendev-sh/goai/provider/ollama`     | `Chat`, `Embedding`          |
+| vLLM       | `github.com/zendev-sh/goai/provider/vllm`       | `Chat`, `Embedding`          |
+| Compat     | `github.com/zendev-sh/goai/provider/compat`     | `Chat`, `Embedding`          |
 
 The `compat` provider works with any OpenAI-compatible API. Pass a custom base URL:
 

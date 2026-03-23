@@ -49,11 +49,11 @@ type StepResult struct {
 
 A streaming text generation response with three consumption modes.
 
-| Method | Return Type | Description |
-|--------|-------------|-------------|
-| `Stream()` | `<-chan provider.StreamChunk` | Raw stream chunks (all types). |
-| `TextStream()` | `<-chan string` | Text content only. |
-| `Result()` | `*TextResult` | Blocks until complete, returns accumulated result. |
+| Method         | Return Type                   | Description                                        |
+| -------------- | ----------------------------- | -------------------------------------------------- |
+| `Stream()`     | `<-chan provider.StreamChunk` | Raw stream chunks (all types).                     |
+| `TextStream()` | `<-chan string`               | Text content only.                                 |
+| `Result()`     | `*TextResult`                 | Blocks until complete, returns accumulated result. |
 
 `Stream()` and `TextStream()` are mutually exclusive. `Result()` can be called after either.
 
@@ -74,10 +74,10 @@ type ObjectResult[T any] struct {
 
 A streaming structured output response.
 
-| Method | Return Type | Description |
-|--------|-------------|-------------|
-| `PartialObjectStream()` | `<-chan *T` | Emits progressively populated partial objects. |
-| `Result()` | `(*ObjectResult[T], error)` | Blocks until complete, returns final validated object. |
+| Method                  | Return Type                 | Description                                            |
+| ----------------------- | --------------------------- | ------------------------------------------------------ |
+| `PartialObjectStream()` | `<-chan *T`                 | Emits progressively populated partial objects.         |
+| `Result()`              | `(*ObjectResult[T], error)` | Blocks until complete, returns final validated object. |
 
 ### EmbedResult
 
@@ -152,7 +152,6 @@ Passed to the `OnRequest` hook before a generation call.
 
 ```go
 type RequestInfo struct {
-    Provider     string    // Provider identifier (e.g. "openai", "anthropic").
     Model        string    // Model ID.
     MessageCount int       // Number of messages in the request.
     ToolCount    int       // Number of tools available.
@@ -210,8 +209,25 @@ type LanguageModel interface {
     ModelID() string
     DoGenerate(ctx context.Context, params GenerateParams) (*GenerateResult, error)
     DoStream(ctx context.Context, params GenerateParams) (*StreamResult, error)
+}
+```
+
+### CapableModel
+
+Optional interface that `LanguageModel` implementations can satisfy to declare capabilities. Use `ModelCapabilitiesOf` to query safely.
+
+```go
+type CapableModel interface {
     Capabilities() ModelCapabilities
 }
+```
+
+### ModelCapabilitiesOf
+
+Returns the model's capabilities if it implements `CapableModel`, or a zero-value `ModelCapabilities` otherwise.
+
+```go
+func ModelCapabilitiesOf(m LanguageModel) ModelCapabilities
 ```
 
 ### EmbeddingModel
@@ -245,18 +261,22 @@ All parameters for a generation request. Constructed internally by GoAI from opt
 
 ```go
 type GenerateParams struct {
-    Messages        []Message          // Conversation history.
-    System          string             // System prompt.
-    Tools           []ToolDefinition   // Available tools.
-    MaxOutputTokens int                // Response length limit (0 = provider default).
-    Temperature     *float64           // Randomness control (nil = provider default).
-    TopP            *float64           // Nucleus sampling (nil = provider default).
-    StopSequences   []string           // Stop generation when encountered.
-    Headers         map[string]string  // Additional HTTP headers.
-    ProviderOptions map[string]any     // Provider-specific parameters.
-    PromptCaching   bool               // Enable prompt caching.
-    ToolChoice      string             // Tool selection: "auto", "none", "required", or tool name.
-    ResponseFormat  *ResponseFormat    // Structured JSON output schema.
+    Messages         []Message          // Conversation history.
+    System           string             // System prompt.
+    Tools            []ToolDefinition   // Available tools.
+    MaxOutputTokens  int                // Response length limit (0 = provider default).
+    Temperature      *float64           // Randomness control (nil = provider default).
+    TopP             *float64           // Nucleus sampling (nil = provider default).
+    TopK             *int               // Top-K sampling (nil = provider default).
+    FrequencyPenalty *float64           // Frequency penalty (nil = provider default).
+    PresencePenalty  *float64           // Presence penalty (nil = provider default).
+    Seed             *int               // Deterministic generation (nil = provider default).
+    StopSequences    []string           // Stop generation when encountered.
+    Headers          map[string]string  // Additional HTTP headers.
+    ProviderOptions  map[string]any     // Provider-specific parameters.
+    PromptCaching    bool               // Enable prompt caching.
+    ToolChoice       string             // Tool selection: "auto", "none", "required", or tool name.
+    ResponseFormat   *ResponseFormat    // Structured JSON output schema.
 }
 ```
 
@@ -432,9 +452,9 @@ type FinishReason string
 
 const (
     FinishStop          FinishReason = "stop"           // Normal completion.
-    FinishToolCalls     FinishReason = "tool_calls"     // Model wants to call tools.
+    FinishToolCalls     FinishReason = "tool-calls"     // Model wants to call tools.
     FinishLength        FinishReason = "length"         // Hit max output tokens.
-    FinishContentFilter FinishReason = "content_filter" // Content policy triggered.
+    FinishContentFilter FinishReason = "content-filter" // Content policy triggered.
     FinishError         FinishReason = "error"          // Generation error.
     FinishOther         FinishReason = "other"          // Provider-specific reason.
 )
@@ -616,4 +636,12 @@ func CachedTokenSource(fetchFn TokenFetchFunc) TokenSource
 
 ```go
 type TokenFetchFunc func(ctx context.Context) (*Token, error)
+```
+
+### TrySend
+
+Utility for provider implementors. Sends a chunk to a stream channel, returning `false` if the context is cancelled. Prevents goroutine leaks when the consumer stops reading.
+
+```go
+func TrySend(ctx context.Context, out chan<- StreamChunk, chunk StreamChunk) bool
 ```

@@ -31,12 +31,12 @@ type APIError struct {
 
 The following HTTP status codes produce retryable errors:
 
-| Status Code | Meaning |
-|-------------|---------|
-| 429 | Too Many Requests (rate limited) |
-| 503 | Service Unavailable |
-| 500+ | Any server error |
-| 404 (OpenAI only) | Intermittent model availability |
+| Status Code       | Meaning                          |
+| ----------------- | -------------------------------- |
+| 429               | Too Many Requests (rate limited) |
+| 503               | Service Unavailable              |
+| 500+              | Any server error                 |
+| 404 (OpenAI only) | Intermittent model availability  |
 
 GoAI's built-in retry logic (controlled by `WithMaxRetries`, default 2) automatically retries these errors with exponential backoff. Non-retryable errors are returned immediately.
 
@@ -85,17 +85,26 @@ func ParseHTTPError(providerID string, statusCode int, body []byte) error
 
 **Parameters:**
 
-| Name | Type | Description |
-|------|------|-------------|
+| Name         | Type     | Description                                                   |
+| ------------ | -------- | ------------------------------------------------------------- |
 | `providerID` | `string` | Provider identifier (e.g., "openai"). Affects retry behavior. |
-| `statusCode` | `int` | HTTP status code from the response. |
-| `body` | `[]byte` | Raw response body. |
+| `statusCode` | `int`    | HTTP status code from the response.                           |
+| `body`       | `[]byte` | Raw response body.                                            |
 
 **Returns:** `*ContextOverflowError` if the error message matches an overflow pattern, otherwise `*APIError`.
 
 The function extracts human-readable error messages from two common API formats:
+
 - Chat Completions format: `{"error": {"message": "..."}}`
 - Responses API format: `{"message": "...", "code": "...", "type": "..."}`
+
+## ParseHTTPErrorWithHeaders
+
+Like `ParseHTTPError` but preserves retry-related response headers (`Retry-After`, `Retry-After-ms`) on the returned `*APIError`. Used by providers to support header-based backoff.
+
+```go
+func ParseHTTPErrorWithHeaders(providerID string, statusCode int, body []byte, headers http.Header) error
+```
 
 ---
 
@@ -110,22 +119,49 @@ func ParseStreamError(body []byte) *ParsedStreamError
 Returns `nil` if the body does not contain a recognized error event. When non-nil, the `ParsedStreamError` contains:
 
 ```go
+type StreamErrorType string
+
+const (
+    StreamErrorContextOverflow StreamErrorType = "context_overflow"
+    StreamErrorAPI             StreamErrorType = "api_error"
+)
+
 type ParsedStreamError struct {
-    Type         string // "context_overflow" or "api_error".
-    Message      string // Human-readable error message.
-    IsRetryable  bool   // Whether this error can be retried.
-    ResponseBody string // Raw event body.
+    Type         StreamErrorType // "context_overflow" or "api_error".
+    Message      string          // Human-readable error message.
+    IsRetryable  bool            // Whether this error can be retried.
+    ResponseBody string          // Raw event body.
 }
 ```
 
 Recognized stream error codes:
 
-| Code | Type | Retryable |
-|------|------|-----------|
-| `context_length_exceeded` | `context_overflow` | No |
-| `insufficient_quota` | `api_error` | No |
-| `usage_not_included` | `api_error` | No |
-| `invalid_prompt` | `api_error` | No |
+| Code                      | Type               | Retryable |
+| ------------------------- | ------------------ | --------- |
+| `context_length_exceeded` | `context_overflow` | No        |
+| `insufficient_quota`      | `api_error`        | No        |
+| `usage_not_included`      | `api_error`        | No        |
+| `invalid_prompt`          | `api_error`        | No        |
+
+---
+
+## ClassifyStreamError
+
+Higher-level variant of `ParseStreamError` that returns typed errors directly. Returns `*ContextOverflowError` or `*APIError`, or `nil` if the data is not a recognized error event.
+
+```go
+func ClassifyStreamError(body []byte) error
+```
+
+---
+
+## ErrUnknownTool
+
+Sentinel error set on `ToolCallInfo.Error` when a tool call references a tool not in the tool map during auto tool loop execution.
+
+```go
+var ErrUnknownTool = errors.New("goai: unknown tool")
+```
 
 ---
 

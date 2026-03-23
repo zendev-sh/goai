@@ -56,18 +56,18 @@ result, err := goai.GenerateText(ctx, model,
 
 Import: `github.com/zendev-sh/goai/provider/anthropic`
 
-| Factory | Description |
-|---------|-------------|
-| `anthropic.Tools.Computer(opts)` | Computer use - screenshot, mouse, keyboard (v20250124) |
-| `anthropic.Tools.Computer_20251124(opts)` | Computer use with zoom support (Opus 4.5+) |
-| `anthropic.Tools.Bash()` | Bash shell execution (v20250124) |
-| `anthropic.Tools.TextEditor()` | Text editor - view, create, replace (v20250429) |
-| `anthropic.Tools.TextEditor_20250728(opts...)` | Text editor with optional maxCharacters (Sonnet 4+) |
-| `anthropic.Tools.WebSearch(opts...)` | Web search via Brave Search (v20250305) |
-| `anthropic.Tools.WebSearch_20260209(opts...)` | Web search (v20260209, requires beta header) |
-| `anthropic.Tools.WebFetch(opts...)` | Fetch web content by URL (v20260209) |
-| `anthropic.Tools.CodeExecution()` | Python code execution in sandbox (v20260120) |
-| `anthropic.Tools.CodeExecution_20250825()` | Code execution (v20250825, requires beta header) |
+| Factory                                        | Description                                            |
+| ---------------------------------------------- | ------------------------------------------------------ |
+| `anthropic.Tools.Computer(opts)`               | Computer use - screenshot, mouse, keyboard (v20250124) |
+| `anthropic.Tools.Computer_20251124(opts)`      | Computer use with zoom support (Opus 4.5+)             |
+| `anthropic.Tools.Bash()`                       | Bash shell execution (v20250124)                       |
+| `anthropic.Tools.TextEditor()`                 | Text editor - view, create, replace (v20250429)        |
+| `anthropic.Tools.TextEditor_20250728(opts...)` | Text editor with optional maxCharacters (Sonnet 4+)    |
+| `anthropic.Tools.WebSearch(opts...)`           | Web search via Brave Search (v20250305)                |
+| `anthropic.Tools.WebSearch_20260209(opts...)`  | Web search (v20260209, requires beta header)           |
+| `anthropic.Tools.WebFetch(opts...)`            | Fetch web content by URL (v20260209)                   |
+| `anthropic.Tools.CodeExecution()`              | Python code execution in sandbox (v20260120)           |
+| `anthropic.Tools.CodeExecution_20250825()`     | Code execution (v20250825, requires beta header)       |
 
 ```go
 // Each factory returns a provider.ToolDefinition. Wrap with goai.Tool{} before passing to WithTools.
@@ -92,11 +92,11 @@ td := anthropic.Tools.CodeExecution()
 
 Import: `github.com/zendev-sh/goai/provider/openai`
 
-| Factory | Description |
-|---------|-------------|
-| `openai.Tools.WebSearch(opts...)` | Web search via Responses API |
-| `openai.Tools.CodeInterpreter(opts...)` | Python code execution in sandbox |
-| `openai.Tools.FileSearch(opts...)` | Semantic search over uploaded files |
+| Factory                                 | Description                           |
+| --------------------------------------- | ------------------------------------- |
+| `openai.Tools.WebSearch(opts...)`       | Web search via Responses API          |
+| `openai.Tools.CodeInterpreter(opts...)` | Python code execution in sandbox      |
+| `openai.Tools.FileSearch(opts...)`      | Semantic search over uploaded files   |
 | `openai.Tools.ImageGeneration(opts...)` | Generate images within a conversation |
 
 ```go
@@ -114,7 +114,7 @@ td := openai.Tools.WebSearch(
 
 // Code interpreter with container
 td := openai.Tools.CodeInterpreter(
-    openai.WithContainer("container-id"),
+    openai.WithContainerID("container-id"),
 )
 
 // File search with vector stores
@@ -134,11 +134,11 @@ td := openai.Tools.ImageGeneration(
 
 Import: `github.com/zendev-sh/goai/provider/google`
 
-| Factory | Description |
-|---------|-------------|
-| `google.Tools.GoogleSearch(opts...)` | Grounding with Google Search |
-| `google.Tools.URLContext()` | Fetch and process web content from URLs |
-| `google.Tools.CodeExecution()` | Python code execution in sandbox |
+| Factory                              | Description                             |
+| ------------------------------------ | --------------------------------------- |
+| `google.Tools.GoogleSearch(opts...)` | Grounding with Google Search            |
+| `google.Tools.URLContext()`          | Fetch and process web content from URLs |
+| `google.Tools.CodeExecution()`       | Python code execution in sandbox        |
 
 ```go
 // Each factory returns a provider.ToolDefinition. Wrap with goai.Tool{} before passing to WithTools.
@@ -159,10 +159,10 @@ td := google.Tools.CodeExecution()
 
 Import: `github.com/zendev-sh/goai/provider/xai`
 
-| Factory | Description |
-|---------|-------------|
-| `xai.Tools.WebSearch(opts...)` | Web search |
-| `xai.Tools.XSearch(opts...)` | Search posts on X (Twitter) |
+| Factory                        | Description                 |
+| ------------------------------ | --------------------------- |
+| `xai.Tools.WebSearch(opts...)` | Web search                  |
+| `xai.Tools.XSearch(opts...)`   | Search posts on X (Twitter) |
 
 ```go
 // Each factory returns a provider.ToolDefinition. Wrap with goai.Tool{} before passing to WithTools.
@@ -183,8 +183,8 @@ td := xai.Tools.XSearch(
 
 Import: `github.com/zendev-sh/goai/provider/groq`
 
-| Factory | Description |
-|---------|-------------|
+| Factory                      | Description                |
+| ---------------------------- | -------------------------- |
 | `groq.Tools.BrowserSearch()` | Interactive browser search |
 
 ```go
