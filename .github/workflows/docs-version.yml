@@ -3,6 +3,11 @@ name: Docs (versioned)
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag to build (e.g. v0.4.2)"
+        required: true
 
 permissions:
   contents: read
@@ -22,7 +27,7 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+        run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
 
       - name: Build versioned docs
         run: npm run build
