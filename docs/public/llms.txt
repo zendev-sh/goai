@@ -1,0 +1,71 @@
+# GoAI SDK
+
+> Go SDK for building AI applications. One unified API across 20+ LLM providers.
+
+GoAI SDK is an open-source Go library inspired by the Vercel AI SDK, designed idiomatically for Go with generics, interfaces, and channels. It provides a single API surface for text generation, streaming, structured output, embeddings, image generation, and tool calling across 20+ providers including OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure, and more.
+
+- Website: https://goai.sh
+- GitHub: https://github.com/zendev-sh/goai
+- GoDoc: https://pkg.go.dev/github.com/zendev-sh/goai
+- License: MIT
+
+## Install
+
+```
+go get github.com/zendev-sh/goai@latest
+```
+
+Requires Go 1.25+. Zero external dependencies (stdlib only, except golang.org/x/oauth2 for Vertex AI).
+
+## Core Functions
+
+- `GenerateText` — non-streaming text generation
+- `StreamText` — real-time streaming via Go channels
+- `GenerateObject[T]` — type-safe structured output using Go generics
+- `StreamObject[T]` — partial object streaming with typed results
+- `Embed` / `EmbedMany` — text embeddings with auto-chunking
+- `GenerateImage` — image generation (OpenAI, Google, Azure)
+
+## Docs
+
+- [Getting Started](https://goai.sh/getting-started/installation.html)
+- [Quick Start](https://goai.sh/getting-started/quick-start.html)
+- [Structured Output](https://goai.sh/getting-started/structured-output.html)
+- [Streaming](https://goai.sh/concepts/streaming.html)
+- [Tools](https://goai.sh/concepts/tools.html)
+- [Provider-Defined Tools](https://goai.sh/concepts/provider-tools.html)
+- [TokenSource](https://goai.sh/concepts/token-source.html)
+- [Error Handling](https://goai.sh/concepts/error-handling.html)
+- [Prompt Caching](https://goai.sh/concepts/prompt-caching.html)
+- [Providers Overview](https://goai.sh/providers/)
+- [API: Core Functions](https://goai.sh/api/core-functions.html)
+- [API: Types](https://goai.sh/api/types.html)
+- [API: Options](https://goai.sh/api/options.html)
+- [API: Errors](https://goai.sh/api/errors.html)
+- [Examples](https://goai.sh/examples.html)
+- [Compare with other Go AI libraries](https://goai.sh/compare.html)
+
+## Supported Providers
+
+### Tier 1 (dedicated implementations)
+- OpenAI (`OPENAI_API_KEY`) — Chat, Embed, Image, 4 provider tools
+- Anthropic (`ANTHROPIC_API_KEY`) — Chat, 10 provider tools
+- Google Gemini (`GOOGLE_API_KEY`) - Chat, Embed, Image, 3 provider tools (google search, URL context, code execution)
+- AWS Bedrock (`AWS_ACCESS_KEY_ID`) — Chat
+- Azure OpenAI (`AZURE_OPENAI_API_KEY`) — Chat, Embed, Image
+- Vertex AI (ADC) — Chat, Embed, Image
+
+### Tier 2
+- Cohere, Mistral, DeepSeek
+- xAI (Grok) (`XAI_API_KEY`) — Chat, 2 provider tools (web search, X search)
+- Groq (`GROQ_API_KEY`) — Chat, 1 provider tool (browser search)
+
+### Tier 3 (OpenAI-compatible)
+- Fireworks, Together, DeepInfra, OpenRouter, Perplexity, Cerebras
+
+### Local / Custom
+- Ollama, vLLM, any OpenAI-compatible endpoint
+
+## Optional
+
+- [Full documentation for LLMs](https://goai.sh/llms-full.txt)
