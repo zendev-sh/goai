@@ -1,5 +1,6 @@
 {
   "latest": "v0.4.2",
+  "branchBaseURL": "https://{branch}.goai-2lz.pages.dev",
   "versions": [
     {
       "tag": "v0.4.2",
