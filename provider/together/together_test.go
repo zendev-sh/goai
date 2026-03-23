@@ -291,3 +291,13 @@ func TestChat_EnvVarNotOverrideExplicit(t *testing.T) {
 		t.Errorf("baseURL = %q", cm.opts.baseURL)
 	}
 }
+
+func TestChat_EnvVarResolution_TogetherAPIKey(t *testing.T) {
+	// TOGETHER_API_KEY should work as fallback when TOGETHER_AI_API_KEY is not set.
+	t.Setenv("TOGETHER_API_KEY", "alt-key")
+	m := Chat("m")
+	cm := m.(*chatModel)
+	if cm.opts.tokenSource == nil {
+		t.Error("tokenSource should be set from TOGETHER_API_KEY")
+	}
+}

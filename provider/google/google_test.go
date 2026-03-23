@@ -922,6 +922,8 @@ func TestWithHeaders(t *testing.T) {
 }
 
 func TestNoTokenSource(t *testing.T) {
+	t.Setenv("GOOGLE_GENERATIVE_AI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
 	model := Chat("gemini-2.5-flash")
 	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
 		Messages: []provider.Message{
@@ -1741,8 +1743,8 @@ func TestChat_Generate_ProviderOptionsPassthrough(t *testing.T) {
 				"safetySettings": []map[string]any{
 					{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
 				},
-				"cachedContent":  "cachedContents/xyz",
-				"labels":         map[string]any{"env": "test"},
+				"cachedContent":   "cachedContents/xyz",
+				"labels":          map[string]any{"env": "test"},
 				"mediaResolution": "MEDIA_RESOLUTION_LOW",
 				"audioTimestamp":  true,
 			},
@@ -2375,5 +2377,15 @@ func TestImage_EnvVarAPIKey_Gemini(t *testing.T) {
 	gm := model.(*geminiImageModel)
 	if gm.opts.tokenSource == nil {
 		t.Error("tokenSource should be set from GOOGLE_GENERATIVE_AI_API_KEY")
+	}
+}
+
+func TestChat_EnvVarResolution_GeminiAPIKey(t *testing.T) {
+	// GEMINI_API_KEY should work as fallback when GOOGLE_GENERATIVE_AI_API_KEY is not set.
+	t.Setenv("GEMINI_API_KEY", "gemini-key")
+	m := Chat("gemini-2.5-flash")
+	cm := m.(*chatModel)
+	if cm.opts.tokenSource == nil {
+		t.Error("tokenSource should be set from GEMINI_API_KEY")
 	}
 }

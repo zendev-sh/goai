@@ -1733,7 +1733,7 @@ func TestIsStreamChunkToolError(t *testing.T) {
 
 // apiErrorTransport returns an API error response to trigger fallbacks.
 type apiErrorTransport struct {
-	calls    int
+	calls     int
 	responses []apiErrorResponse
 }
 type apiErrorResponse struct {
@@ -2341,6 +2341,21 @@ func TestConvertParts_ReasoningWithSignature(t *testing.T) {
 	}
 }
 
+func TestConvertParts_ReasoningWithoutSignature(t *testing.T) {
+	// Reasoning from other providers (e.g. Gemini) may lack signature.
+	// These should be skipped to avoid Bedrock validation errors.
+	parts := convertParts([]provider.Part{
+		{Type: provider.PartReasoning, Text: "gemini thinking"},
+		{Type: provider.PartText, Text: "answer"},
+	}, make(map[string]int))
+	if len(parts) != 1 {
+		t.Fatalf("parts = %d, want 1 (reasoning without signature skipped)", len(parts))
+	}
+	if parts[0]["text"] != "answer" {
+		t.Errorf("part[0] = %v, want text answer", parts[0])
+	}
+}
+
 func TestConvertParts_ReasoningRedacted(t *testing.T) {
 	parts := convertParts([]provider.Part{
 		{
@@ -2491,8 +2506,8 @@ func TestSanitizeDocumentName(t *testing.T) {
 		{"file  with   spaces", "file with spaces"},
 		{"my.report.v2.final.pdf", "my-report-v2-final-pdf"},
 		{"archive.tar.gz", "archive-tar-gz"},
-		{"báo_cáo.pdf", "b-o-c-o-pdf"},   // Vietnamese with diacritics → keep ASCII parts
-		{"レポート2024.pdf", "2024-pdf"},     // Japanese + number → keep number + ext
+		{"báo_cáo.pdf", "b-o-c-o-pdf"},                                // Vietnamese with diacritics → keep ASCII parts
+		{"レポート2024.pdf", "2024-pdf"},                                  // Japanese + number → keep number + ext
 		{strings.Repeat("a", 250) + ".pdf", strings.Repeat("a", 200)}, // 250 + "-pdf" = 254, truncated to 200
 	}
 	for _, tt := range tests {
@@ -2930,9 +2945,9 @@ func TestEventStreamDecoder_StringValueLengthOverflow(t *testing.T) {
 func TestEventStreamDecoder_StringValueOverflow(t *testing.T) {
 	// String header with valid length prefix but not enough data.
 	var header bytes.Buffer
-	header.WriteByte(1)    // nameLen
-	header.WriteByte('x')  // name
-	header.WriteByte(7)    // type = string
+	header.WriteByte(1)                                      // nameLen
+	header.WriteByte('x')                                    // name
+	header.WriteByte(7)                                      // type = string
 	_ = binary.Write(&header, binary.BigEndian, uint16(100)) // valLen=100, but no value bytes
 	frame := buildFrameWithRawHeaders(header.Bytes())
 	decoder := newEventStreamDecoder(bytes.NewReader(frame))
@@ -2945,9 +2960,9 @@ func TestEventStreamDecoder_StringValueOverflow(t *testing.T) {
 func TestEventStreamDecoder_BytesHeaderType(t *testing.T) {
 	// Bytes header (type 6) with valid length.
 	var header bytes.Buffer
-	header.WriteByte(1)    // nameLen
-	header.WriteByte('b')  // name
-	header.WriteByte(6)    // type = bytes
+	header.WriteByte(1)                                    // nameLen
+	header.WriteByte('b')                                  // name
+	header.WriteByte(6)                                    // type = bytes
 	_ = binary.Write(&header, binary.BigEndian, uint16(3)) // bLen=3
 	header.Write([]byte{1, 2, 3})                          // data
 	frame := buildFrameWithRawHeaders(header.Bytes())
@@ -2985,12 +3000,12 @@ func TestEventStreamDecoder_UnknownHeaderType(t *testing.T) {
 func TestEventStreamDecoder_BoolHeaderType(t *testing.T) {
 	// Bool true (type 0) and bool false (type 1).
 	var header bytes.Buffer
-	header.WriteByte(1)    // nameLen
-	header.WriteByte('t')  // name
-	header.WriteByte(0)    // type = bool true
-	header.WriteByte(1)    // nameLen
-	header.WriteByte('f')  // name
-	header.WriteByte(1)    // type = bool false
+	header.WriteByte(1)   // nameLen
+	header.WriteByte('t') // name
+	header.WriteByte(0)   // type = bool true
+	header.WriteByte(1)   // nameLen
+	header.WriteByte('f') // name
+	header.WriteByte(1)   // type = bool false
 	frame := buildFrameWithRawHeaders(header.Bytes())
 	decoder := newEventStreamDecoder(bytes.NewReader(frame))
 	_, err := decoder.Next()
@@ -3466,7 +3481,7 @@ func TestApplyBedrockOptions_ProviderOptsReasoningConfig(t *testing.T) {
 	providerOpts := map[string]any{
 		"reasoningConfig": map[string]any{
 			"type":               "enabled",
-			"budgetTokens":      float64(5000),
+			"budgetTokens":       float64(5000),
 			"maxReasoningEffort": "high",
 		},
 	}
