@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/provider"
@@ -90,11 +91,9 @@ func TestChat_Stream(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
 		// Text delta frame.
-		w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"Hello"}}`)))
-		// Message stop frame.
-		w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
-		// Metadata frame with usage.
-		w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":10,"outputTokens":5,"totalTokens":15}}`)))
+		_, _ = w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"Hello"}}`)))
+		_, _ = w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
+		_, _ = w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":10,"outputTokens":5,"totalTokens":15}}`)))
 	}))
 	defer server.Close()
 
@@ -133,7 +132,7 @@ func TestChat_Generate(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Amzn-Requestid", "test-request-id-123")
-		fmt.Fprint(w, converseResponse("Hello world", "end_turn", 10, 5))
+		_, _ = fmt.Fprint(w, converseResponse("Hello world", "end_turn", 10, 5))
 	}))
 	defer server.Close()
 
@@ -182,7 +181,7 @@ func TestChat_MissingCredentials(t *testing.T) {
 func TestChat_HTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
-		fmt.Fprint(w, `{"error":{"message":"Rate limited"}}`)
+		_, _ = fmt.Fprint(w, `{"error":{"message":"Rate limited"}}`)
 	}))
 	defer server.Close()
 
@@ -207,7 +206,7 @@ func TestWithSessionToken(t *testing.T) {
 			t.Error("missing session token header")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
+		_, _ = fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
 	}))
 	defer server.Close()
 
@@ -339,16 +338,15 @@ func TestToolCallStreaming(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
 		// contentBlockStart with toolUse.
-		w.Write(buildEventStreamFrame("contentBlockStart", []byte(`{"contentBlockIndex":0,"start":{"toolUse":{"toolUseId":"call_1","name":"get_weather"}}}`)))
-		// Tool input deltas.
-		w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"toolUse":{"input":"{\"city\""}}}`)))
-		w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"toolUse":{"input":": \"Paris\"}"}}}`)))
+		_, _ = w.Write(buildEventStreamFrame("contentBlockStart", []byte(`{"contentBlockIndex":0,"start":{"toolUse":{"toolUseId":"call_1","name":"get_weather"}}}`)))
+		time.Sleep(10 * time.Millisecond)
+		_, _ = w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"toolUse":{"input":"{\"city\""}}}`)))
+		_, _ = w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"toolUse":{"input":": \"Paris\"}"}}}`)))
 		// contentBlockStop.
-		w.Write(buildEventStreamFrame("contentBlockStop", []byte(`{"contentBlockIndex":0}`)))
-		// messageStop.
-		w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"tool_use"}`)))
-		// metadata.
-		w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":10,"outputTokens":20,"totalTokens":30}}`)))
+		_, _ = w.Write(buildEventStreamFrame("contentBlockStop", []byte(`{"contentBlockIndex":0}`)))
+		// messageStop and metadata.
+		_, _ = w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"tool_use"}`)))
+		_, _ = w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":10,"outputTokens":20,"totalTokens":30}}`)))
 	}))
 	defer server.Close()
 
@@ -384,7 +382,7 @@ func TestWithHeaders(t *testing.T) {
 			t.Error("missing custom header")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
+		_, _ = fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
 	}))
 	defer server.Close()
 
@@ -438,7 +436,7 @@ func TestDoGenerate_ReadError(t *testing.T) {
 func TestDoGenerate_ParseError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{invalid json`)
+		_, _ = fmt.Fprint(w, `{invalid json`)
 	}))
 	defer server.Close()
 
@@ -561,7 +559,7 @@ func TestRequestHeaders(t *testing.T) {
 			t.Errorf("X-Request-Header = %q", r.Header.Get("X-Request-Header"))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
+		_, _ = fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
 	}))
 	defer server.Close()
 
@@ -580,7 +578,7 @@ func TestRequestHeaders(t *testing.T) {
 func TestHTTPError_DoGenerate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, `{"error":{"message":"bad request"}}`)
+		_, _ = fmt.Fprint(w, `{"error":{"message":"bad request"}}`)
 	}))
 	defer server.Close()
 
@@ -617,7 +615,7 @@ func TestWithAdditionalModelRequestFields(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
+		_, _ = fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
 	}))
 	defer server.Close()
 
@@ -655,9 +653,9 @@ func TestWithAdditionalModelRequestFields_Stream(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
-		w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"ok"}}`)))
-		w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
-		w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
+		_, _ = w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"ok"}}`)))
+		_, _ = w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
+		_, _ = w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 	}))
 	defer server.Close()
 
@@ -702,7 +700,7 @@ func TestWithReasoningConfig_AnthropicEnabled(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
+		_, _ = fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
 	}))
 	defer server.Close()
 
@@ -747,7 +745,7 @@ func TestWithReasoningConfig_AnthropicAdaptive(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
+		_, _ = fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
 	}))
 	defer server.Close()
 
@@ -788,7 +786,7 @@ func TestWithReasoningConfig_AnthropicEffort(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
+		_, _ = fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
 	}))
 	defer server.Close()
 
@@ -837,7 +835,7 @@ func TestWithReasoningConfig_NonAnthropic(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
+		_, _ = fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
 	}))
 	defer server.Close()
 
@@ -877,7 +875,7 @@ func TestWithReasoningConfig_DisabledNoFields(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
+		_, _ = fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
 	}))
 	defer server.Close()
 
@@ -919,7 +917,7 @@ func TestWithAnthropicBeta(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
+		_, _ = fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
 	}))
 	defer server.Close()
 
@@ -956,9 +954,9 @@ func TestWithAnthropicBeta_Stream(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
-		w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"ok"}}`)))
-		w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
-		w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
+		_, _ = w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"ok"}}`)))
+		_, _ = w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
+		_, _ = w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 	}))
 	defer server.Close()
 
@@ -993,7 +991,7 @@ func TestWithAnthropicBeta_Empty(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
+		_, _ = fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
 	}))
 	defer server.Close()
 
@@ -1038,7 +1036,7 @@ func TestCombined_ReasoningAndBeta(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
+		_, _ = fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
 	}))
 	defer server.Close()
 
@@ -1097,7 +1095,7 @@ func TestProviderDefinedToolBeta(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Amzn-Requestid", "test-123")
-		fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
+		_, _ = fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
 	}))
 	defer server.Close()
 
@@ -1168,7 +1166,7 @@ func TestCombined_AdditionalFieldsAndReasoning(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
+		_, _ = fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
 	}))
 	defer server.Close()
 
@@ -1494,12 +1492,12 @@ func TestDoStream_ToolStreamingRetry(t *testing.T) {
 		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
 		if callCount == 1 {
 			// First call: send an exception frame about tool streaming not supported.
-			w.Write(buildExceptionFrame("validationException", `tool streaming is not supported for this model`))
+			_, _ = w.Write(buildExceptionFrame("validationException", `tool streaming is not supported for this model`))
 		} else {
 			// Second call (retry without tools): succeed.
-			w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"retried"}}`)))
-			w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
-			w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
+			_, _ = w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"retried"}}`)))
+			_, _ = w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
+			_, _ = w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 		}
 	}))
 	defer server.Close()
@@ -1560,10 +1558,10 @@ func TestDoStream_ToolStreamingRetryError(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
-			w.Write(buildExceptionFrame("validationException", `tool streaming is not supported for this model`))
+			_, _ = w.Write(buildExceptionFrame("validationException", `tool streaming is not supported for this model`))
 		} else {
 			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprint(w, `{"error":{"message":"internal error"}}`)
+			_, _ = fmt.Fprint(w, `{"error":{"message":"internal error"}}`)
 		}
 	}))
 	defer server.Close()
@@ -1586,7 +1584,7 @@ func TestDoStream_NonToolErrorBreak(t *testing.T) {
 	// Non-tool error should break peeking, not retry.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
-		w.Write(buildExceptionFrame("modelError", `some random model error`))
+		_, _ = w.Write(buildExceptionFrame("modelError", `some random model error`))
 	}))
 	defer server.Close()
 
@@ -1618,12 +1616,12 @@ func TestDoStream_CtxDoneInForwarding(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
 		// Send a text chunk, then many more to trigger ctx cancellation.
-		w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"A"}}`)))
+		_, _ = w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"A"}}`)))
 		for i := 0; i < 100; i++ {
-			w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"B"}}`)))
+			_, _ = w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"B"}}`)))
 		}
-		w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
-		w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
+		_, _ = w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
+		_, _ = w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 	}))
 	defer server.Close()
 
@@ -1660,11 +1658,11 @@ func TestDoStream_ToolCallStreamStartBreak(t *testing.T) {
 	// ToolCallStreamStart should break peeking loop.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
-		w.Write(buildEventStreamFrame("contentBlockStart", []byte(`{"contentBlockIndex":0,"start":{"toolUse":{"toolUseId":"c1","name":"test"}}}`)))
-		w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"toolUse":{"input":"{}"}}}`)))
-		w.Write(buildEventStreamFrame("contentBlockStop", []byte(`{"contentBlockIndex":0}`)))
-		w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"tool_use"}`)))
-		w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
+		_, _ = w.Write(buildEventStreamFrame("contentBlockStart", []byte(`{"contentBlockIndex":0,"start":{"toolUse":{"toolUseId":"c1","name":"test"}}}`)))
+		_, _ = w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"toolUse":{"input":"{}"}}}`)))
+		_, _ = w.Write(buildEventStreamFrame("contentBlockStop", []byte(`{"contentBlockIndex":0}`)))
+		_, _ = w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"tool_use"}`)))
+		_, _ = w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 	}))
 	defer server.Close()
 
@@ -1695,7 +1693,7 @@ func TestDoStream_FinishBreak(t *testing.T) {
 	// ChunkFinish should break peeking loop.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
-		w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
+		_, _ = w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 	}))
 	defer server.Close()
 
@@ -3149,10 +3147,11 @@ func TestDoStream_CtxDoneInForwardingRemaining(t *testing.T) {
 				w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
 				// Many text chunks to fill buffers.
 				for i := 0; i < 100; i++ {
-					w.Write(buildEventStreamFrame("contentBlockDelta", []byte(fmt.Sprintf(`{"contentBlockIndex":0,"delta":{"text":"chunk%d"}}`, i))))
+					_, _ = w.Write(buildEventStreamFrame("contentBlockDelta", []byte(fmt.Sprintf(`{"contentBlockIndex":0,"delta":{"text":"chunk%d"}}`, i))))
 				}
-				w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
-				w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
+				_, _ = w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
+				_, _ = w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
+
 			}))
 			defer server.Close()
 
@@ -3854,7 +3853,7 @@ func TestDoGenerate_ResponseFormat(t *testing.T) {
 		// Respond with a tool call for __json_response.
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Amzn-Requestid", "rf-test")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"output": {"message": {"role": "assistant", "content": [
 				{"toolUse": {"toolUseId": "tc_rf", "name": "__json_response", "input": {"name": "Alice", "age": 30}}}
 			]}},
@@ -3899,7 +3898,7 @@ func TestDoGenerate_ResponseFormat_WithOtherToolCalls(t *testing.T) {
 	// FinishReason should NOT be changed to stop.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"output": {"message": {"role": "assistant", "content": [
 				{"toolUse": {"toolUseId": "tc_other", "name": "search", "input": {"q": "test"}}},
 				{"toolUse": {"toolUseId": "tc_rf", "name": "__json_response", "input": {"answer": "42"}}}
@@ -3981,9 +3980,9 @@ func TestDoStream_ResponseFormat(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
-		w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"streamed"}}`)))
-		w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
-		w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
+		_, _ = w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"ok"}}`)))
+		_, _ = w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
+		_, _ = w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 	}))
 	defer server.Close()
 
@@ -4085,14 +4084,14 @@ func TestDoStream_ToolStreamingRetry_DrainCtxDone(t *testing.T) {
 		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
 		if callCount == 1 {
 			// Send a tool streaming error exception.
-			w.Write(buildExceptionFrame("validationException", `tool streaming is not supported`))
+			_, _ = w.Write(buildExceptionFrame("validationException", `tool streaming is not supported`))
 			w.(http.Flusher).Flush()
 			// Hold connection open so drain goroutine blocks on innerCh.
 			<-firstConnHold
 		} else {
-			w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"retried"}}`)))
-			w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
-			w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
+			_, _ = w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"retried"}}`)))
+			_, _ = w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
+			_, _ = w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 		}
 	}))
 	defer server.Close()

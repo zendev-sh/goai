@@ -33,6 +33,12 @@ func Embedding(modelID string, opts ...Option) provider.EmbeddingModel {
 			o.tokenSource = provider.StaticToken(key)
 		}
 	}
+	// Resolve base URL from env if not overridden.
+	if o.baseURL == defaultBaseURL {
+		if base := os.Getenv("GOOGLE_GENERATIVE_AI_BASE_URL"); base != "" {
+			o.baseURL = base
+		}
+	}
 	return &embeddingModel{id: modelID, opts: o}
 }
 
