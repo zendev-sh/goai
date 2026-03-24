@@ -40,7 +40,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 **Example:**
 
 ```go
-model := google.Chat("gemini-2.0-flash") // auto-reads GOOGLE_GENERATIVE_AI_API_KEY
+model := google.Chat("gemini-2.0-flash") // auto-reads GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY
 
 result, err := goai.GenerateText(context.Background(), model,
     goai.WithSystem("You are a helpful assistant. Be concise."),

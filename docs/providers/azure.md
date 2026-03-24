@@ -67,7 +67,7 @@ Detection matches model ID prefixes (case-insensitive, after stripping any provi
 
 ## Tested Models
 
-E2E tested with real Azure credentials. Last run: 2026-03-15 - 19 models PASS.
+E2E tested with real Azure credentials. Last run: 2026-03-15 - 21 models PASS.
 
 | Model | Generate | Stream | Status |
 |-------|----------|--------|--------|
@@ -83,12 +83,14 @@ E2E tested with real Azure credentials. Last run: 2026-03-15 - 19 models PASS.
 | `gpt-5.1` | PASS | PASS | Stable |
 | `gpt-5.1-codex` | PASS | PASS | Stable |
 | `gpt-5.1-codex-max` | PASS | PASS | Stable |
+| `gpt-5.1-codex-mini` | PASS | PASS | Stable |
 | `gpt-5.2` | PASS | PASS | Stable |
 | `gpt-5.2-codex` | PASS | PASS | Stable |
 | `gpt-5.3-codex` | PASS | PASS | Stable |
 | `gpt-5.4` | PASS | PASS | Stable |
 | `gpt-5.4-pro` | PASS | PASS | Stable |
 | `Kimi-K2.5` | PASS | PASS | Stable |
+| `model-router` | PASS | PASS | Stable |
 | `o3` | PASS | PASS | Stable |
 
 Unit tested models: `gpt-4o`, `gpt-5.2-chat`, `dall-e-3`, `claude-sonnet-4-20250514`.

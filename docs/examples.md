@@ -24,7 +24,7 @@ Simple non-streaming text generation with `GenerateText`.
 - **Source:** [`examples/chat/`](https://github.com/zendev-sh/goai/tree/main/examples/chat)
 
 ```bash
-export GOOGLE_GENERATIVE_AI_API_KEY=...
+export GEMINI_API_KEY=...
 go run examples/chat/main.go
 ```
 
@@ -37,7 +37,7 @@ Streaming text generation with real-time output via `TextStream()`.
 - **Source:** [`examples/streaming/`](https://github.com/zendev-sh/goai/tree/main/examples/streaming)
 
 ```bash
-export GOOGLE_GENERATIVE_AI_API_KEY=...
+export GEMINI_API_KEY=...
 go run examples/streaming/main.go
 ```
 
@@ -50,7 +50,7 @@ Structured output with typed Go structs using `GenerateObject[T]` and `StreamObj
 - **Source:** [`examples/structured/`](https://github.com/zendev-sh/goai/tree/main/examples/structured)
 
 ```bash
-export GOOGLE_GENERATIVE_AI_API_KEY=...
+export GEMINI_API_KEY=...
 go run ./examples/structured/
 ```
 
@@ -63,7 +63,7 @@ Text embeddings with `Embed` and `EmbedMany`, including cosine similarity compar
 - **Source:** [`examples/embedding/`](https://github.com/zendev-sh/goai/tree/main/examples/embedding)
 
 ```bash
-export GOOGLE_GENERATIVE_AI_API_KEY=...
+export GEMINI_API_KEY=...
 go run ./examples/embedding/
 ```
 
@@ -76,7 +76,7 @@ Accessing `Sources` from grounded AI responses. The Sources API is provider-agno
 - **Source:** [`examples/citations/`](https://github.com/zendev-sh/goai/tree/main/examples/citations)
 
 ```bash
-export GOOGLE_GENERATIVE_AI_API_KEY=...
+export GEMINI_API_KEY=...
 go run examples/citations/main.go
 ```
 
@@ -95,7 +95,7 @@ Single-step tool call with a custom tool definition and `Execute` handler.
 - **Source:** [`examples/tools/`](https://github.com/zendev-sh/goai/tree/main/examples/tools)
 
 ```bash
-export GOOGLE_GENERATIVE_AI_API_KEY=...
+export GEMINI_API_KEY=...
 go run examples/tools/main.go
 ```
 
@@ -108,7 +108,7 @@ Multi-step agent loop with multiple tools and step/tool-call callbacks.
 - **Source:** [`examples/agent-loop/`](https://github.com/zendev-sh/goai/tree/main/examples/agent-loop)
 
 ```bash
-export GOOGLE_GENERATIVE_AI_API_KEY=...
+export GEMINI_API_KEY=...
 go run examples/agent-loop/main.go
 ```
 
@@ -133,7 +133,7 @@ go run examples/web-search/main.go openai
 export ANTHROPIC_API_KEY=...
 go run examples/web-search/main.go anthropic
 
-export GOOGLE_GENERATIVE_AI_API_KEY=...
+export GEMINI_API_KEY=...
 go run examples/web-search/main.go google
 ```
 
@@ -146,7 +146,7 @@ Google Search grounding with Gemini, returning grounded responses with source UR
 - **Source:** [`examples/google-search/`](https://github.com/zendev-sh/goai/tree/main/examples/google-search)
 
 ```bash
-export GOOGLE_GENERATIVE_AI_API_KEY=...
+export GEMINI_API_KEY=...
 go run examples/google-search/main.go
 ```
 
@@ -211,7 +211,7 @@ Google Gemini's sandboxed Python code execution tool.
 - **Source:** [`examples/google-code-execution/`](https://github.com/zendev-sh/goai/tree/main/examples/google-code-execution)
 
 ```bash
-export GOOGLE_GENERATIVE_AI_API_KEY=...
+export GEMINI_API_KEY=...
 go run examples/google-code-execution/main.go
 ```
 

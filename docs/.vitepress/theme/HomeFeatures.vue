@@ -37,13 +37,13 @@ const features = [
     icon: KeyRound,
     title: 'TokenSource',
     link: '/concepts/token-source',
-    details: 'Dynamic auth for OAuth, cloud IAM, and rotating keys. <code>CachedTokenSource</code> with TTL and lock-free refresh. Built for production.',
+    details: 'Dynamic auth for OAuth, cloud IAM, and rotating keys. <code>CachedTokenSource</code> with TTL and mutex-free network refresh. Built for production.',
   },
   {
     icon: Rocket,
     title: 'Faster Than Vercel',
     link: '/getting-started/installation',
-    details: '1.4x faster generation, 24x faster cold start, 3.5x less memory. Single binary, zero npm, zero external dependencies.',
+    details: '1.4x faster generation, 24x faster cold start, 3.1x less memory. Single binary, zero npm, stdlib only.',
   },
 ]
 </script>

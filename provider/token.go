@@ -15,7 +15,7 @@ type TokenSource interface {
 }
 
 // InvalidatingTokenSource is a TokenSource whose cached token can be cleared,
-// forcing a fresh fetch on the next call. Used by retry-on-401 logic.
+// forcing a fresh fetch on the next call. Supports application-level retry-on-401 logic.
 type InvalidatingTokenSource interface {
 	TokenSource
 	Invalidate()
@@ -54,7 +54,7 @@ func (s *staticToken) Token(_ context.Context) (string, error) {
 // It is safe for concurrent use.
 //
 // The returned TokenSource also implements InvalidatingTokenSource,
-// allowing retry-on-401 logic to force a token refresh.
+// allowing application-level retry-on-401 logic to force a token refresh.
 func CachedTokenSource(fetchFn TokenFetchFunc) TokenSource {
 	return &cachedTokenSource{fetch: fetchFn}
 }

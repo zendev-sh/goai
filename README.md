@@ -10,10 +10,10 @@
 <p align="center">
   <a href="bench/RESULTS.md"><img src="https://img.shields.io/badge/streaming-1.1x_faster-brightgreen" alt="Streaming"></a>
   <a href="bench/RESULTS.md"><img src="https://img.shields.io/badge/cold_start-24x_faster-brightgreen" alt="Cold Start"></a>
-  <a href="bench/RESULTS.md"><img src="https://img.shields.io/badge/memory-3x_less-brightgreen" alt="Memory"></a>
+  <a href="bench/RESULTS.md"><img src="https://img.shields.io/badge/memory-3.1x_less-brightgreen" alt="Memory"></a>
 </p>
 
-<p align="center"><strong>1.1x faster streaming</strong>, <strong>24x faster cold start</strong>, <strong>3x less memory</strong> vs Vercel AI SDK (<a href="bench/RESULTS.md">benchmarks</a>)</p>
+<p align="center"><strong>1.1x faster streaming</strong>, <strong>24x faster cold start</strong>, <strong>3.1x less memory</strong> vs Vercel AI SDK (<a href="bench/RESULTS.md">benchmarks</a>)</p>
 
 <p align="center">
   <a href="https://goai.sh">Website</a> &middot;
@@ -35,7 +35,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 - **Structured output**: `GenerateObject[T]` auto-generates JSON Schema from Go types via reflection
 - **Streaming**: Real-time text and partial object streaming via channels
 - **Dynamic auth**: `TokenSource` interface for OAuth, rotating keys, cloud IAM, with `CachedTokenSource` for TTL-based caching
-- **Prompt caching**: Automatic cache control for supported providers (Anthropic, OpenAI, Google)
+- **Prompt caching**: Automatic cache control for supported providers (Anthropic, OpenAI)
 - **Citations/sources**: Grounding and inline citations from xAI, Perplexity, Google, OpenAI
 - **Web search**: Built-in web search tools for OpenAI, Anthropic, Google, Groq. Model decides when to search
 - **Code execution**: Server-side Python sandboxes via OpenAI, Anthropic, Google. No local setup
@@ -51,7 +51,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 |--------|------|---------------|-------------|
 | Streaming throughput | 1.46ms | 1.62ms | 1.1x faster |
 | Cold start | 569us | 13.9ms | 24x faster |
-| Memory (1 stream) | 220KB | 676KB | 3x less |
+| Memory (1 stream) | 220KB | 676KB | 3.1x less |
 | GenerateText | 56us | 79us | 1.4x faster |
 
 > Mock HTTP server, identical SSE fixtures, Apple M2. [Full report](bench/RESULTS.md)
@@ -263,9 +263,9 @@ result, err := goai.GenerateText(ctx, model, goai.WithPrompt("Hello"))
 | Anthropic | `claude-*` | - | - | API key, TokenSource | Full | `provider/anthropic` |
 | Google | `gemini-*` | `text-embedding-004` | `imagen-*` | API key, TokenSource | Full | `provider/google` |
 | Bedrock | `anthropic.*`, `meta.*` | - | - | AWS keys, bearer token | Full | `provider/bedrock` |
-| Vertex | `gemini-*` | `text-embedding-004` | `imagen-*` | TokenSource, ADC | Full | `provider/vertex` |
-| Azure | `gpt-4o`, `claude-*` | via Azure | via Azure | API key, TokenSource | Full | `provider/azure` |
-| OpenRouter | various | - | - | API key | Full | `provider/openrouter` |
+| Vertex | `gemini-*` | `text-embedding-004` | `imagen-*` | TokenSource, ADC | Unit | `provider/vertex` |
+| Azure | `gpt-4o`, `claude-*` | - | via Azure | API key, TokenSource | Full | `provider/azure` |
+| OpenRouter | various | - | - | API key | Unit | `provider/openrouter` |
 | Mistral | `mistral-large`, `magistral-*` | - | - | API key | Full | `provider/mistral` |
 | Groq | `mixtral-*`, `llama-*` | - | - | API key | Full | `provider/groq` |
 | xAI | `grok-*` | - | - | API key | Unit | `provider/xai` |
@@ -285,15 +285,15 @@ result, err := goai.GenerateText(ctx, model, goai.WithPrompt("Hello"))
 ### Tested Models
 
 <details>
-<summary><strong>E2E tested - 96 models across 8 providers</strong> (real API calls, click to expand)</summary>
+<summary><strong>E2E tested - 99 models across 6 providers</strong> (real API calls, click to expand)</summary>
 
-Last run: 2026-03-15. **94 generate PASS, 96 stream PASS, 0 FAIL**.
+Last run: 2026-03-15. **98 generate PASS, 99 stream PASS, 0 FAIL**.
 
 | Provider | Models E2E tested (generate + stream) |
 |----------|---------------------------------------|
 | Google (9) | `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-pro` (stream), `gemini-3-flash-preview`, `gemini-3-pro-preview`, `gemini-3.1-pro-preview`, `gemini-2.0-flash`, `gemini-flash-latest`, `gemini-flash-lite-latest` |
 | Azure (21) | `claude-opus-4-6`, `claude-sonnet-4-6`, `DeepSeek-V3.2`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-5`, `gpt-5-codex`, `gpt-5-mini`, `gpt-5-pro`, `gpt-5.1`, `gpt-5.1-codex`, `gpt-5.1-codex-max`, `gpt-5.1-codex-mini`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5.3-codex`, `gpt-5.4`, `gpt-5.4-pro`, `Kimi-K2.5`, `model-router`, `o3` |
-| Bedrock (61) | **Anthropic**: `claude-sonnet-4-6`, `claude-sonnet-4-5`, `claude-sonnet-4`, `claude-opus-4-6-v1`, `claude-opus-4-5`, `claude-opus-4-1`, `claude-haiku-4-5`, `claude-3-5-sonnet`, `claude-3-5-haiku`, `claude-3-haiku` · **Amazon**: `nova-micro`, `nova-lite`, `nova-pro`, `nova-premier`, `nova-2-lite` · **Meta**: `llama4-scout`, `llama4-maverick`, `llama3-3-70b`, `llama3-2-{90,11,3,1}b`, `llama3-1-{70,8}b`, `llama3-{70,8}b` · **Mistral**: `mistral-large`, `mixtral-8x7b`, `mistral-7b`, `ministral-3-{14,8}b`, `voxtral-{mini,small}` · **Others**: `deepseek.v3`, `deepseek.r1`, `ai21.jamba-{mini,large}`, `cohere.command-r{-plus,}`, `google.gemma-3-{4,12,27}b`, `minimax.m2.1`, `moonshotai.kimi-k2.5`, `nvidia.nemotron-{12,9}b`, `openai.gpt-oss-{120,20}b{,-safeguard}`, `qwen.qwen3-{32,235,coder-30,coder-480}b`, `qwen.qwen3-next-80b`, `writer.palmyra-{x4,x5}`, `zai.glm-4.7{,-flash}` |
+| Bedrock (61) | **Anthropic**: `claude-sonnet-4-6`, `claude-sonnet-4-5`, `claude-sonnet-4`, `claude-opus-4-6-v1`, `claude-opus-4-5`, `claude-opus-4-1`, `claude-haiku-4-5`, `claude-3-5-sonnet`, `claude-3-5-haiku`, `claude-3-haiku` · **Amazon**: `nova-micro`, `nova-lite`, `nova-pro`, `nova-premier`, `nova-2-lite` · **Meta**: `llama4-scout`, `llama4-maverick`, `llama3-3-70b`, `llama3-2-{90,11,3,1}b`, `llama3-1-{70,8}b`, `llama3-{70,8}b` · **Mistral**: `mistral-large`, `mixtral-8x7b`, `mistral-7b`, `ministral-3-{14,8}b`, `voxtral-{mini,small}` · **Others**: `deepseek.v3`, `deepseek.r1`, `ai21.jamba-1-5-{mini,large}`, `cohere.command-r{-plus,}`, `google.gemma-3-{4,12,27}b`, `minimax.{m2,m2.1}`, `moonshotai.kimi-k2{-thinking,.5}`, `nvidia.nemotron-nano-{12,9}b`, `openai.gpt-oss-{120,20}b{,-safeguard}`, `qwen.qwen3-{32,235,coder-30,coder-480}b`, `qwen.qwen3-next-80b`, `writer.palmyra-{x4,x5}`, `zai.glm-4.7{,-flash}` |
 | Groq (2) | `llama-3.1-8b-instant`, `llama-3.3-70b-versatile` |
 | Mistral (5) | `mistral-small-latest`, `mistral-large-latest`, `devstral-small-2507`, `codestral-latest`, `magistral-medium-latest` |
 | Cerebras (1) | `llama3.1-8b` |
@@ -354,7 +354,7 @@ ts := provider.CachedTokenSource(func(ctx context.Context) (*provider.Token, err
 model := openai.Chat("gpt-4o", openai.WithTokenSource(ts))
 ```
 
-`CachedTokenSource` handles TTL-based caching (zero ExpiresAt = cache forever), thread-safe refresh without holding locks during network calls, and retry-on-401 invalidation.
+`CachedTokenSource` handles TTL-based caching (zero ExpiresAt = cache forever), thread-safe refresh without holding locks during network calls, and manual token invalidation via the `InvalidatingTokenSource` interface.
 
 ### AWS Bedrock
 
@@ -379,16 +379,16 @@ Supports both OpenAI models (GPT, o-series) and Claude models (routed to Azure A
 ```go
 // OpenAI models
 model := azure.Chat("gpt-4o",
-	azure.WithResourceName("my-resource"),
+	azure.WithEndpoint("https://my-resource.openai.azure.com"),
 )
 
 // Claude models (auto-routed to Anthropic endpoint)
 model := azure.Chat("claude-sonnet-4-6",
-	azure.WithResourceName("my-resource"),
+	azure.WithEndpoint("https://my-resource.openai.azure.com"),
 )
 ```
 
-Auto-resolves `AZURE_OPENAI_API_KEY` and `AZURE_RESOURCE_NAME` from environment.
+Auto-resolves `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` (or `AZURE_RESOURCE_NAME`) from environment.
 
 ### Response Metadata
 
@@ -633,9 +633,10 @@ goai/                       # Core SDK
 │   ├── azure/              # Azure OpenAI
 │   ├── cohere/             # Cohere (Chat v2 + Embed)
 │   ├── compat/             # Generic OpenAI-compatible
-│   └── ...                 # 11 more OpenAI-compatible providers
+│   └── ...                 # 12 more OpenAI-compatible providers
 ├── internal/
 │   ├── openaicompat/       # Shared codec for 13 OpenAI-compat providers
+│   ├── gemini/             # Schema sanitization (Vertex, Google)
 │   ├── sse/                # SSE line parser
 │   └── httpc/              # HTTP utilities
 ├── examples/               # Usage examples

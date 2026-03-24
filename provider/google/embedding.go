@@ -1,6 +1,7 @@
 package google
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,8 +26,10 @@ func Embedding(modelID string, opts ...Option) provider.EmbeddingModel {
 		opt(&o)
 	}
 	// Resolve API key from env if not set.
+	// Support both GOOGLE_GENERATIVE_AI_API_KEY (Vercel AI SDK convention)
+	// and GEMINI_API_KEY (Google's own convention / models.dev).
 	if o.tokenSource == nil {
-		if key := os.Getenv("GOOGLE_GENERATIVE_AI_API_KEY"); key != "" {
+		if key := cmp.Or(os.Getenv("GOOGLE_GENERATIVE_AI_API_KEY"), os.Getenv("GEMINI_API_KEY")); key != "" {
 			o.tokenSource = provider.StaticToken(key)
 		}
 	}

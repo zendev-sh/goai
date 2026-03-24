@@ -15,7 +15,7 @@ For Vertex AI (GCP-managed Gemini), see the [Vertex provider](vertex.md).
 go get github.com/zendev-sh/goai@latest
 ```
 
-Set the `GOOGLE_GENERATIVE_AI_API_KEY` environment variable, or pass it explicitly:
+Set the `GOOGLE_GENERATIVE_AI_API_KEY` (or `GEMINI_API_KEY`) environment variable, or pass it explicitly:
 
 ```go
 import "github.com/zendev-sh/goai/provider/google"
@@ -178,7 +178,7 @@ result, err := goai.GenerateImage(ctx, model,
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `WithAPIKey(key)` | `string` | Static API key. Falls back to `GOOGLE_GENERATIVE_AI_API_KEY` env var. |
+| `WithAPIKey(key)` | `string` | Static API key. Falls back to `GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY` env var. |
 | `WithTokenSource(ts)` | `provider.TokenSource` | Dynamic token resolution. |
 | `WithBaseURL(url)` | `string` | Override base URL. Falls back to `GOOGLE_GENERATIVE_AI_BASE_URL` env var. |
 | `WithHeaders(h)` | `map[string]string` | Additional HTTP headers on every request. |

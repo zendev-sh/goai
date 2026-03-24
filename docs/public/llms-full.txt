@@ -293,7 +293,7 @@ All providers auto-resolve credentials from environment variables.
 | Anthropic | `provider/anthropic` | ✅ claude-* | — | — | 10 (web search, web fetch, computer use, bash, text editor, code execution) | `ANTHROPIC_API_KEY` |
 | Google | `provider/google` | ✅ gemini-* | ✅ text-embedding-004 | ✅ imagen-* | 3 (google search, URL context, code execution) | `GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY` |
 | Bedrock | `provider/bedrock` | ✅ anthropic.*, meta.* | — | — | — | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
-| Azure | `provider/azure` | ✅ gpt-4o, claude-* | ✅ | ✅ | — | `AZURE_OPENAI_API_KEY` |
+| Azure | `provider/azure` | ✅ gpt-4o, claude-* | — | ✅ | — | `AZURE_OPENAI_API_KEY` |
 | Vertex AI | `provider/vertex` | ✅ gemini-* | ✅ | ✅ | — | ADC (Application Default Credentials) |
 
 ### Tier 2

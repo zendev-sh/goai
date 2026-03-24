@@ -15,7 +15,7 @@ type TokenSource interface {
 }
 ```
 
-Every provider accepts a `TokenSource` via `WithTokenSource`. The provider calls `Token()` before each API request to get the current credential.
+Most providers accept a `TokenSource` via `WithTokenSource` (exceptions: Bedrock uses AWS credential options; Ollama requires no auth). The provider calls `Token()` before each API request to get the current credential.
 
 ## Static API Keys
 
@@ -67,7 +67,7 @@ Key properties:
 - **Lazy.** The fetch function is not called until the first `Token()` call.
 - **TTL-based.** The cached token is reused as long as `time.Now()` is before `ExpiresAt`. Set `ExpiresAt` to zero for tokens that never expire.
 
-## Retry on 401
+## Token Invalidation
 
 `CachedTokenSource` also implements `InvalidatingTokenSource`:
 
@@ -78,7 +78,7 @@ type InvalidatingTokenSource interface {
 }
 ```
 
-When GoAI's retry logic encounters a 401 Unauthorized and the provider uses an `InvalidatingTokenSource`, it clears the cached token and retries. This handles the race condition where a token expires between the cache check and the API call.
+Calling `Invalidate()` clears the cached token, forcing the next `Token()` call to re-fetch. This is useful for application-level handling when a token is rejected (e.g., clearing a cached token after a 401 response in your own retry logic).
 
 ## Examples
 

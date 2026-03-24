@@ -53,7 +53,7 @@ onMounted(() => {
           <p class="rh-slogan anim a3">AI SDK, the Go way.</p>
           <p class="rh-tagline anim a4">
             One unified API across 20 providers. Streaming via channels,
-            type-safe structured output with generics, zero external dependencies.
+            type-safe structured output with generics, stdlib only.
           </p>
 
           <div class="rh-install anim a5" @click="copyInstall">

@@ -101,7 +101,7 @@ import "github.com/zendev-sh/goai/provider/google"
 model := google.Chat("gemini-2.5-flash")
 ```
 
-Environment variable: `GOOGLE_GENERATIVE_AI_API_KEY`
+Environment variable: `GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY`
 
 ### Others
 

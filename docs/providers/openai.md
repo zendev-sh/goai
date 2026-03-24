@@ -52,7 +52,7 @@ Unit tested with mock HTTP server (100% coverage). Last run: 2026-03-15.
 | `dall-e-3` | PASS | N/A | Stable |
 | `gpt-image-1` | PASS | N/A | Stable |
 
-OpenAI models are also E2E tested via the [Azure provider](azure.md) (19 models PASS including gpt-4.1, gpt-5, gpt-5.1, o3).
+OpenAI models are also E2E tested via the [Azure provider](azure.md) (21 models PASS including gpt-4.1, gpt-5, gpt-5.1, o3).
 
 ## Usage
 

@@ -17,7 +17,7 @@ Dedicated implementations with extended API support.
 | ------------------------- | -------------------------- | ----------------------- | ---------------- | -------------- | ------------------------------------- |
 | [OpenAI](openai.md)       | ✅ `gpt-4o`, `o3`          | ✅ `text-embedding-3-*` | ✅ `gpt-image-1` | 4 tools        | `OPENAI_API_KEY`                      |
 | [Anthropic](anthropic.md) | ✅ `claude-*`              | —                       | —                | 10 tools       | `ANTHROPIC_API_KEY`                   |
-| [Google](google.md)       | ✅ `gemini-*`              | ✅ `text-embedding-004` | ✅ `imagen-*`    | 3 tools        | `GOOGLE_GENERATIVE_AI_API_KEY`        |
+| [Google](google.md)       | ✅ `gemini-*`              | ✅ `text-embedding-004` | ✅ `imagen-*`    | 3 tools        | `GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY` |
 | [Bedrock](bedrock.md)     | ✅ `anthropic.*`, `meta.*` | —                       | —                | —              | `AWS_ACCESS_KEY_ID`                   |
 | [Azure](azure.md)         | ✅ `gpt-4o`, `claude-*`    | —                       | ✅               | —              | `AZURE_OPENAI_API_KEY`                |
 | [Vertex AI](vertex.md)    | ✅ `gemini-*`              | ✅                      | ✅               | —              | ADC (Application Default Credentials) |
@@ -49,13 +49,13 @@ All use the shared `internal/openaicompat` codec.
 
 | Provider                        | Default Endpoint  | Auth          | Features                       |
 | ------------------------------- | ----------------- | ------------- | ------------------------------ |
-| [Ollama](ollama.md)             | `localhost:11434` | None required | Embedding support              |
-| [vLLM](vllm.md)                 | `localhost:8000`  | Optional      | Embedding support              |
+| [Ollama](ollama.md)             | `localhost:11434/v1` | None required | Embedding support              |
+| [vLLM](vllm.md)                 | `localhost:8000/v1`  | Optional      | Embedding support              |
 | [Generic Compatible](compat.md) | (required)        | Configurable  | Any OpenAI-compatible endpoint |
 
 ## Common Options
 
-All providers support these options (except where noted):
+Most providers support these options (Bedrock uses AWS credential options; Azure uses `WithEndpoint`; Ollama requires no auth):
 
 ```go
 openai.WithAPIKey(key)        // Static API key

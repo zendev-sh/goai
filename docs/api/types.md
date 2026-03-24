@@ -607,7 +607,7 @@ type TokenSource interface {
 
 ### InvalidatingTokenSource
 
-A `TokenSource` whose cached token can be cleared, forcing a fresh fetch. Used by retry-on-401 logic.
+A `TokenSource` whose cached token can be cleared, forcing a fresh fetch. Supports application-level retry-on-401 logic.
 
 ```go
 type InvalidatingTokenSource interface {

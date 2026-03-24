@@ -1,8 +1,8 @@
 // Package openai provides an OpenAI language model implementation for GoAI.
 //
-// It supports both the Chat Completions API (standard models) and the
-// Responses API (o-series, gpt-5+, codex models), routing automatically
-// based on model ID.
+// It supports both the Chat Completions API and the Responses API. All models
+// default to Responses API (matching Vercel v2.0.89+). Chat Completions is
+// available via ProviderOptions["useResponsesAPI"] = false.
 //
 // Usage:
 //
@@ -158,6 +158,17 @@ func (m *chatModel) doStreamChatCompletions(ctx context.Context, params provider
 	scanner := sse.NewScanner(resp.Body)
 	go func() {
 		defer func() { _ = resp.Body.Close() }()
+		// Close body on context cancellation to unblock scanner.Scan().
+		// Without this, the goroutine leaks if the server stalls mid-stream.
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = resp.Body.Close()
+			case <-done:
+			}
+		}()
 		openaicompat.ParseStream(ctx, scanner, out)
 	}()
 
@@ -194,6 +205,17 @@ func (m *chatModel) doStreamResponses(ctx context.Context, params provider.Gener
 	out := make(chan provider.StreamChunk, 64)
 	go func() {
 		defer func() { _ = resp.Body.Close() }()
+		// Close body on context cancellation to unblock scanner.Scan().
+		// Without this, the goroutine leaks if the server stalls mid-stream.
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = resp.Body.Close()
+			case <-done:
+			}
+		}()
 		streamResponses(ctx, resp.Body, out)
 	}()
 

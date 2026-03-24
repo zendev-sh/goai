@@ -9,7 +9,7 @@
 - **GenerateText** / **StreamText** - Text generation with streaming (token-by-token, text-only, or blocking)
 - **GenerateObject[T]** / **StreamObject[T]** - Type-safe structured output with auto JSON Schema from Go structs
 - **Embed** / **EmbedMany** - Single and batch embeddings with auto-chunking + parallel execution
-- **GenerateImage** - Text-to-image generation (OpenAI DALL-E, Google Imagen)
+- **GenerateImage** - Text-to-image generation (OpenAI DALL-E, Google Imagen, Azure, Vertex AI)
 
 ### Providers (20+)
 
@@ -21,23 +21,23 @@
 | Specialized | Mistral, xAI, DeepSeek, Cohere, Perplexity |
 | Aggregators | OpenRouter |
 | Local | Ollama, vLLM |
-| Bring your own | `compat.New()` for any OpenAI-compatible endpoint |
+| Bring your own | `compat.Chat()` for any OpenAI-compatible endpoint |
 
 ### SDK features
 
 - **Tool system** - Define tools with JSON Schema, auto tool loop with `WithMaxSteps`
-- **TokenSource** - Static keys, OAuth-refreshed, cached credentials (lock-free network fetch, TTL-based)
+- **TokenSource** - Static keys, OAuth-refreshed, cached credentials (mutex-free during network I/O, TTL-based)
 - **WithHTTPClient** - Custom transport for proxies, auth middleware, Codex/Copilot patterns
 - **Prompt caching** - `WithPromptCaching()` automatic `cache_control` on system messages (immutable, no input mutation)
-- **Retry/backoff** - Exponential backoff on 429/5xx, retry-on-401 with token refresh
+- **Retry/backoff** - Exponential backoff on 429/5xx (+ OpenAI 404), `InvalidatingTokenSource` interface for token refresh on auth failures
 - **Thread-safe** - All providers safe for concurrent use; Bedrock fallback uses RWMutex for cross-region retry
 - **Telemetry hooks** - `WithOnRequest`, `WithOnResponse`, `WithOnToolCall`, `WithOnStepFinish`
 - **SchemaFrom[T]** - Reflection-based JSON Schema generation, OpenAI strict mode compatible
 - **Azure multi-model** - Auto-routing: OpenAI models use Responses API, Claude uses Anthropic endpoint, others use Chat Completions
 - **Array content** - Handles response content as string or `[{type:"text",text:"..."}]` (Mistral magistral models)
 - **Provider-defined tools** - 20 tools across 5 providers: Anthropic (10), OpenAI (4), Google (3), xAI (2), Groq (1). E2E validated: 18 PASS, 12 SKIP (no credits/blocked), 0 FAIL.
-- **E2E validated** - 96 models across 8 providers tested with real API calls (94 generate PASS, 96 stream PASS, 0 FAIL)
-- **Benchmarks** - Go wins 5/6 categories vs Vercel AI SDK: streaming 1.13x, TTFC 1.26x, cold start 24.5x, memory 3.5x, GenerateText 1.41x
+- **E2E validated** - 99 models across 6 providers tested with real API calls (98 generate PASS, 99 stream PASS, 0 FAIL)
+- **Benchmarks** - Go wins 5/6 categories vs Vercel AI SDK: streaming 1.1x, TTFC 1.3x, cold start 24.4x, memory 3.1x, GenerateText 1.4x
 - **Documentation** - Full docs site, 20 provider pages, 16 runnable examples, API reference
 
 ---

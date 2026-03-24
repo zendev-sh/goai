@@ -67,7 +67,7 @@ Real benchmark data from the GoAI repository. Both sides use in-process mock ser
 | **Memory per stream** | 220 KB | 676 KB | **3.1× Go** |
 | **GenerateText** (non-streaming) | 55.7 μs/op | 79.0 μs/op | **1.4× Go** |
 
-GoAI SDK starts **24× faster**, uses **3× less memory**, and processes streaming responses **1.3× faster** to first token compared to the Vercel AI SDK running on Bun.
+GoAI SDK starts **24× faster**, uses **3.1× less memory**, and processes streaming responses **1.3× faster** to first token compared to the Vercel AI SDK running on Bun.
 
 Schema generation is comparable — Go reflection vs Zod→JSON Schema are roughly equivalent in performance.
 

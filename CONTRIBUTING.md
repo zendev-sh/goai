@@ -32,6 +32,7 @@ goai/
 │   └── ...                 # Other providers
 ├── internal/
 │   ├── openaicompat/       # Shared codec for OpenAI-compatible providers
+│   ├── gemini/             # Schema sanitization (Vertex, Google)
 │   ├── sse/                # SSE parser
 │   └── httpc/              # HTTP utilities
 └── examples/               # Usage examples

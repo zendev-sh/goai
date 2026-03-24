@@ -2,12 +2,12 @@
 layout: home
 title: GoAI SDK — Go SDK for AI Applications. One API, 20+ LLM Providers.
 titleTemplate: false
-description: "Open-source Go SDK for AI applications. One unified API for OpenAI, Anthropic, Google Gemini, AWS Bedrock, and 20+ LLM providers. Zero dependencies."
+description: "Open-source Go SDK for AI applications. One unified API for OpenAI, Anthropic, Google Gemini, AWS Bedrock, and 20+ LLM providers. Stdlib only."
 
 hero:
   name: GoAI
   text: AI SDK, the Go way.
-  tagline: One unified API across 20 providers. Streaming via channels, type-safe structured output with generics, zero external dependencies.
+  tagline: One unified API across 20 providers. Streaming via channels, type-safe structured output with generics, stdlib only.
   image:
     src: /goai-gopher.png
     alt: GoAI Gopher
@@ -43,10 +43,10 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomat
 ## Why GoAI?
 
 - **One API, 20+ providers** — switch providers by changing one line of code
-- **Zero external dependencies** — stdlib only (except `golang.org/x/oauth2` for Vertex AI)
+- **Stdlib only** — no external dependencies (except `golang.org/x/oauth2` for Vertex AI)
 - **Go-native design** — generics for type safety, channels for streaming, interfaces for extensibility
 - **24x faster cold start** than Vercel AI SDK (569μs vs 13.9ms)
-- **3x less memory** per request (220KB vs 676KB)
+- **3.1x less memory** per request (220KB vs 676KB)
 
 ## Quick Start
 

@@ -28,7 +28,7 @@ import (
 
 ## Core API
 
-### 6 Top-Level Functions
+### 7 Top-Level Functions
 
 | Function                                      | Purpose                         | Returns                     |
 | --------------------------------------------- | ------------------------------- | --------------------------- |
@@ -50,8 +50,8 @@ openai.Chat("gpt-4o")
 anthropic.Chat("claude-sonnet-4-20250514")
 google.Chat("gemini-2.5-flash")
 bedrock.Chat("anthropic.claude-sonnet-4-20250514-v1:0")
-azure.Chat("gpt-4o", azure.WithResourceName("my-resource"), azure.WithDeploymentName("my-deployment"))
-vertex.Chat("gemini-2.5-flash", vertex.WithProjectID("my-project"), vertex.WithLocation("us-central1"))
+azure.Chat("gpt-4o", azure.WithEndpoint("https://my-resource.openai.azure.com"))
+vertex.Chat("gemini-2.5-flash", vertex.WithProject("my-project"), vertex.WithLocation("us-central1"))
 groq.Chat("llama-3.3-70b-versatile")
 ollama.Chat("llama3.2")
 
@@ -63,7 +63,7 @@ ollama.Embedding("nomic-embed-text")
 
 // Image models
 openai.Image("gpt-image-1")
-google.Image("imagen-3.0-generate-002")
+google.Image("imagen-4.0-generate-001")
 ```
 
 ### Auth - Auto-Resolved from Environment
@@ -90,12 +90,12 @@ Or set explicitly:
 model := openai.Chat("gpt-4o", openai.WithAPIKey("sk-..."))
 ```
 
-All providers support these options:
+Most providers support these options (Bedrock uses AWS credential options; Ollama requires no auth):
 
 ```go
 provider.WithAPIKey(key)         // static API key
 provider.WithTokenSource(ts)     // dynamic auth (OAuth, service accounts)
-provider.WithBaseURL(url)        // override endpoint
+provider.WithBaseURL(url)        // override endpoint (Azure uses WithEndpoint)
 provider.WithHeaders(h)          // custom HTTP headers
 provider.WithHTTPClient(c)       // custom HTTP transport
 ```
@@ -278,20 +278,28 @@ Built-in tools executed by the provider, not your code:
 // OpenAI web search
 result, err := goai.GenerateText(ctx, openai.Chat("gpt-4o"),
     goai.WithPrompt("Latest Go release?"),
-    goai.WithTools(goai.Tool{ToolDefinition: openai.Tools.WebSearch()}),
+    goai.WithTools(providerTool(openai.Tools.WebSearch())),
 )
 
 // Google Search grounding
 result, err := goai.GenerateText(ctx, google.Chat("gemini-2.5-flash"),
     goai.WithPrompt("Latest news about Go"),
-    goai.WithTools(goai.Tool{ToolDefinition: google.Tools.GoogleSearch()}),
+    goai.WithTools(providerTool(google.Tools.GoogleSearch())),
 )
 
 // Anthropic code execution
 result, err := goai.GenerateText(ctx, anthropic.Chat("claude-sonnet-4-20250514"),
     goai.WithPrompt("Calculate fibonacci(10)"),
-    goai.WithTools(goai.Tool{ToolDefinition: anthropic.Tools.CodeExecution()}),
+    goai.WithTools(providerTool(anthropic.Tools.CodeExecution())),
 )
+
+// Helper to convert provider.ToolDefinition → goai.Tool:
+func providerTool(td provider.ToolDefinition) goai.Tool {
+    return goai.Tool{
+        Name: td.Name, ProviderDefinedType: td.ProviderDefinedType,
+        ProviderDefinedOptions: td.ProviderDefinedOptions,
+    }
+}
 ```
 
 Available provider tools:
@@ -502,7 +510,7 @@ model := openai.Chat("gpt-4o", openai.WithTokenSource(ts))
 | Anthropic     | `provider/anthropic` | Yes  | -     | -     | 10             |
 | Google Gemini | `provider/google`    | Yes  | Yes   | Yes   | 3              |
 | AWS Bedrock   | `provider/bedrock`   | Yes  | -     | -     | -              |
-| Azure OpenAI  | `provider/azure`     | Yes  | Yes   | Yes   | -              |
+| Azure OpenAI  | `provider/azure`     | Yes  | -     | Yes   | -              |
 | Vertex AI     | `provider/vertex`    | Yes  | Yes   | Yes   | -              |
 
 ### Tier 2
@@ -523,9 +531,9 @@ Fireworks, Together, DeepInfra, OpenRouter, Perplexity, Cerebras
 
 | Provider | Import            | Chat | Embed | Default URL       |
 | -------- | ----------------- | ---- | ----- | ----------------- |
-| Ollama   | `provider/ollama` | Yes  | Yes   | `localhost:11434` |
-| vLLM     | `provider/vllm`   | Yes  | Yes   | `localhost:8000`  |
-| Custom   | `provider/compat` | Yes  | -     | user-defined      |
+| Ollama   | `provider/ollama` | Yes  | Yes   | `localhost:11434/v1` |
+| vLLM     | `provider/vllm`   | Yes  | Yes   | `localhost:8000/v1`  |
+| Custom   | `provider/compat` | Yes  | Yes   | user-defined         |
 
 ---
 
