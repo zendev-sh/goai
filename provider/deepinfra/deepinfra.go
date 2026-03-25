@@ -137,7 +137,16 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 	scanner := sse.NewScanner(resp.Body)
 	go func() {
 		defer func() { _ = resp.Body.Close() }()
+		done := make(chan struct{})
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = resp.Body.Close()
+			case <-done:
+			}
+		}()
 		openaicompat.ParseStream(ctx, scanner, out)
+		close(done)
 	}()
 
 	return &provider.StreamResult{Stream: out}, nil

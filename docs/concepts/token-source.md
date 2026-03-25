@@ -80,6 +80,13 @@ type InvalidatingTokenSource interface {
 
 Calling `Invalidate()` clears the cached token, forcing the next `Token()` call to re-fetch. This is useful for application-level handling when a token is rejected (e.g., clearing a cached token after a 401 response in your own retry logic).
 
+> **Note:** `CachedTokenSource` returns the `TokenSource` interface, so use a type assertion to access `Invalidate()`:
+> ```go
+> ts := provider.CachedTokenSource(fetchFunc)
+> // ... later, to invalidate:
+> ts.(provider.InvalidatingTokenSource).Invalidate()
+> ```
+
 ## Examples
 
 ### Azure Managed Identity

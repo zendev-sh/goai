@@ -132,8 +132,12 @@ func resolveOpts(opts []Option) options {
 // When hasProject is false: prefer API key (simpler setup, works with Gemini API).
 func autoTokenSource(hasProject bool) provider.TokenSource {
 	if hasProject {
-		// Vertex mode: ADC first, API key as last resort.
-		return ADCTokenSource()
+		// Vertex mode: ADC required, API keys route to the Gemini API instead.
+		ts, err := ADCTokenSource(context.Background())
+		if err != nil {
+			return &failingTokenSource{err: err}
+		}
+		return ts
 	}
 	// No project: API key first (routes to Gemini API), ADC as fallback.
 	for _, env := range []string{"GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"} {
@@ -141,7 +145,21 @@ func autoTokenSource(hasProject bool) provider.TokenSource {
 			return &apiKeyTokenSource{key: key}
 		}
 	}
-	return ADCTokenSource()
+	ts, err := ADCTokenSource(context.Background())
+	if err != nil {
+		// Return a token source that will report the error on first use.
+		return &failingTokenSource{err: err}
+	}
+	return ts
+}
+
+// failingTokenSource reports a credential resolution error on first use.
+type failingTokenSource struct {
+	err error
+}
+
+func (s *failingTokenSource) Token(_ context.Context) (string, error) {
+	return "", s.err
 }
 
 // apiKeyTokenSource is a marker type that signals URL builders to use
@@ -272,7 +290,16 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 	scanner := sse.NewScanner(resp.Body)
 	go func() {
 		defer func() { _ = resp.Body.Close() }()
+		done := make(chan struct{})
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = resp.Body.Close()
+			case <-done:
+			}
+		}()
 		openaicompat.ParseStream(ctx, scanner, out)
+		close(done)
 	}()
 
 	return &provider.StreamResult{Stream: out}, nil

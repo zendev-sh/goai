@@ -3,6 +3,7 @@ package goai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -243,8 +244,8 @@ func TestGenerateObject_ModelError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from model")
 	}
-	apiErr, ok := err.(*APIError)
-	if !ok {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected *APIError, got %T", err)
 	}
 	if apiErr.StatusCode != 500 {
@@ -986,7 +987,7 @@ func TestGenerateObject_WithTimeout(t *testing.T) {
 	}
 	result, err := GenerateObject[simpleObject](t.Context(), model,
 		WithPrompt("test"),
-		WithTimeout(5000000000), // 5s
+		WithTimeout(5*time.Second),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1033,7 +1034,7 @@ func TestStreamObject_WithTimeout(t *testing.T) {
 	}
 	stream, err := StreamObject[simpleObject](t.Context(), model,
 		WithPrompt("test"),
-		WithTimeout(5000000000),
+		WithTimeout(5*time.Second),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1063,8 +1064,8 @@ func TestStreamObject_WithTimeout_ErrorCancelsContext(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	apiErr, ok := err.(*APIError)
-	if !ok {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected *APIError, got %T", err)
 	}
 	if apiErr.StatusCode != 400 {

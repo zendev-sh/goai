@@ -306,7 +306,7 @@ func GenerateImage(ctx context.Context, model provider.ImageModel, opts ...Image
 | ------- | --------------------- | ----------------------------------------------------------- |
 | `ctx`   | `context.Context`     | Request context.                                            |
 | `model` | `provider.ImageModel` | The image model to use.                                     |
-| `opts`  | `...ImageOption`      | Image-specific options (prompt, count, size, aspect ratio). |
+| `opts`  | `...ImageOption`      | Image-specific options (prompt, count, size, aspect ratio, max retries, timeout). |
 
 Note: `GenerateImage` uses `ImageOption` instead of `Option`. See the [Options](options.md) page for image-specific options.
 
@@ -398,7 +398,7 @@ func SchemaFrom[T any]() json.RawMessage
 | `jsonschema:"description=..."` | `jsonschema:"description=City name"`   | Adds a description to the property.   |
 | `jsonschema:"enum=a\|b\|c"`    | `jsonschema:"enum=easy\|medium\|hard"` | Restricts values to an enum.          |
 
-**Supported types:** string, bool, int (all sizes), uint (all sizes), float32/64, slices, maps with string keys, structs. Embedded structs are flattened. Pointer types produce nullable schemas (`type: ["<base>", "null"]`).
+**Supported types:** string, bool, int (all sizes), uint (all sizes), float32/64, slices, maps with string keys, structs, `time.Time` (string with `date-time` format), `json.RawMessage` (any type), and recursive types. Embedded structs are flattened. Pointer types produce nullable schemas (`type: ["<base>", "null"]`).
 
 **Example:**
 

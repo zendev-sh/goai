@@ -223,7 +223,7 @@ func (m *chatModel) readIDRegion() (string, string) {
 func (m *chatModel) Capabilities() provider.ModelCapabilities {
 	return provider.ModelCapabilities{
 		Temperature:      true,
-		ToolCall:         modelSupportsTools(m.id),
+		ToolCall:         modelSupportsTools(m.ModelID()),
 		InputModalities:  provider.ModalitySet{Text: true, Image: true},
 		OutputModalities: provider.ModalitySet{Text: true},
 	}

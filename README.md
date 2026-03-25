@@ -453,6 +453,8 @@ fmt.Printf("Model used: %s\n", result.Response.Model)
 | `WithImageCount(n)` | Number of images |
 | `WithImageSize(s)` | Dimensions (e.g., "1024x1024") |
 | `WithAspectRatio(s)` | Aspect ratio (e.g., "16:9") |
+| `WithImageMaxRetries(n)` | Retries on 429/5xx |
+| `WithImageTimeout(d)` | Overall timeout |
 | `WithImageProviderOptions(m)` | Image provider params |
 
 ## Error Handling
@@ -490,10 +492,11 @@ Providers expose built-in tools that the model can invoke server-side. GoAI supp
 | xAI | `WebSearch`, `XSearch` | `provider/xai` |
 | Groq | `BrowserSearch` | `provider/groq` |
 
-All tools follow the same pattern: create a definition with `provider.Tools.ToolName()`, then pass it as a `goai.Tool`:
+All tools follow the same pattern: create a definition with `<provider>.Tools.ToolName()` (e.g., `openai.Tools`, `anthropic.Tools`), then pass it as a `goai.Tool`:
 
 ```go
-def := provider.Tools.ToolName(options...)
+// Example: def := openai.Tools.WebSearch(openai.WithSearchContextSize("medium"))
+def := <provider>.Tools.ToolName(options...)
 result, _ := goai.GenerateText(ctx, model,
     goai.WithTools(goai.Tool{
         Name:                   def.Name,

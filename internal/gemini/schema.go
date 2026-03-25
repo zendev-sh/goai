@@ -32,6 +32,35 @@ func sanitizeImpl(obj any) any {
 
 	result := make(map[string]any)
 
+	// Normalize nullable type arrays: ["object","null"] → "object" + nullable: true.
+	// SchemaFrom produces []string, JSON unmarshal produces []any.
+	if rawType, ok := m["type"]; ok {
+		switch tt := rawType.(type) {
+		case []string:
+			var nonNull string
+			for _, s := range tt {
+				if s != "null" {
+					nonNull = s
+				}
+			}
+			if nonNull != "" {
+				m["type"] = nonNull
+				result["nullable"] = true
+			}
+		case []any:
+			var nonNull string
+			for _, v := range tt {
+				if s, ok := v.(string); ok && s != "null" {
+					nonNull = s
+				}
+			}
+			if nonNull != "" {
+				m["type"] = nonNull
+				result["nullable"] = true
+			}
+		}
+	}
+
 	for k, v := range m {
 		if k == "enum" {
 			if enumArr, ok := v.([]any); ok {
@@ -64,15 +93,25 @@ func sanitizeImpl(obj any) any {
 	}
 
 	// Filter required to only include fields in properties.
+	// SchemaFrom produces []string; JSON unmarshal produces []any.
 	if result["type"] == "object" {
 		if props, ok := result["properties"].(map[string]any); ok {
-			if required, ok := result["required"].([]any); ok {
+			switch req := result["required"].(type) {
+			case []any:
 				filtered := make([]any, 0)
-				for _, r := range required {
+				for _, r := range req {
 					if s, ok := r.(string); ok {
 						if _, exists := props[s]; exists {
 							filtered = append(filtered, r)
 						}
+					}
+				}
+				result["required"] = filtered
+			case []string:
+				filtered := make([]any, 0)
+				for _, s := range req {
+					if _, exists := props[s]; exists {
+						filtered = append(filtered, s)
 					}
 				}
 				result["required"] = filtered
@@ -99,8 +138,9 @@ func sanitizeImpl(obj any) any {
 		delete(result, "required")
 	}
 
-	// Gemini API does not support additionalProperties in JSON Schema.
+	// Gemini API does not support additionalProperties or format in JSON Schema.
 	delete(result, "additionalProperties")
+	delete(result, "format")
 
 	return result
 }

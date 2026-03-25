@@ -291,7 +291,7 @@ func TestGeminiImage_Generate(t *testing.T) {
 		// Verify generationConfig has responseModalities.
 		gc := req["generationConfig"].(map[string]any)
 		rm := gc["responseModalities"].([]any)
-		if len(rm) != 1 || rm[0] != "IMAGE" {
+		if len(rm) != 2 || rm[0] != "TEXT" || rm[1] != "IMAGE" {
 			t.Errorf("responseModalities = %v", rm)
 		}
 

@@ -35,6 +35,11 @@ func main() {
 	}
 	fmt.Println()
 
+	// Check for errors that occurred during streaming.
+	if err := stream.Err(); err != nil {
+		log.Fatal(err)
+	}
+
 	// Get the final result with usage stats.
 	result := stream.Result()
 	fmt.Printf("Tokens: %d in, %d out\n", result.TotalUsage.InputTokens, result.TotalUsage.OutputTokens)

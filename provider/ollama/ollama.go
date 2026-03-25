@@ -65,7 +65,7 @@ func Embedding(modelID string, opts ...Option) provider.EmbeddingModel {
 }
 
 func toCompatOpts(o options) []compat.Option {
-	copts := []compat.Option{compat.WithBaseURL(o.baseURL)}
+	copts := []compat.Option{compat.WithProviderID("ollama"), compat.WithBaseURL(o.baseURL)}
 	if o.headers != nil {
 		copts = append(copts, compat.WithHeaders(o.headers))
 	}

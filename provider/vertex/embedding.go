@@ -41,7 +41,7 @@ type embeddingModel struct {
 func (m *embeddingModel) ModelID() string { return m.id }
 
 // MaxValuesPerCall returns the maximum batch size for Vertex AI embeddings.
-func (m *embeddingModel) MaxValuesPerCall() int { return 2048 }
+func (m *embeddingModel) MaxValuesPerCall() int { return 250 }
 
 func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params provider.EmbedParams) (*provider.EmbedResult, error) {
 	// Extract vertex-specific options.

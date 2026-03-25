@@ -163,6 +163,17 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 	out := make(chan provider.StreamChunk, 64)
 	go func() {
 		defer func() { _ = resp.Body.Close() }()
+		// Close body on context cancellation to unblock parseChatStream.
+		// Without this, the goroutine leaks if the server stalls mid-stream.
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = resp.Body.Close()
+			case <-done:
+			}
+		}()
 		parseChatStream(ctx, resp.Body, out)
 	}()
 

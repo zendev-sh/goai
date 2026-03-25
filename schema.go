@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 )
 
 // schemaMarshalFunc is swappable for testing the panic path.
@@ -24,7 +25,7 @@ func SchemaFrom[T any]() json.RawMessage {
 	for t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
-	schema := typeToSchema(t)
+	schema := typeToSchema(t, make(map[reflect.Type]bool))
 	// typeToSchema only produces JSON-safe types (map[string]any with string/bool/int/slice values),
 	// so json.Marshal cannot fail here. Panic on impossible error to surface bugs in typeToSchema.
 	data, err := schemaMarshalFunc(schema)
@@ -34,15 +35,30 @@ func SchemaFrom[T any]() json.RawMessage {
 	return data
 }
 
-func typeToSchema(t reflect.Type) map[string]any {
+var (
+	timeType       = reflect.TypeOf(time.Time{})
+	rawMessageType = reflect.TypeOf(json.RawMessage{})
+)
+
+func typeToSchema(t reflect.Type, seen map[reflect.Type]bool) map[string]any {
 	// Unwrap pointer: nullable type.
 	if t.Kind() == reflect.Ptr {
-		inner := typeToSchema(t.Elem())
+		inner := typeToSchema(t.Elem(), seen)
 		// Make nullable: type becomes array ["<type>", "null"].
 		if baseType, ok := inner["type"].(string); ok {
 			inner["type"] = []string{baseType, "null"}
 		}
 		return inner
+	}
+
+	// Special case: time.Time → string with date-time format.
+	if t == timeType {
+		return map[string]any{"type": "string", "format": "date-time"}
+	}
+
+	// Special case: json.RawMessage → any type (empty schema).
+	if t == rawMessageType {
+		return map[string]any{}
 	}
 
 	switch t.Kind() {
@@ -57,24 +73,31 @@ func typeToSchema(t reflect.Type) map[string]any {
 	case reflect.Float32, reflect.Float64:
 		return map[string]any{"type": "number"}
 	case reflect.Slice:
-		return map[string]any{"type": "array", "items": typeToSchema(t.Elem())}
+		return map[string]any{"type": "array", "items": typeToSchema(t.Elem(), seen)}
 	case reflect.Map:
 		if t.Key().Kind() == reflect.String {
-			return map[string]any{"type": "object", "additionalProperties": typeToSchema(t.Elem())}
+			return map[string]any{"type": "object", "additionalProperties": typeToSchema(t.Elem(), seen)}
 		}
 		return map[string]any{"type": "object"}
 	case reflect.Struct:
-		return structToSchema(t)
+		// Cycle detection: if we're already processing this struct, break the cycle.
+		if seen[t] {
+			return map[string]any{}
+		}
+		seen[t] = true
+		result := structToSchema(t, seen)
+		delete(seen, t)
+		return result
 	default:
 		return map[string]any{}
 	}
 }
 
-func structToSchema(t reflect.Type) map[string]any {
+func structToSchema(t reflect.Type, seen map[reflect.Type]bool) map[string]any {
 	properties := make(map[string]any)
 	var required []string
 
-	collectFields(t, properties, &required)
+	collectFields(t, properties, &required, seen)
 
 	schema := map[string]any{
 		"type":                 "object",
@@ -88,7 +111,7 @@ func structToSchema(t reflect.Type) map[string]any {
 }
 
 // collectFields recursively processes struct fields, flattening embedded structs.
-func collectFields(t reflect.Type, properties map[string]any, required *[]string) {
+func collectFields(t reflect.Type, properties map[string]any, required *[]string, seen map[reflect.Type]bool) {
 	for i := range t.NumField() {
 		field := t.Field(i)
 
@@ -99,7 +122,10 @@ func collectFields(t reflect.Type, properties map[string]any, required *[]string
 				ft = ft.Elem()
 			}
 			if ft.Kind() == reflect.Struct {
-				collectFields(ft, properties, required)
+				if seen[ft] {
+					continue
+				}
+				collectFields(ft, properties, required, seen)
 				continue
 			}
 		}
@@ -113,7 +139,7 @@ func collectFields(t reflect.Type, properties map[string]any, required *[]string
 		// Parse json tag.
 		if tag := field.Tag.Get("json"); tag != "" {
 			parts := strings.Split(tag, ",")
-			if parts[0] == "-" {
+			if parts[0] == "-" && (len(parts) == 1 || parts[1] != "") {
 				continue
 			}
 			if parts[0] != "" {
@@ -121,7 +147,7 @@ func collectFields(t reflect.Type, properties map[string]any, required *[]string
 			}
 		}
 
-		prop := typeToSchema(field.Type)
+		prop := typeToSchema(field.Type, seen)
 
 		// Parse jsonschema tag.
 		if tag := field.Tag.Get("jsonschema"); tag != "" {

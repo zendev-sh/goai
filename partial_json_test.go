@@ -170,9 +170,14 @@ func TestRepairJSON(t *testing.T) {
 			expected: `{"a": "he said \"hi\""}`,
 		},
 		{
-			name:     "truncated after escape backslash",
+			name:     "escaped backslash in string",
 			input:    `{"a": "path\\`,
 			expected: `{"a": "path\\"}`,
+		},
+		{
+			name:     "trailing lone backslash in string",
+			input:    "{\"a\": \"ab\\",
+			expected: `{"a": "ab"}`,
 		},
 
 		// Object in array.
@@ -234,7 +239,7 @@ func TestCompleteTrailing(t *testing.T) {
 		{
 			name:     "trailing plus",
 			input:    `{"a": +`,
-			expected: `{"a": +0`,
+			expected: `{"a": +`,
 		},
 		{
 			name:     "trailing e",

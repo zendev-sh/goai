@@ -134,7 +134,7 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 	return &provider.EmbedResult{
 		Embeddings: embeddings,
 		// Gemini doesn't return token usage for embeddings.
-		Usage: provider.Usage{InputTokens: len(values)},
+		Usage: provider.Usage{},
 	}, nil
 }
 

@@ -550,7 +550,7 @@ func TestSchemaFrom_EmptyStruct(t *testing.T) {
 
 func TestTypeToSchema_NonStringKeyMap(t *testing.T) {
 	// map[int]string → object with no additionalProperties schema.
-	result := typeToSchema(reflect.TypeOf(map[int]string{}))
+	result := typeToSchema(reflect.TypeOf(map[int]string{}), make(map[reflect.Type]bool))
 	if result["type"] != "object" {
 		t.Errorf("expected type object, got %v", result["type"])
 	}
@@ -561,7 +561,7 @@ func TestTypeToSchema_NonStringKeyMap(t *testing.T) {
 
 func TestTypeToSchema_UnsupportedType(t *testing.T) {
 	// chan int → empty schema.
-	result := typeToSchema(reflect.TypeOf(make(chan int)))
+	result := typeToSchema(reflect.TypeOf(make(chan int)), make(map[reflect.Type]bool))
 	if len(result) != 0 {
 		t.Errorf("expected empty schema for unsupported type, got %v", result)
 	}

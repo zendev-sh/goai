@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -287,5 +288,161 @@ func TestSanitizeSchema_EnumWithNoType(t *testing.T) {
 	enumArr := result["enum"].([]any)
 	if enumArr[0] != "1" {
 		t.Errorf("enum[0] = %v, want '1'", enumArr[0])
+	}
+}
+
+func TestSanitizeSchema_PointerToStructNullableType(t *testing.T) {
+	// SchemaFrom produces []string{"object","null"} for pointer-to-struct fields.
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"address": map[string]any{
+				"type": []string{"object", "null"},
+				"properties": map[string]any{
+					"street": map[string]any{"type": "string"},
+				},
+				"required":             []string{"street"},
+				"additionalProperties": false,
+			},
+		},
+		"required":             []string{"address"},
+		"additionalProperties": false,
+	}
+	result := SanitizeSchema(schema)
+
+	props := result["properties"].(map[string]any)
+	addr := props["address"].(map[string]any)
+
+	// Type should be normalized to plain "object".
+	if addr["type"] != "object" {
+		t.Errorf("address.type = %v, want \"object\"", addr["type"])
+	}
+	// Should be marked nullable.
+	if addr["nullable"] != true {
+		t.Errorf("address.nullable = %v, want true", addr["nullable"])
+	}
+	// Properties should be preserved (not stripped).
+	if _, ok := addr["properties"]; !ok {
+		t.Error("address.properties should be preserved for object type")
+	}
+	// additionalProperties should be removed.
+	if _, ok := addr["additionalProperties"]; ok {
+		t.Error("additionalProperties should be removed")
+	}
+	// Nested required ([]string) should be filtered correctly.
+	if req, ok := addr["required"]; ok {
+		reqArr := req.([]any)
+		if len(reqArr) != 1 || reqArr[0] != "street" {
+			t.Errorf("address.required = %v, want [street]", reqArr)
+		}
+	}
+}
+
+func TestSanitizeSchema_TimeDateTimeFormat(t *testing.T) {
+	// time.Time produces type: "string", format: "date-time".
+	// Gemini doesn't support format, so it should be stripped.
+	schema := map[string]any{
+		"type":   "string",
+		"format": "date-time",
+	}
+	result := SanitizeSchema(schema)
+	if _, ok := result["format"]; ok {
+		t.Error("format should be removed for Gemini compatibility")
+	}
+	if result["type"] != "string" {
+		t.Errorf("type = %v, want string", result["type"])
+	}
+}
+
+func TestSanitizeSchema_RequiredAsStringSlice(t *testing.T) {
+	// SchemaFrom produces required as []string, not []any.
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{"type": "string"},
+			"age":  map[string]any{"type": "integer"},
+		},
+		"required": []string{"name", "age", "nonexistent"},
+	}
+	result := SanitizeSchema(schema)
+	required := result["required"].([]any)
+	if len(required) != 2 {
+		t.Fatalf("required = %v, want [name age]", required)
+	}
+	// Check both fields are present.
+	got := map[string]bool{}
+	for _, r := range required {
+		got[r.(string)] = true
+	}
+	if !got["name"] || !got["age"] {
+		t.Errorf("required = %v, want name and age", required)
+	}
+}
+
+func TestSanitizeSchema_NullableTypeAsAnySlice(t *testing.T) {
+	// If type comes as []any (e.g., from JSON unmarshal), it should also be normalized.
+	schema := map[string]any{
+		"type": []any{"string", "null"},
+	}
+	result := SanitizeSchema(schema)
+	if result["type"] != "string" {
+		t.Errorf("type = %v, want \"string\"", result["type"])
+	}
+	if result["nullable"] != true {
+		t.Errorf("nullable = %v, want true", result["nullable"])
+	}
+}
+
+func TestSanitizeSchema_FullSchemaFromOutput(t *testing.T) {
+	// Simulate what SchemaFrom produces for a struct with pointer and time fields.
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{"type": "string"},
+			"created_at": map[string]any{
+				"type":   "string",
+				"format": "date-time",
+			},
+			"metadata": map[string]any{
+				"type": []string{"object", "null"},
+				"properties": map[string]any{
+					"key": map[string]any{"type": "string"},
+				},
+				"required":             []string{"key"},
+				"additionalProperties": false,
+			},
+		},
+		"required":             []string{"name", "created_at", "metadata"},
+		"additionalProperties": false,
+	}
+	result := SanitizeSchema(schema)
+
+	// Top-level: additionalProperties removed, required filtered.
+	if _, ok := result["additionalProperties"]; ok {
+		t.Error("top-level additionalProperties should be removed")
+	}
+	req := result["required"].([]any)
+	if !reflect.DeepEqual(req, []any{"name", "created_at", "metadata"}) {
+		t.Errorf("required = %v", req)
+	}
+
+	props := result["properties"].(map[string]any)
+
+	// created_at: format removed.
+	createdAt := props["created_at"].(map[string]any)
+	if _, ok := createdAt["format"]; ok {
+		t.Error("created_at.format should be removed")
+	}
+
+	// metadata: type normalized, nullable set, properties preserved.
+	meta := props["metadata"].(map[string]any)
+	if meta["type"] != "object" {
+		t.Errorf("metadata.type = %v, want \"object\"", meta["type"])
+	}
+	if meta["nullable"] != true {
+		t.Error("metadata.nullable should be true")
+	}
+	if _, ok := meta["properties"]; !ok {
+		t.Error("metadata.properties should be preserved")
 	}
 }

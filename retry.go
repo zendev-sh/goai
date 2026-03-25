@@ -80,7 +80,7 @@ func withRetry[T any](ctx context.Context, maxRetries int, fn func() (T, error))
 			delay = backoffDuration(attempt)
 		}
 		if sleepErr := sleep(ctx, delay); sleepErr != nil {
-			return result, err
+			return result, sleepErr
 		}
 		result, err = fn()
 	}

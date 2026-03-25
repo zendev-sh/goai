@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -473,6 +474,17 @@ func parseEventStream(ctx context.Context, body io.ReadCloser, out chan<- provid
 	defer close(out)
 	defer func() { _ = body.Close() }()
 
+	// Watch for context cancellation and close the body to unblock decoder.Next().
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = body.Close()
+		case <-done:
+		}
+	}()
+	defer close(done)
+
 	decoder := newEventStreamDecoder(body)
 
 	// Track content blocks by index to know if a block is text or toolUse.
@@ -489,7 +501,7 @@ func parseEventStream(ctx context.Context, body io.ReadCloser, out chan<- provid
 	for {
 		frame, err := decoder.Next()
 		if err != nil {
-			if err == io.EOF || err == io.ErrUnexpectedEOF {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				return
 			}
 			if !provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: err}) {

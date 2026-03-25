@@ -387,13 +387,16 @@ func TestWithHeaders(t *testing.T) {
 	defer server.Close()
 
 	model := Chat("m", WithAccessKey("AK"), WithSecretKey("SK"), WithBaseURL(server.URL), WithHeaders(map[string]string{"X-Custom": "val"}))
-	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+	result, err := model.DoGenerate(t.Context(), provider.GenerateParams{
 		Messages: []provider.Message{
 			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if result.Text != "ok" {
+		t.Errorf("Text = %q, want %q", result.Text, "ok")
 	}
 }
 

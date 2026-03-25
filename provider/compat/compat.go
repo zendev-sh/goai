@@ -34,10 +34,19 @@ var (
 type Option func(*options)
 
 type options struct {
+	providerID  string
 	tokenSource provider.TokenSource
 	baseURL     string
 	headers     map[string]string
 	httpClient  *http.Client
+}
+
+// WithProviderID overrides the provider name used in error messages.
+// Defaults to "compat".
+func WithProviderID(id string) Option {
+	return func(o *options) {
+		o.providerID = id
+	}
 }
 
 // WithAPIKey sets a static API key for authentication.
@@ -79,7 +88,7 @@ func WithHTTPClient(c *http.Client) Option {
 // Chat creates a generic OpenAI-compatible language model.
 // WithBaseURL is required; calls will fail without it.
 func Chat(modelID string, opts ...Option) provider.LanguageModel {
-	o := options{}
+	o := options{providerID: "compat"}
 	for _, opt := range opts {
 		opt(&o)
 	}
@@ -89,7 +98,7 @@ func Chat(modelID string, opts ...Option) provider.LanguageModel {
 // Embedding creates a generic OpenAI-compatible embedding model.
 // WithBaseURL is required; calls will fail without it.
 func Embedding(modelID string, opts ...Option) provider.EmbeddingModel {
-	o := options{}
+	o := options{providerID: "compat"}
 	for _, opt := range opts {
 		opt(&o)
 	}
@@ -153,6 +162,15 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 	scanner := sse.NewScanner(resp.Body)
 	go func() {
 		defer func() { _ = resp.Body.Close() }()
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = resp.Body.Close()
+			case <-done:
+			}
+		}()
 		openaicompat.ParseStream(ctx, scanner, out)
 	}()
 
@@ -191,7 +209,7 @@ func (m *chatModel) doHTTP(ctx context.Context, body map[string]any) (*http.Resp
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		return nil, goai.ParseHTTPErrorWithHeaders("compat", resp.StatusCode, respBody, resp.Header)
+		return nil, goai.ParseHTTPErrorWithHeaders(m.opts.providerID, resp.StatusCode, respBody, resp.Header)
 	}
 
 	return resp, nil
@@ -261,7 +279,7 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, goai.ParseHTTPErrorWithHeaders("compat", resp.StatusCode, respBody, resp.Header)
+		return nil, goai.ParseHTTPErrorWithHeaders(m.opts.providerID, resp.StatusCode, respBody, resp.Header)
 	}
 
 	respBody, err := io.ReadAll(resp.Body)

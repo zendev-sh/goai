@@ -39,6 +39,10 @@ type ObjectStream[T any] struct {
 	// Channel returned by the first PartialObjectStream() call.
 	partialCh <-chan *T
 
+	// Hook support.
+	onResponse func(ResponseInfo)
+	startTime  time.Time
+
 	// Accumulated state.
 	text         strings.Builder
 	finishReason provider.FinishReason
@@ -46,6 +50,7 @@ type ObjectStream[T any] struct {
 	response     provider.ResponseMetadata
 	finalObject  *T
 	parseErr     error
+	streamErr    error
 }
 
 func newObjectStream[T any](ctx context.Context, source <-chan provider.StreamChunk) *ObjectStream[T] {
@@ -81,6 +86,10 @@ func (os *ObjectStream[T]) Result() (*ObjectResult[T], error) {
 	})
 	<-os.doneCh
 
+	if os.streamErr != nil {
+		return nil, os.streamErr
+	}
+
 	if os.parseErr != nil {
 		return nil, fmt.Errorf("parsing structured output: %w (raw: %s)", os.parseErr, truncate(os.text.String(), 200))
 	}
@@ -100,6 +109,15 @@ func (os *ObjectStream[T]) Result() (*ObjectResult[T], error) {
 	}, nil
 }
 
+// Err returns the first stream error encountered, or nil.
+// Must be called after the stream is fully consumed (after Result(),
+// or after the PartialObjectStream() channel is drained).
+// Follows the bufio.Scanner.Err() pattern.
+func (os *ObjectStream[T]) Err() error {
+	<-os.doneCh
+	return os.streamErr
+}
+
 func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 	defer close(os.doneCh)
 	if os.timeoutCancel != nil {
@@ -107,6 +125,17 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 	}
 	if partialOut != nil {
 		defer close(partialOut)
+	}
+
+	// Call OnResponse hook when consume finishes (after all chunks processed).
+	if os.onResponse != nil {
+		defer func() {
+			os.onResponse(ResponseInfo{
+				Latency:      time.Since(os.startTime),
+				Usage:        os.usage,
+				FinishReason: os.finishReason,
+			})
+		}()
 	}
 
 	for chunk := range os.source {
@@ -129,6 +158,10 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 			os.finishReason = chunk.FinishReason
 			os.usage = chunk.Usage
 			os.response = chunk.Response
+		case provider.ChunkError:
+			if os.streamErr == nil {
+				os.streamErr = chunk.Error
+			}
 		}
 	}
 
@@ -147,6 +180,10 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 // GenerateObject performs a non-streaming structured output generation.
 // The schema is auto-generated from T, or can be overridden with WithExplicitSchema.
 func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, opts ...Option) (*ObjectResult[T], error) {
+	if model == nil {
+		return nil, errors.New("goai: model must not be nil")
+	}
+
 	o := applyOptions(opts...)
 
 	if o.Timeout > 0 {
@@ -221,6 +258,10 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 // StreamObject performs a streaming structured output generation.
 // Returns an ObjectStream that emits progressively populated partial objects.
 func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts ...Option) (*ObjectStream[T], error) {
+	if model == nil {
+		return nil, errors.New("goai: model must not be nil")
+	}
+
 	o := applyOptions(opts...)
 
 	var timeoutCancel context.CancelFunc
@@ -242,6 +283,16 @@ func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts
 		Schema: schema,
 	}
 
+	if o.OnRequest != nil {
+		o.OnRequest(RequestInfo{
+			Model:        model.ModelID(),
+			MessageCount: len(params.Messages),
+			ToolCount:    len(params.Tools),
+			Timestamp:    time.Now(),
+		})
+	}
+
+	start := time.Now()
 	result, err := withRetry(ctx, o.MaxRetries, func() (*provider.StreamResult, error) {
 		return model.DoStream(ctx, params)
 	})
@@ -249,11 +300,21 @@ func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts
 		if timeoutCancel != nil {
 			timeoutCancel()
 		}
+		if o.OnResponse != nil {
+			info := ResponseInfo{Latency: time.Since(start), Error: err}
+			var apiErr *APIError
+			if errors.As(err, &apiErr) {
+				info.StatusCode = apiErr.StatusCode
+			}
+			o.OnResponse(info)
+		}
 		return nil, err
 	}
 
 	os := newObjectStream[T](ctx, result.Stream)
 	os.timeoutCancel = timeoutCancel
+	os.onResponse = o.OnResponse
+	os.startTime = start
 	return os, nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -80,6 +81,10 @@ type TextStream struct {
 	rawCh  <-chan provider.StreamChunk
 	textCh <-chan string
 
+	// Hook support.
+	onResponse func(ResponseInfo)
+	startTime  time.Time
+
 	// Accumulated state (written by consume goroutine, read after doneCh closes).
 	text         strings.Builder
 	toolCalls    []provider.ToolCall
@@ -87,6 +92,7 @@ type TextStream struct {
 	finishReason provider.FinishReason
 	usage        provider.Usage
 	response     provider.ResponseMetadata
+	streamErr    error
 }
 
 func newTextStream(ctx context.Context, source <-chan provider.StreamChunk) *TextStream {
@@ -139,6 +145,15 @@ func (ts *TextStream) Result() *TextResult {
 	return ts.buildResult()
 }
 
+// Err returns the first stream error encountered, or nil.
+// Must be called after the stream is fully consumed (after Result(),
+// or after the Stream()/TextStream() channel is drained).
+// Follows the bufio.Scanner.Err() pattern.
+func (ts *TextStream) Err() error {
+	<-ts.doneCh
+	return ts.streamErr
+}
+
 func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<- string) {
 	defer close(ts.doneCh)
 	if ts.timeoutCancel != nil {
@@ -149,6 +164,17 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 	}
 	if textOut != nil {
 		defer close(textOut)
+	}
+
+	// Call OnResponse hook when consume finishes (after all chunks processed).
+	if ts.onResponse != nil {
+		defer func() {
+			ts.onResponse(ResponseInfo{
+				Latency:      time.Since(ts.startTime),
+				Usage:        ts.usage,
+				FinishReason: ts.finishReason,
+			})
+		}()
 	}
 
 	for chunk := range ts.source {
@@ -172,6 +198,10 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 			// Capture top-level citations (xAI, Perplexity).
 			if sources, ok := chunk.Metadata["sources"].([]provider.Source); ok {
 				ts.sources = append(ts.sources, sources...)
+			}
+		case provider.ChunkError:
+			if ts.streamErr == nil {
+				ts.streamErr = chunk.Error
 			}
 		}
 
@@ -229,6 +259,9 @@ func buildParams(opts options) provider.GenerateParams {
 	msgs := opts.Messages
 	if opts.Prompt != "" {
 		msgs = append([]provider.Message{UserMessage(opts.Prompt)}, msgs...)
+	} else {
+		// Always copy so tool-loop appends never mutate the caller's slice.
+		msgs = slices.Clone(msgs)
 	}
 
 	if opts.PromptCaching {
@@ -256,6 +289,10 @@ func buildParams(opts options) provider.GenerateParams {
 
 // StreamText performs a streaming text generation.
 func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Option) (*TextStream, error) {
+	if model == nil {
+		return nil, errors.New("goai: model must not be nil")
+	}
+
 	o := applyOptions(opts...)
 
 	var timeoutCancel context.CancelFunc
@@ -265,6 +302,16 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 
 	params := buildParams(o)
 
+	if o.OnRequest != nil {
+		o.OnRequest(RequestInfo{
+			Model:        model.ModelID(),
+			MessageCount: len(params.Messages),
+			ToolCount:    len(params.Tools),
+			Timestamp:    time.Now(),
+		})
+	}
+
+	start := time.Now()
 	result, err := withRetry(ctx, o.MaxRetries, func() (*provider.StreamResult, error) {
 		return model.DoStream(ctx, params)
 	})
@@ -272,11 +319,21 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 		if timeoutCancel != nil {
 			timeoutCancel()
 		}
+		if o.OnResponse != nil {
+			info := ResponseInfo{Latency: time.Since(start), Error: err}
+			var apiErr *APIError
+			if errors.As(err, &apiErr) {
+				info.StatusCode = apiErr.StatusCode
+			}
+			o.OnResponse(info)
+		}
 		return nil, err
 	}
 
 	ts := newTextStream(ctx, result.Stream)
 	ts.timeoutCancel = timeoutCancel
+	ts.onResponse = o.OnResponse
+	ts.startTime = start
 	return ts, nil
 }
 
@@ -284,6 +341,10 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 // When tools with Execute functions are provided and MaxSteps > 1,
 // it automatically runs a tool loop: generate → execute tools → re-generate.
 func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Option) (*TextResult, error) {
+	if model == nil {
+		return nil, errors.New("goai: model must not be nil")
+	}
+
 	o := applyOptions(opts...)
 
 	if o.Timeout > 0 {

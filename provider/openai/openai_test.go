@@ -708,7 +708,7 @@ func TestChat_CustomHeaders(t *testing.T) {
 		WithBaseURL(server.URL),
 		WithHeaders(map[string]string{"X-Custom": "value"}),
 	)
-	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+	result, err := model.DoGenerate(t.Context(), provider.GenerateParams{
 		Messages: []provider.Message{
 			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
 		},
@@ -716,6 +716,9 @@ func TestChat_CustomHeaders(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if result.Text != "ok" {
+		t.Errorf("Text = %q, want %q", result.Text, "ok")
 	}
 }
 
@@ -733,7 +736,7 @@ func TestChat_TokenSource(t *testing.T) {
 		WithTokenSource(provider.StaticToken("dynamic-token")),
 		WithBaseURL(server.URL),
 	)
-	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+	result, err := model.DoGenerate(t.Context(), provider.GenerateParams{
 		Messages: []provider.Message{
 			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
 		},
@@ -741,6 +744,9 @@ func TestChat_TokenSource(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if result.Text != "ok" {
+		t.Errorf("Text = %q, want %q", result.Text, "ok")
 	}
 }
 

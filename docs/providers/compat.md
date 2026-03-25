@@ -84,6 +84,7 @@ model := compat.Chat("my-model",
 | `WithBaseURL(url)` | `string` | **Required.** Set the API base URL |
 | `WithHeaders(h)` | `map[string]string` | Set additional HTTP headers |
 | `WithHTTPClient(c)` | `*http.Client` | Set a custom `*http.Client` |
+| `WithProviderID(id)` | `string` | Set a custom provider identifier |
 
 ## Notes
 

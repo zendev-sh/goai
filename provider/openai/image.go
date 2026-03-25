@@ -67,6 +67,10 @@ func (m *imageModel) DoGenerate(ctx context.Context, params provider.ImageParams
 		body["size"] = params.Size
 	}
 
+	// Note: params.AspectRatio is not mapped because OpenAI's image API uses
+	// explicit "size" dimensions (e.g. "1024x1024") rather than aspect ratios.
+	// Callers should use params.Size or pass "size" via ProviderOptions instead.
+
 	// Item 13: provider options passthrough (quality, style, seed, etc.).
 	for k, v := range params.ProviderOptions {
 		body[k] = v

@@ -392,6 +392,8 @@ func betaForTool(toolType string) string {
 		return "code-execution-2025-08-25"
 	case "code_execution_20260120":
 		return "" // no beta needed
+	case "web_search_20250305":
+		return "web-search-2025-03-05"
 	case "web_search_20260209", "web_fetch_20260209":
 		return "code-execution-web-tools-2026-02-09"
 	default:

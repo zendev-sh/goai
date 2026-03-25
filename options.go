@@ -174,7 +174,12 @@ func WithStopSequences(seqs ...string) Option {
 
 // WithMaxSteps sets the maximum auto tool loop iterations.
 func WithMaxSteps(n int) Option {
-	return func(o *options) { o.MaxSteps = n }
+	return func(o *options) {
+		if n < 1 {
+			n = 1
+		}
+		o.MaxSteps = n
+	}
 }
 
 // WithMaxRetries sets the retry count for transient errors.

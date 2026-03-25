@@ -212,13 +212,18 @@ func TestChat_Stream_OverflowError(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	found := false
 	for chunk := range result.Stream {
 		if chunk.Type == provider.ChunkError {
+			found = true
 			var overflow *goai.ContextOverflowError
 			if !errors.As(chunk.Error, &overflow) {
 				t.Errorf("expected ContextOverflowError, got %T", chunk.Error)
 			}
 		}
+	}
+	if !found {
+		t.Fatal("expected overflow error chunk")
 	}
 }
 
@@ -257,8 +262,10 @@ func TestChat_Stream_CachedTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	found := false
 	for chunk := range result.Stream {
 		if chunk.Type == provider.ChunkFinish {
+			found = true
 			if chunk.Usage.InputTokens != 20 {
 				t.Errorf("InputTokens = %d, want 20 (100-80)", chunk.Usage.InputTokens)
 			}
@@ -266,6 +273,9 @@ func TestChat_Stream_CachedTokens(t *testing.T) {
 				t.Errorf("CacheReadTokens = %d, want 80", chunk.Usage.CacheReadTokens)
 			}
 		}
+	}
+	if !found {
+		t.Fatal("expected finish chunk with usage data")
 	}
 }
 

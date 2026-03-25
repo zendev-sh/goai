@@ -238,8 +238,8 @@ func TestEmbedding_ModelID(t *testing.T) {
 
 func TestEmbedding_MaxValuesPerCall(t *testing.T) {
 	model := Embedding("text-embedding-004", WithTokenSource(provider.StaticToken("tok")))
-	if got := model.MaxValuesPerCall(); got != 2048 {
-		t.Errorf("MaxValuesPerCall = %d, want 2048", got)
+	if got := model.MaxValuesPerCall(); got != 250 {
+		t.Errorf("MaxValuesPerCall = %d, want 250", got)
 	}
 }
 

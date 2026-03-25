@@ -14,26 +14,28 @@ import (
 // --- BF.9 Item 1: ADC TokenSource tests ---
 
 func TestADCTokenSource_Type(t *testing.T) {
-	// ADCTokenSource returns a provider.TokenSource -- verify the interface.
-	ts := ADCTokenSource()
-	if ts == nil {
-		t.Fatal("ADCTokenSource returned nil")
+	// Without valid credentials, ADCTokenSource may return an error.
+	// If it succeeds, verify the interface.
+	ts, err := ADCTokenSource(t.Context())
+	if err != nil {
+		// Expected when no GCP credentials are configured.
+		return
 	}
-	// We can't actually test Token() without GCP credentials,
-	// but we verify it returns a valid TokenSource.
+	if ts == nil {
+		t.Fatal("ADCTokenSource returned nil without error")
+	}
 	var _ provider.TokenSource = ts
 }
 
 func TestADCTokenSource_FindCredsError(t *testing.T) {
 	// Point GOOGLE_APPLICATION_CREDENTIALS at a nonexistent file to force
-	// google.FindDefaultCredentials to fail -- exercises the creds error path (line 30-31).
+	// google.FindDefaultCredentials to fail -- exercises the creds error path.
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/nonexistent/service-account.json")
 	t.Setenv("GOOGLE_API_KEY", "")
 	t.Setenv("GEMINI_API_KEY", "")
 	t.Setenv("GOOGLE_GENERATIVE_AI_API_KEY", "")
 
-	ts := ADCTokenSource()
-	_, err := ts.Token(t.Context())
+	_, err := ADCTokenSource(t.Context())
 	if err == nil {
 		t.Fatal("expected error when GOOGLE_APPLICATION_CREDENTIALS points to nonexistent file")
 	}
@@ -62,8 +64,11 @@ func TestADCTokenSource_TokenFetchError(t *testing.T) {
 	}
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credFile)
 
-	ts := ADCTokenSource()
-	_, err := ts.Token(t.Context())
+	ts, err := ADCTokenSource(t.Context())
+	if err != nil {
+		t.Fatalf("ADCTokenSource should succeed with valid JSON: %v", err)
+	}
+	_, err = ts.Token(t.Context())
 	// FindDefaultCredentials succeeds but token fetch fails (unreachable token_uri).
 	if err == nil {
 		t.Fatal("expected token fetch error")
@@ -103,7 +108,10 @@ func TestADCTokenSource_TokenSuccess(t *testing.T) {
 	}
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", credFile)
 
-	ts := ADCTokenSource()
+	ts, err := ADCTokenSource(t.Context())
+	if err != nil {
+		t.Fatalf("ADCTokenSource failed: %v", err)
+	}
 	tok, err := ts.Token(t.Context())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

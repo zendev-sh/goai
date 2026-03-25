@@ -2,17 +2,29 @@ package goai
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"github.com/zendev-sh/goai/provider"
 )
 
 // GenerateImage generates images from a text prompt.
 func GenerateImage(ctx context.Context, model provider.ImageModel, opts ...ImageOption) (*ImageResult, error) {
+	if model == nil {
+		return nil, errors.New("goai: model must not be nil")
+	}
+
 	o := imageOptions{
 		n: 1,
 	}
 	for _, opt := range opts {
 		opt(&o)
+	}
+
+	if o.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, o.timeout)
+		defer cancel()
 	}
 
 	params := provider.ImageParams{
@@ -23,7 +35,9 @@ func GenerateImage(ctx context.Context, model provider.ImageModel, opts ...Image
 		ProviderOptions: o.providerOptions,
 	}
 
-	result, err := model.DoGenerate(ctx, params)
+	result, err := withRetry(ctx, o.maxRetries, func() (*provider.ImageResult, error) {
+		return model.DoGenerate(ctx, params)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -47,6 +61,8 @@ type imageOptions struct {
 	size            string
 	aspectRatio     string
 	providerOptions map[string]any
+	maxRetries      int
+	timeout         time.Duration
 }
 
 // WithImagePrompt sets the text prompt for image generation.
@@ -81,5 +97,19 @@ func WithAspectRatio(ratio string) ImageOption {
 func WithImageProviderOptions(opts map[string]any) ImageOption {
 	return func(o *imageOptions) {
 		o.providerOptions = opts
+	}
+}
+
+// WithImageMaxRetries sets the maximum number of retries for transient errors.
+func WithImageMaxRetries(n int) ImageOption {
+	return func(o *imageOptions) {
+		o.maxRetries = n
+	}
+}
+
+// WithImageTimeout sets a timeout for the image generation request.
+func WithImageTimeout(d time.Duration) ImageOption {
+	return func(o *imageOptions) {
+		o.timeout = d
 	}
 }

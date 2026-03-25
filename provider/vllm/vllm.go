@@ -81,7 +81,7 @@ func Embedding(modelID string, opts ...Option) provider.EmbeddingModel {
 }
 
 func toCompatOpts(o options) []compat.Option {
-	copts := []compat.Option{compat.WithBaseURL(o.baseURL)}
+	copts := []compat.Option{compat.WithProviderID("vllm"), compat.WithBaseURL(o.baseURL)}
 	if o.tokenSource != nil {
 		copts = append(copts, compat.WithTokenSource(o.tokenSource))
 	}

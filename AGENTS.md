@@ -39,10 +39,11 @@ goai/
 │   ├── azure/              # Azure OpenAI
 │   ├── cohere/             # Cohere (Chat v2 + Embed)
 │   ├── compat/             # Generic OpenAI-compatible
-│   └── <13 more>/          # OpenAI-compat via internal/openaicompat
+│   └── <12 more>/          # OpenAI-compat via internal/openaicompat
 │   # tools.go files: anthropic/ (10), openai/ (4), google/ (3), xai/ (2), groq/ (1)
 ├── internal/
 │   ├── openaicompat/       # Shared codec for 13+ providers
+│   ├── gemini/             # Schema sanitization (Vertex, Google)
 │   ├── sse/                # SSE parser
 │   └── httpc/              # HTTP helpers + ParseDataURL
 ├── examples/               # 16 runnable examples

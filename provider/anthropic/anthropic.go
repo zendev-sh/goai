@@ -176,6 +176,17 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 	out := make(chan provider.StreamChunk, 64)
 	go func() {
 		defer func() { _ = resp.Body.Close() }()
+		// Close body on context cancellation to unblock scanner.Scan().
+		// Without this, the goroutine leaks if the server stalls mid-stream.
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = resp.Body.Close()
+			case <-done:
+			}
+		}()
 		parseSSE(ctx, resp.Body, out, rfMode)
 	}()
 
@@ -1114,7 +1125,7 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 			providerMeta["reasoning"] = append(reasoning, map[string]any{
 				"type": "redacted_thinking", "data": block.Data,
 			})
-		case "tool_use":
+		case "tool_use", "server_tool_use":
 			result.ToolCalls = append(result.ToolCalls, provider.ToolCall{
 				ID:    block.ID,
 				Name:  block.Name,

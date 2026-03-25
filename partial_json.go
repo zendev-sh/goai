@@ -88,6 +88,22 @@ func repairJSON(s string) string {
 
 	// Close open string.
 	if inString || escaped {
+		// If we ended mid-escape (trailing backslash), drop the backslash
+		// so closing with `"` doesn't produce `\"` (escaped quote).
+		if escaped && len(result) > 0 && result[len(result)-1] == '\\' {
+			result = result[:len(result)-1]
+		}
+
+		// Strip incomplete \uXXXX escape sequences at the end of the string.
+		// A valid unicode escape is exactly \uXXXX (6 chars). If we see \u
+		// followed by fewer than 4 hex digits at the tail, remove the partial escape.
+		if idx := strings.LastIndex(result, `\u`); idx >= 0 {
+			tail := result[idx:]
+			if len(tail) < 6 { // incomplete \uXXXX
+				result = result[:idx]
+			}
+		}
+
 		result += `"`
 	}
 
@@ -117,6 +133,17 @@ func completeTrailing(s string) string {
 	// Complete truncated keywords.
 	keywords := []string{"true", "false", "null"}
 	for _, kw := range keywords {
+		// Check exact match first (complete keyword should not fall through to number handling).
+		if strings.HasSuffix(trimmed, kw) {
+			pos := len(trimmed) - len(kw)
+			if pos > 0 {
+				prev := trimmed[pos-1]
+				if prev != ':' && prev != ',' && prev != '[' && prev != '{' && prev != ' ' && prev != '\t' && prev != '\n' {
+					continue
+				}
+			}
+			return s
+		}
 		for prefixLen := 1; prefixLen < len(kw); prefixLen++ {
 			if strings.HasSuffix(trimmed, kw[:prefixLen]) {
 				// Verify it's a word boundary (preceded by : , [ { or whitespace).
@@ -135,7 +162,7 @@ func completeTrailing(s string) string {
 	// Complete truncated numbers.
 	last := trimmed[len(trimmed)-1]
 	switch last {
-	case '.', '-', '+', 'e', 'E':
+	case '.', '-', 'e', 'E':
 		return trimmed + "0"
 	}
 

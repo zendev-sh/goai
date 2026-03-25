@@ -32,18 +32,19 @@ jobs:
           draft: false
 
       - name: Update versions.json
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          TAG=${GITHUB_REF#refs/tags/}
-          DATE=$(date -u +%Y-%m-%d)
+          export DATE=$(date -u +%Y-%m-%d)
           if [ ! -f docs/public/versions.json ]; then
             echo '{"latest":"","versions":[]}' > docs/public/versions.json
           fi
           cat docs/public/versions.json | \
             python3 -c "
-          import json, sys
+          import json, sys, os
           data = json.load(sys.stdin)
-          tag = '$TAG'
-          date = '$DATE'
+          tag = os.environ['TAG']
+          date = os.environ['DATE']
           data['latest'] = tag
           if not any(v['tag'] == tag for v in data['versions']):
               data['versions'].insert(0, {'tag': tag, 'date': date, 'label': tag + ' (latest)'})

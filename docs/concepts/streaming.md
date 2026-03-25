@@ -62,6 +62,17 @@ fmt.Printf("Tokens: %d\n", result.TotalUsage.TotalTokens)
 
 `Result()` can always be called, including after `TextStream()` or `Stream()`. If called after a streaming method, it waits for the stream to finish and returns the accumulated data.
 
+After consuming the stream, call `Err()` to check for any errors that occurred during streaming:
+
+```go
+for text := range stream.TextStream() {
+    fmt.Print(text)
+}
+if err := stream.Err(); err != nil {
+    log.Fatal("stream error:", err)
+}
+```
+
 A common pattern is to stream text to the user, then inspect the final result:
 
 ```go

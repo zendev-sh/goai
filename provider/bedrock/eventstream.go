@@ -53,6 +53,10 @@ func (d *eventStreamDecoder) Next() (*eventStreamFrame, error) {
 		return nil, fmt.Errorf("eventstream: invalid total length %d", totalLen)
 	}
 
+	if int(headersLen) > remaining {
+		return nil, fmt.Errorf("eventstream: headers length %d exceeds frame payload %d", headersLen, remaining)
+	}
+
 	buf := make([]byte, remaining+4) // +4 for message CRC
 	if _, err := io.ReadFull(d.r, buf); err != nil {
 		return nil, fmt.Errorf("eventstream: reading frame body: %w", err)
@@ -129,6 +133,9 @@ func (d *eventStreamDecoder) Next() (*eventStreamFrame, error) {
 				return nil, fmt.Errorf("eventstream: bytes header length overflow")
 			}
 			bLen := int(binary.BigEndian.Uint16(headers[off : off+2]))
+			if off+2+bLen > len(headers) {
+				return nil, fmt.Errorf("eventstream: bytes header value overflows header block")
+			}
 			off += 2 + bLen
 		default:
 			return nil, fmt.Errorf("eventstream: unknown header type tag %d", typeTag)

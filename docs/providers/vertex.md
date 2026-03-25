@@ -135,5 +135,5 @@ Image provider options (pass under the `"vertex"` key in `ImageParams.ProviderOp
 - Chat uses the Vertex AI OpenAI-compatible endpoint. Embeddings and image generation use the native Vertex AI `:predict` endpoint.
 - Tool schemas are automatically sanitized to comply with Gemini schema restrictions (no `additionalProperties`, enum values must be strings, etc.).
 - Gemini-native provider options like `thinkingConfig` are stripped before sending to the OpenAI-compatible endpoint.
-- The `ADCTokenSource()` function is exported for direct use with other providers that need GCP credentials.
-- Max embedding batch size: 2048 values per call.
+- The `ADCTokenSource(ctx context.Context, scopes ...string)` function is exported for direct use with other providers that need GCP credentials. It takes a `context.Context` and optional OAuth scopes, and returns `(provider.TokenSource, error)`.
+- Max embedding batch size: 250 values per call.

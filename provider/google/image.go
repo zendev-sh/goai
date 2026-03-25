@@ -190,14 +190,37 @@ func (m *geminiImageModel) DoGenerate(ctx context.Context, params provider.Image
 	}
 
 	genConfig := map[string]any{
-		"responseModalities": []string{"IMAGE"},
+		"responseModalities": []string{"TEXT", "IMAGE"},
 	}
 
-	// Extract google-specific options for image config.
+	// Map params.N to numberOfImages in the generation config.
+	// Gemini's generateContent supports numberOfImages to request multiple images.
+	if params.N > 1 {
+		genConfig["numberOfImages"] = params.N
+	}
+
+	// Note: params.Size is not supported by the Gemini generateContent endpoint.
+	// Use provider options {"google": {"imageConfig": {"imageSize": "1K"}}} instead.
+
+	// Build imageConfig from params and provider options.
+	imageConfig := map[string]any{}
+
+	// Map params.AspectRatio into imageConfig if set.
+	if params.AspectRatio != "" {
+		imageConfig["aspectRatio"] = params.AspectRatio
+	}
+
+	// Extract google-specific options for image config (overrides params).
 	if gopts, ok := params.ProviderOptions["google"].(map[string]any); ok {
 		if ic, ok := gopts["imageConfig"].(map[string]any); ok {
-			genConfig["imageConfig"] = ic
+			for k, v := range ic {
+				imageConfig[k] = v
+			}
 		}
+	}
+
+	if len(imageConfig) > 0 {
+		genConfig["imageConfig"] = imageConfig
 	}
 
 	body := map[string]any{

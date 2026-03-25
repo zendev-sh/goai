@@ -708,7 +708,7 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 	}
 
 	// Send final finish chunk only on clean stream completion.
-	usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+	usage.TotalTokens = usage.InputTokens + usage.OutputTokens + usage.ReasoningTokens
 	provider.TrySend(ctx, out, provider.StreamChunk{ // terminal send
 		Type:     provider.ChunkFinish,
 		Usage:    usage,
@@ -801,7 +801,7 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 		if result.Usage.OutputTokens < 0 {
 			result.Usage.OutputTokens = 0
 		}
-		result.Usage.TotalTokens = result.Usage.InputTokens + result.Usage.OutputTokens
+		result.Usage.TotalTokens = result.Usage.InputTokens + result.Usage.OutputTokens + result.Usage.ReasoningTokens
 	}
 
 	if len(resp.Candidates) == 0 {

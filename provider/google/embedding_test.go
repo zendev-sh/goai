@@ -66,9 +66,9 @@ func TestEmbedding_SingleValue(t *testing.T) {
 	if result.Embeddings[0][0] != 0.1 || result.Embeddings[0][1] != 0.2 || result.Embeddings[0][2] != 0.3 {
 		t.Errorf("unexpected embedding values: %v", result.Embeddings[0])
 	}
-	// Google uses len(values) as input tokens.
-	if result.Usage.InputTokens != 1 {
-		t.Errorf("expected 1 input token, got %d", result.Usage.InputTokens)
+	// Google embedding API does not return token counts; InputTokens should be 0.
+	if result.Usage.InputTokens != 0 {
+		t.Errorf("expected 0 input tokens, got %d", result.Usage.InputTokens)
 	}
 }
 
@@ -109,8 +109,8 @@ func TestEmbedding_MultipleValues(t *testing.T) {
 	if result.Embeddings[2][1] != 0.6 {
 		t.Errorf("expected third embedding [1]=0.6, got %f", result.Embeddings[2][1])
 	}
-	if result.Usage.InputTokens != 3 {
-		t.Errorf("expected 3 input tokens, got %d", result.Usage.InputTokens)
+	if result.Usage.InputTokens != 0 {
+		t.Errorf("expected 0 input tokens, got %d", result.Usage.InputTokens)
 	}
 }
 

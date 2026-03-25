@@ -2,6 +2,7 @@ package goai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -29,6 +30,10 @@ type EmbedManyResult struct {
 
 // Embed generates an embedding vector for a single value.
 func Embed(ctx context.Context, model provider.EmbeddingModel, value string, opts ...Option) (*EmbedResult, error) {
+	if model == nil {
+		return nil, errors.New("goai: model must not be nil")
+	}
+
 	o := applyOptions(opts...)
 
 	if o.Timeout > 0 {
@@ -62,6 +67,10 @@ func Embed(ctx context.Context, model provider.EmbeddingModel, value string, opt
 // Auto-chunks when values exceed the model's MaxValuesPerCall limit
 // and processes chunks in parallel (controlled by WithMaxParallelCalls).
 func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []string, opts ...Option) (*EmbedManyResult, error) {
+	if model == nil {
+		return nil, errors.New("goai: model must not be nil")
+	}
+
 	o := applyOptions(opts...)
 
 	if o.Timeout > 0 {
@@ -83,6 +92,9 @@ func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []stri
 		})
 		if err != nil {
 			return nil, err
+		}
+		if len(result.Embeddings) != len(values) {
+			return nil, fmt.Errorf("goai: embedding count mismatch: got %d, expected %d", len(result.Embeddings), len(values))
 		}
 		return &EmbedManyResult{
 			Embeddings: result.Embeddings,
@@ -140,6 +152,10 @@ func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []stri
 		}
 		allEmbeddings = append(allEmbeddings, cr.result.Embeddings...)
 		totalUsage = addUsage(totalUsage, cr.result.Usage)
+	}
+
+	if len(allEmbeddings) != len(values) {
+		return nil, fmt.Errorf("goai: embedding count mismatch: got %d, expected %d", len(allEmbeddings), len(values))
 	}
 
 	return &EmbedManyResult{

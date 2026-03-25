@@ -368,6 +368,26 @@ func WithAspectRatio(ratio string) ImageOption
 
 **Default:** provider default.
 
+### WithImageMaxRetries
+
+Sets the retry count for transient errors during image generation (429, 503, 5xx).
+
+```go
+func WithImageMaxRetries(n int) ImageOption
+```
+
+**Default:** `2`. Retries use exponential backoff.
+
+### WithImageTimeout
+
+Sets the timeout for the image generation call.
+
+```go
+func WithImageTimeout(d time.Duration) ImageOption
+```
+
+**Default:** no timeout (relies on the context).
+
 ### WithImageProviderOptions
 
 Sets provider-specific options for image generation.

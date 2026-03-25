@@ -315,6 +315,10 @@ func convertToResponsesInput(msgs []provider.Message) []map[string]any {
 				switch part.Type {
 				case provider.PartText:
 					textParts = append(textParts, part.Text)
+				case provider.PartReasoning:
+					if part.Text != "" {
+						textParts = append(textParts, part.Text)
+					}
 				case provider.PartToolCall:
 					items = append(items, map[string]any{
 						"type":      "function_call",
@@ -788,6 +792,13 @@ type responsesResult struct {
 		CallID    string `json:"call_id,omitempty"`
 		Name      string `json:"name,omitempty"`
 		Arguments string `json:"arguments,omitempty"`
+
+		// reasoning fields
+		ID      string `json:"id,omitempty"`
+		Summary []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"summary,omitempty"`
 	} `json:"output"`
 
 	Usage *struct {
@@ -883,6 +894,16 @@ func parseResponsesResult(body []byte) (*provider.GenerateResult, error) {
 				Name:  item.Name,
 				Input: json.RawMessage(item.Arguments),
 			})
+		case "reasoning":
+			for _, s := range item.Summary {
+				if s.Text != "" {
+					reasoning, _ := providerMeta["reasoning"].([]map[string]any)
+					providerMeta["reasoning"] = append(reasoning, map[string]any{
+						"type": s.Type,
+						"text": s.Text,
+					})
+				}
+			}
 		}
 	}
 
