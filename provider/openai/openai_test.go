@@ -3474,3 +3474,84 @@ func TestAddIncludeKey_AnySliceDuplicate(t *testing.T) {
 		t.Errorf("include = %v, want single entry", got)
 	}
 }
+
+func TestBuildResponsesRequest_ProtectedKeysIgnoresModel(t *testing.T) {
+	params := provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		ProviderOptions: map[string]any{
+			"model":  "evil-model",
+			"stream": false,
+			"input":  "should-not-override",
+		},
+	}
+	body := buildResponsesRequest(params, "gpt-4o", true)
+	if body["model"] != "gpt-4o" {
+		t.Errorf("model = %v, want gpt-4o (protectedKeys should prevent override)", body["model"])
+	}
+	if body["stream"] != true {
+		t.Errorf("stream = %v, want true (protectedKeys should prevent override)", body["stream"])
+	}
+}
+
+func TestParseResponsesResult_InputTokensNormalized(t *testing.T) {
+	body := `{
+		"id": "resp-1",
+		"model": "o3",
+		"status": "completed",
+		"output": [{"type": "message", "content": [{"type": "output_text", "text": "hello"}]}],
+		"usage": {
+			"input_tokens": 100,
+			"output_tokens": 10,
+			"input_tokens_details": {"cached_tokens": 30}
+		}
+	}`
+
+	result, err := parseResponsesResult([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// InputTokens should be normalized: 100 - 30 = 70
+	if result.Usage.InputTokens != 70 {
+		t.Errorf("InputTokens = %d, want 70 (normalized: 100 - 30)", result.Usage.InputTokens)
+	}
+	if result.Usage.CacheReadTokens != 30 {
+		t.Errorf("CacheReadTokens = %d, want 30", result.Usage.CacheReadTokens)
+	}
+}
+
+func TestStreamResponses_InputTokensNormalized(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: response.output_text.delta\n")
+		_, _ = fmt.Fprint(w, `data: {"delta":"hello"}`+"\n\n")
+		_, _ = fmt.Fprint(w, "event: response.completed\n")
+		_, _ = fmt.Fprint(w, `data: {"response":{"id":"r1","model":"o3","usage":{"input_tokens":100,"output_tokens":10,"input_tokens_details":{"cached_tokens":30}}}}`+"\n\n")
+	}))
+	defer server.Close()
+
+	model := Chat("o3", WithAPIKey("key"), WithBaseURL(server.URL))
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var usage provider.Usage
+	for chunk := range result.Stream {
+		if chunk.Type == provider.ChunkFinish {
+			usage = chunk.Usage
+		}
+	}
+	// InputTokens should be normalized: 100 - 30 = 70
+	if usage.InputTokens != 70 {
+		t.Errorf("InputTokens = %d, want 70 (normalized: 100 - 30)", usage.InputTokens)
+	}
+	if usage.CacheReadTokens != 30 {
+		t.Errorf("CacheReadTokens = %d, want 30", usage.CacheReadTokens)
+	}
+}

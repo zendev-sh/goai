@@ -4237,3 +4237,75 @@ func TestValidRegion(t *testing.T) {
 		}
 	}
 }
+
+func TestDoHTTP_InvalidRegion(t *testing.T) {
+	model := Chat("anthropic.claude-sonnet-4-v1:0",
+		WithAccessKey("AK"),
+		WithSecretKey("SK"),
+		WithRegion("../evil"),
+	)
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid region")
+	}
+	if !strings.Contains(err.Error(), "invalid AWS region") {
+		t.Errorf("unexpected error: %s", err)
+	}
+}
+
+func TestInferenceConfig_ThinkingEnabledWithoutMaxTokens(t *testing.T) {
+	// When thinking is enabled but no maxTokens is set in inferenceConfig,
+	// the code should create inferenceConfig and set maxTokens = budget + 4096.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+
+		ic, ok := req["inferenceConfig"].(map[string]any)
+		if !ok {
+			t.Fatalf("missing inferenceConfig, body = %s", string(body))
+		}
+		// maxTokens should be budget(8192) + 4096 = 12288
+		mt, ok := ic["maxTokens"].(float64)
+		if !ok {
+			t.Fatalf("missing maxTokens in inferenceConfig, body = %s", string(body))
+		}
+		if int(mt) != 8192+4096 {
+			t.Errorf("maxTokens = %v, want %d", mt, 8192+4096)
+		}
+		// temperature, topP, topK should be removed
+		if _, has := ic["temperature"]; has {
+			t.Error("temperature should be removed when thinking enabled")
+		}
+		if _, has := ic["topP"]; has {
+			t.Error("topP should be removed when thinking enabled")
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, converseResponse("ok", "end_turn", 1, 1))
+	}))
+	defer server.Close()
+
+	model := Chat("anthropic.claude-sonnet-4-v1:0",
+		WithAccessKey("AK"),
+		WithSecretKey("SK"),
+		WithBaseURL(server.URL),
+		WithReasoningConfig(ReasoningConfig{
+			Type:         ReasoningEnabled,
+			BudgetTokens: 8192,
+		}),
+	)
+	// No MaxOutputTokens set -- inferenceConfig won't pre-exist.
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

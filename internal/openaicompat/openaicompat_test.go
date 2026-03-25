@@ -2020,3 +2020,42 @@ func TestBuildRequest_NewOptions(t *testing.T) {
 		t.Errorf("presence_penalty = %v, want 0.3", body["presence_penalty"])
 	}
 }
+
+func TestBuildRequest_ProtectedKeysIgnoresModel(t *testing.T) {
+	params := provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		ProviderOptions: map[string]any{
+			"model":    "evil-model",
+			"stream":   false,
+			"messages": "should-not-override",
+		},
+	}
+	body := BuildRequest(params, "gpt-4o", true, RequestConfig{})
+	if body["model"] != "gpt-4o" {
+		t.Errorf("model = %v, want gpt-4o (protectedKeys should prevent override)", body["model"])
+	}
+	if body["stream"] != true {
+		t.Errorf("stream = %v, want true (protectedKeys should prevent override)", body["stream"])
+	}
+}
+
+func TestBuildRequest_ProtectedKeysIgnoresTemperature(t *testing.T) {
+	temp := 0.5
+	params := provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		Temperature: &temp,
+		ProviderOptions: map[string]any{
+			"temperature": 999.0,
+			"max_tokens":  999,
+			"tools":       "should-not-override",
+		},
+	}
+	body := BuildRequest(params, "gpt-4o", false, RequestConfig{})
+	if body["temperature"] != 0.5 {
+		t.Errorf("temperature = %v, want 0.5 (protectedKeys should prevent override)", body["temperature"])
+	}
+}

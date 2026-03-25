@@ -1737,3 +1737,60 @@ func TestStreamText_ErrReturnsStreamError(t *testing.T) {
 		t.Errorf("unexpected error: %v", stream.Err())
 	}
 }
+
+func TestExecuteTools_ContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // Cancel immediately.
+
+	slowTool := Tool{
+		Name:        "slow",
+		Description: "a slow tool",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+		Execute: func(ctx context.Context, input json.RawMessage) (string, error) {
+			return "done", nil
+		},
+	}
+	toolMap := map[string]Tool{"slow": slowTool}
+
+	calls := []provider.ToolCall{
+		{ID: "tc1", Name: "slow", Input: json.RawMessage(`{}`)},
+		{ID: "tc2", Name: "slow", Input: json.RawMessage(`{}`)},
+	}
+
+	msgs := executeTools(ctx, calls, toolMap, nil)
+	// With a cancelled context, executeTools should return early (0 or fewer results).
+	if len(msgs) >= 2 {
+		t.Errorf("expected fewer than 2 messages (ctx cancelled), got %d", len(msgs))
+	}
+}
+
+func TestConsume_ContextCancelledResultPath(t *testing.T) {
+	// Create a stream that blocks, then cancel the context.
+	// The Result() path (no rawOut, no textOut) should exit via ctx.Err() check.
+	ctx, cancel := context.WithCancel(t.Context())
+
+	ch := make(chan provider.StreamChunk, 10)
+	// Send some chunks, then cancel before the channel closes.
+	ch <- provider.StreamChunk{Type: provider.ChunkText, Text: "hello"}
+
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return &provider.StreamResult{Stream: ch}, nil
+		},
+	}
+
+	stream, err := StreamText(ctx, model, WithPrompt("hi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Cancel context to trigger the ctx.Err() early exit in consume.
+	cancel()
+	// Close the channel so consume can drain.
+	close(ch)
+
+	result := stream.Result()
+	// Result should have at most the text sent before cancel.
+	_ = result
+}

@@ -738,3 +738,67 @@ func TestValidGCPIdentifier(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeURL_InvalidLocation(t *testing.T) {
+	o := options{
+		tokenSource: provider.StaticToken("tok"),
+		project:     "my-project",
+		location:    "../evil",
+	}
+	_, err := nativeURL(o, "models/text-embedding-004:predict")
+	if err == nil {
+		t.Fatal("expected error for invalid location")
+	}
+	if !strings.Contains(err.Error(), "invalid location") {
+		t.Errorf("unexpected error: %s", err)
+	}
+}
+
+func TestNativeURL_InvalidProject(t *testing.T) {
+	o := options{
+		tokenSource: provider.StaticToken("tok"),
+		project:     "has spaces",
+		location:    "us-central1",
+	}
+	_, err := nativeURL(o, "models/text-embedding-004:predict")
+	if err == nil {
+		t.Fatal("expected error for invalid project")
+	}
+	if !strings.Contains(err.Error(), "invalid project") {
+		t.Errorf("unexpected error: %s", err)
+	}
+}
+
+func TestResolveURL_InvalidLocation(t *testing.T) {
+	t.Setenv("GOOGLE_VERTEX_PROJECT", "my-project")
+	t.Setenv("GOOGLE_VERTEX_LOCATION", "../evil")
+	model := Chat("m", WithTokenSource(provider.StaticToken("tok")),
+		WithProject("my-project"), WithLocation("../evil"))
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid location")
+	}
+	if !strings.Contains(err.Error(), "invalid location") {
+		t.Errorf("unexpected error: %s", err)
+	}
+}
+
+func TestResolveURL_InvalidProject(t *testing.T) {
+	model := Chat("m", WithTokenSource(provider.StaticToken("tok")),
+		WithProject("has spaces"), WithLocation("us-central1"))
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid project")
+	}
+	if !strings.Contains(err.Error(), "invalid project") {
+		t.Errorf("unexpected error: %s", err)
+	}
+}

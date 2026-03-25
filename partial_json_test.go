@@ -1,6 +1,7 @@
 package goai
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -509,5 +510,66 @@ func TestParsePartialJSON_TruncatedObjectKey(t *testing.T) {
 	// age should be zero since the value was truncated.
 	if got.Age != 0 {
 		t.Errorf("got Age=%d, want 0", got.Age)
+	}
+}
+
+func TestRepairJSON_TruncatedExponentPlus(t *testing.T) {
+	// Truncated number with trailing '+' (e.g., scientific notation 1.5e+).
+	input := `{"val": 1.5e+`
+	got := repairJSON(input)
+	// Should produce valid JSON.
+	var result map[string]any
+	if err := json.Unmarshal([]byte(got), &result); err != nil {
+		t.Errorf("repairJSON(%q) = %q, not valid JSON: %v", input, got, err)
+	}
+}
+
+func TestRepairJSON_DanglingKeyAfterComma(t *testing.T) {
+	// Dangling key inside object: `{"a":1, "b` → `{"a":1}`
+	input := `{"a":1, "b`
+	got := repairJSON(input)
+	expected := `{"a":1}`
+	if got != expected {
+		t.Errorf("repairJSON(%q)\n  got:  %q\n  want: %q", input, got, expected)
+	}
+}
+
+func TestRepairJSON_DanglingKeyAfterBrace(t *testing.T) {
+	// Dangling key right after opening brace: `{"b` → `{}`
+	input := `{"b`
+	got := repairJSON(input)
+	expected := `{}`
+	if got != expected {
+		t.Errorf("repairJSON(%q)\n  got:  %q\n  want: %q", input, got, expected)
+	}
+}
+
+func TestCompleteTrailing_Plus(t *testing.T) {
+	// Trailing '+' should be completed with '0'.
+	input := `{"val": 1.5e+`
+	got := completeTrailing(input)
+	expected := `{"val": 1.5e+0`
+	if got != expected {
+		t.Errorf("completeTrailing(%q)\n  got:  %q\n  want: %q", input, got, expected)
+	}
+}
+
+func TestTrimTrailingIncomplete_DanglingKey(t *testing.T) {
+	// Dangling key after comma: `{"a":1, "b"` → `{"a":1`
+	input := `{"a":1, "b"`
+	got := trimTrailingIncomplete(input)
+	expected := `{"a":1`
+	if got != expected {
+		t.Errorf("trimTrailingIncomplete(%q)\n  got:  %q\n  want: %q", input, got, expected)
+	}
+}
+
+func TestTrimTrailingIncomplete_DanglingKeyAfterBrace(t *testing.T) {
+	// Dangling key after opening brace: `{"b"` → `{`
+	input := `{"b"`
+	got := trimTrailingIncomplete(input)
+	expected := `{`
+	if got != expected {
+		t.Errorf("trimTrailingIncomplete(%q)\n  got:  %q\n  want: %q", input, got, expected)
 	}
 }

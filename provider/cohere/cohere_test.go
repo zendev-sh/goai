@@ -1875,3 +1875,78 @@ func TestParseChatStream_ContextCancel_AllBranches(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildChatRequest_ToolChoiceRequired(t *testing.T) {
+	params := provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		Tools: []provider.ToolDefinition{
+			{Name: "my_tool", Description: "desc", InputSchema: json.RawMessage(`{"type":"object"}`)},
+		},
+		ToolChoice: "required",
+	}
+	body := buildChatRequest(params, "command-r-plus", false)
+	if body["tool_choice"] != "required" {
+		t.Errorf("tool_choice = %v, want %q", body["tool_choice"], "required")
+	}
+}
+
+func TestBuildChatRequest_ToolChoiceSpecificTool(t *testing.T) {
+	params := provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		ToolChoice: "my_func",
+	}
+	body := buildChatRequest(params, "command-r-plus", false)
+	tc, ok := body["tool_choice"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool_choice is not a map, got %T: %v", body["tool_choice"], body["tool_choice"])
+	}
+	if tc["type"] != "function" {
+		t.Errorf("tool_choice.type = %v, want function", tc["type"])
+	}
+	fn, ok := tc["function"].(map[string]any)
+	if !ok {
+		t.Fatal("missing function in tool_choice")
+	}
+	if fn["name"] != "my_func" {
+		t.Errorf("tool_choice.function.name = %v, want my_func", fn["name"])
+	}
+}
+
+func TestBuildChatRequest_StopSequences(t *testing.T) {
+	params := provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		StopSequences: []string{"STOP", "END"},
+	}
+	body := buildChatRequest(params, "command-r-plus", false)
+	ss, ok := body["stop_sequences"].([]string)
+	if !ok {
+		t.Fatalf("stop_sequences not a []string, got %T", body["stop_sequences"])
+	}
+	if len(ss) != 2 || ss[0] != "STOP" || ss[1] != "END" {
+		t.Errorf("stop_sequences = %v, want [STOP END]", ss)
+	}
+}
+
+func TestMapFinishReason_ERROR(t *testing.T) {
+	if got := mapFinishReason("ERROR"); got != provider.FinishError {
+		t.Errorf("mapFinishReason(ERROR) = %q, want %q", got, provider.FinishError)
+	}
+}
+
+func TestMapFinishReason_Empty(t *testing.T) {
+	if got := mapFinishReason(""); got != "" {
+		t.Errorf("mapFinishReason(\"\") = %q, want empty", got)
+	}
+}
+
+func TestMapFinishReason_Unknown(t *testing.T) {
+	if got := mapFinishReason("SOMETHING_ELSE"); got != provider.FinishOther {
+		t.Errorf("mapFinishReason(SOMETHING_ELSE) = %q, want %q", got, provider.FinishOther)
+	}
+}
