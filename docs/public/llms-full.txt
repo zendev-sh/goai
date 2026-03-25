@@ -144,7 +144,7 @@ Image generation from text prompt.
 func GenerateImage(ctx context.Context, model provider.ImageModel, opts ...ImageOption) (*ImageResult, error)
 ```
 
-Uses `ImageOption` (not `Option`): `WithImagePrompt`, `WithImageCount`, `WithImageSize`, `WithAspectRatio`, `WithImageProviderOptions`.
+Uses `ImageOption` (not `Option`): `WithImagePrompt`, `WithImageCount`, `WithImageSize`, `WithAspectRatio`, `WithImageProviderOptions`, `WithImageMaxRetries`, `WithImageTimeout`.
 
 ### Message Builders
 
@@ -224,6 +224,8 @@ All options use the functional options pattern: `goai.With*(...)`.
 - `WithImageSize(size string)` — dimensions (e.g., "1024x1024")
 - `WithAspectRatio(ratio string)` — aspect ratio (e.g., "16:9")
 - `WithImageProviderOptions(opts map[string]any)` — provider-specific image params
+- `WithImageMaxRetries(n int)` - max retries for image generation (default: 2)
+- `WithImageTimeout(d time.Duration)` - per-attempt timeout for image generation
 
 ---
 
@@ -319,11 +321,12 @@ Fireworks (`FIREWORKS_API_KEY`), Together (`TOGETHER_AI_API_KEY`), DeepInfra (`D
 ### Common Provider Options
 
 ```go
-provider.WithAPIKey(key)        // static API key
-provider.WithTokenSource(ts)    // dynamic auth (OAuth, service accounts)
-provider.WithBaseURL(url)       // override endpoint
-provider.WithHeaders(h)         // custom HTTP headers
-provider.WithHTTPClient(c)      // custom HTTP transport
+// Each provider exports its own With* options:
+openai.WithAPIKey(key)        // static API key
+openai.WithTokenSource(ts)    // dynamic auth (OAuth, service accounts)
+openai.WithBaseURL(url)       // override endpoint
+openai.WithHeaders(h)         // custom HTTP headers
+openai.WithHTTPClient(c)      // custom HTTP transport
 ```
 
 ---

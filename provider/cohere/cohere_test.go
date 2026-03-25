@@ -1069,7 +1069,7 @@ func TestBuildChatRequest_Thinking(t *testing.T) {
 		ProviderOptions: map[string]any{
 			"thinking": map[string]any{
 				"type":        "enabled",
-				"tokenBudget": 4096,
+				"budgetTokens": 4096,
 			},
 		},
 	}
@@ -1093,7 +1093,7 @@ func TestBuildChatRequest_ThinkingDefaultType(t *testing.T) {
 		},
 		ProviderOptions: map[string]any{
 			"thinking": map[string]any{
-				"tokenBudget": 2048,
+				"budgetTokens": 2048,
 			},
 		},
 	}

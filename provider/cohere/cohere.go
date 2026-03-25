@@ -130,6 +130,7 @@ func (m *chatModel) Capabilities() provider.ModelCapabilities {
 	return provider.ModelCapabilities{
 		Temperature:      true,
 		ToolCall:         true,
+		Reasoning:        true,
 		InputModalities:  provider.ModalitySet{Text: true},
 		OutputModalities: provider.ModalitySet{Text: true},
 	}
@@ -310,7 +311,10 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 
 	return &provider.EmbedResult{
 		Embeddings: result.Embeddings.Float,
-		Usage:      provider.Usage{InputTokens: result.Meta.BilledUnits.InputTokens},
+		Usage: provider.Usage{
+			InputTokens: result.Meta.BilledUnits.InputTokens,
+			TotalTokens: result.Meta.BilledUnits.InputTokens,
+		},
 	}, nil
 }
 
@@ -411,6 +415,26 @@ func buildChatRequest(params provider.GenerateParams, modelID string, streaming 
 		body["tools"] = tools
 	}
 
+	// Tool choice mapping (Cohere v2 uses OpenAI-compatible tool_choice).
+	if params.ToolChoice != "" {
+		switch params.ToolChoice {
+		case "auto", "none", "required":
+			body["tool_choice"] = params.ToolChoice
+		default:
+			// Specific tool name.
+			body["tool_choice"] = map[string]any{
+				"type": "function",
+				"function": map[string]any{
+					"name": params.ToolChoice,
+				},
+			}
+		}
+	}
+
+	if len(params.StopSequences) > 0 {
+		body["stop_sequences"] = params.StopSequences
+	}
+
 	if params.MaxOutputTokens > 0 {
 		body["max_tokens"] = params.MaxOutputTokens
 	}
@@ -423,7 +447,7 @@ func buildChatRequest(params provider.GenerateParams, modelID string, streaming 
 
 	// Thinking / reasoning support for command-a-reasoning models.
 	// Read from ProviderOptions["thinking"] -- matches Vercel AI SDK convention.
-	// Accepts: {type: "enabled"/"disabled", tokenBudget: N}
+	// Accepts: {type: "enabled"/"disabled", budgetTokens: N}
 	if thinking, ok := params.ProviderOptions["thinking"]; ok {
 		if tm, ok := thinking.(map[string]any); ok {
 			thinkingReq := map[string]any{}
@@ -432,7 +456,7 @@ func buildChatRequest(params provider.GenerateParams, modelID string, streaming 
 			} else {
 				thinkingReq["type"] = "enabled"
 			}
-			if budget, ok := tm["tokenBudget"]; ok {
+			if budget, ok := tm["budgetTokens"]; ok {
 				thinkingReq["token_budget"] = budget
 			}
 			body["thinking"] = thinkingReq
@@ -482,6 +506,7 @@ type cohereCitation struct {
 func parseChatResponse(body []byte) (*provider.GenerateResult, error) {
 	var resp struct {
 		ID      string `json:"id"`
+		Model   string `json:"model"`
 		Message struct {
 			Role    string `json:"role"`
 			Content []struct {
@@ -517,7 +542,7 @@ func parseChatResponse(body []byte) (*provider.GenerateResult, error) {
 	}
 
 	result := &provider.GenerateResult{
-		Response: provider.ResponseMetadata{ID: resp.ID},
+		Response: provider.ResponseMetadata{ID: resp.ID, Model: resp.Model},
 	}
 
 	// Extract text from content blocks. Reasoning (thinking) blocks are
@@ -795,6 +820,7 @@ func parseChatStream(ctx context.Context, body io.Reader, out chan<- provider.St
 				Type:         provider.ChunkFinish,
 				FinishReason: fr,
 				Usage:        usage,
+				Response:     provider.ResponseMetadata{},
 			}
 			if sources := extractCohereCitations(streamCitations); len(sources) > 0 {
 				finishChunk.Metadata = map[string]any{"sources": sources}
@@ -821,6 +847,8 @@ func mapFinishReason(reason string) provider.FinishReason {
 		return provider.FinishToolCalls
 	case "MAX_TOKENS":
 		return provider.FinishLength
+	case "ERROR":
+		return provider.FinishError
 	case "":
 		return ""
 	default:

@@ -35,7 +35,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 - **Structured output**: `GenerateObject[T]` auto-generates JSON Schema from Go types via reflection
 - **Streaming**: Real-time text and partial object streaming via channels
 - **Dynamic auth**: `TokenSource` interface for OAuth, rotating keys, cloud IAM, with `CachedTokenSource` for TTL-based caching
-- **Prompt caching**: Automatic cache control for supported providers (Anthropic, OpenAI)
+- **Prompt caching**: Automatic cache control for supported providers (Anthropic, Bedrock)
 - **Citations/sources**: Grounding and inline citations from xAI, Perplexity, Google, OpenAI
 - **Web search**: Built-in web search tools for OpenAI, Anthropic, Google, Groq. Model decides when to search
 - **Code execution**: Server-side Python sandboxes via OpenAI, Anthropic, Google. No local setup

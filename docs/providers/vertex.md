@@ -132,7 +132,7 @@ Image provider options (pass under the `"vertex"` key in `ImageParams.ProviderOp
 ## Notes
 
 - For direct API key access without GCP, see the [Google provider](google.md).
-- Chat uses the Vertex AI OpenAI-compatible endpoint. Embeddings and image generation use the native Vertex AI `:predict` endpoint.
+- With ADC or an explicit token source, chat uses the Vertex AI OpenAI-compatible endpoint (`{region}-aiplatform.googleapis.com`). When using an API key instead (no GCP project configured), chat routes to the Gemini API endpoint (`generativelanguage.googleapis.com`). Embeddings and image generation use the native Vertex AI `:predict` endpoint (or the Gemini API equivalent when using an API key).
 - Tool schemas are automatically sanitized to comply with Gemini schema restrictions (no `additionalProperties`, enum values must be strings, etc.).
 - Gemini-native provider options like `thinkingConfig` are stripped before sending to the OpenAI-compatible endpoint.
 - The `ADCTokenSource(ctx context.Context, scopes ...string)` function is exported for direct use with other providers that need GCP credentials. It takes a `context.Context` and optional OAuth scopes, and returns `(provider.TokenSource, error)`.

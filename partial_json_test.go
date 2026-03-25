@@ -87,7 +87,7 @@ func TestRepairJSON(t *testing.T) {
 		{
 			name:     "truncated object key only",
 			input:    `{"a": 1, "b"`,
-			expected: `{"a": 1, "b"}`,
+			expected: `{"a": 1}`,
 		},
 
 		// Nested truncation.
@@ -239,7 +239,7 @@ func TestCompleteTrailing(t *testing.T) {
 		{
 			name:     "trailing plus",
 			input:    `{"a": +`,
-			expected: `{"a": +`,
+			expected: `{"a": +0`,
 		},
 		{
 			name:     "trailing e",

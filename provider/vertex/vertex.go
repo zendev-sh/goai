@@ -18,7 +18,9 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -204,14 +206,26 @@ func setAuth(ctx context.Context, req *http.Request, ts provider.TokenSource) er
 // For API key auth, appends ?key= (native Gemini API requires query param, not Bearer).
 // For OAuth/ADC, uses Bearer header (set by setAuth).
 func nativeURL(o options, modelPath string) (string, error) {
+	// Validate location/project before hostname interpolation to prevent SSRF.
+	// Skip empty values; they are caught by the project=="" check below.
+	if o.baseURL == "" {
+		if _, ok := o.tokenSource.(*apiKeyTokenSource); !ok {
+			if o.location != "" && !validGCPIdentifier(o.location) {
+				return "", fmt.Errorf("vertex: invalid location %q", o.location)
+			}
+			if o.project != "" && !validGCPIdentifier(o.project) {
+				return "", fmt.Errorf("vertex: invalid project %q", o.project)
+			}
+		}
+	}
 	base := nativeBaseURL(o)
-	url := fmt.Sprintf("%s/%s", base, modelPath)
+	reqURL := fmt.Sprintf("%s/%s", base, modelPath)
 	if aks, ok := o.tokenSource.(*apiKeyTokenSource); ok {
-		url += "?key=" + aks.key
+		reqURL += "?key=" + url.QueryEscape(aks.key)
 	} else if o.project == "" && o.baseURL == "" {
 		return "", fmt.Errorf("vertex: GOOGLE_CLOUD_PROJECT required (or set GOOGLE_API_KEY for Gemini API fallback)")
 	}
-	return url, nil
+	return reqURL, nil
 }
 
 // isNativeAPIKeyAuth returns true if using API key with native endpoints.
@@ -298,8 +312,8 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 			case <-done:
 			}
 		}()
+		defer close(done)
 		openaicompat.ParseStream(ctx, scanner, out)
-		close(done)
 	}()
 
 	return &provider.StreamResult{Stream: out}, nil
@@ -362,6 +376,13 @@ func (m *chatModel) resolveURL(ctx context.Context, path string) (string, error)
 	if m.opts.project == "" {
 		return "", fmt.Errorf("vertex: GOOGLE_CLOUD_PROJECT required (or set GOOGLE_API_KEY for Gemini API fallback)")
 	}
+	// Validate location/project before hostname interpolation to prevent SSRF.
+	if !validGCPIdentifier(m.opts.location) {
+		return "", fmt.Errorf("vertex: invalid location %q", m.opts.location)
+	}
+	if !validGCPIdentifier(m.opts.project) {
+		return "", fmt.Errorf("vertex: invalid project %q", m.opts.project)
+	}
 	return fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1beta1/projects/%s/locations/%s/endpoints/openapi%s",
 		m.opts.location, m.opts.project, m.opts.location, path), nil
 }
@@ -414,4 +435,17 @@ func sanitizeToolSchemas(params *provider.GenerateParams) {
 		}
 		params.Tools[i].InputSchema = cleaned
 	}
+}
+
+// validGCPIdentifier checks that a GCP location or project ID is safe for URL interpolation.
+// Allows standard projects (my-project-123), domain-scoped projects (example.com:my-project),
+// and locations (us-central1). Blocks SSRF characters (/, \, @, .., whitespace).
+var validGCPIdentifierRE = regexp.MustCompile(`^[a-z0-9][a-z0-9.:_-]{0,127}$`)
+
+func validGCPIdentifier(s string) bool {
+	if !validGCPIdentifierRE.MatchString(s) {
+		return false
+	}
+	// Block path traversal even if individual chars are allowed.
+	return !strings.Contains(s, "..")
 }

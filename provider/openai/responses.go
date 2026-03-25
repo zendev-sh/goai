@@ -257,9 +257,17 @@ func applyResponsesProviderOptions(body map[string]any, opts map[string]any) {
 		addIncludeKey(body, "reasoning.encrypted_content")
 	}
 
+	// Protected keys that must not be overwritten by provider options.
+	protectedKeys := map[string]bool{
+		"model": true, "stream": true, "input": true,
+		"instructions": true, "max_output_tokens": true,
+		"temperature": true, "top_p": true, "stop": true,
+		"tools": true, "tool_choice": true,
+	}
+
 	// Pass through any remaining unknown keys.
 	for k, v := range opts {
-		if !consumed[k] {
+		if !consumed[k] && !protectedKeys[k] {
 			body[k] = v
 		}
 	}
@@ -627,6 +635,7 @@ func streamResponses(ctx context.Context, body io.ReadCloser, out chan<- provide
 				if ev.Response.Usage.InputTokensDetails != nil {
 					usage.CacheReadTokens = ev.Response.Usage.InputTokensDetails.CachedTokens
 				}
+				usage.InputTokens -= usage.CacheReadTokens
 			}
 
 			// Flush remaining tool call args.
@@ -764,7 +773,7 @@ func mapResponsesFinishReason(eventType string, incompleteReason string, hasFunc
 		case "content_filter":
 			return provider.FinishContentFilter
 		default:
-			return provider.FinishLength
+			return provider.FinishOther
 		}
 	}
 	return provider.FinishStop
@@ -927,7 +936,7 @@ func parseResponsesResult(body []byte) (*provider.GenerateResult, error) {
 		case "content_filter":
 			result.FinishReason = provider.FinishContentFilter
 		default:
-			result.FinishReason = provider.FinishLength
+			result.FinishReason = provider.FinishOther
 		}
 	} else {
 		result.FinishReason = provider.FinishStop
@@ -944,6 +953,7 @@ func parseResponsesResult(body []byte) (*provider.GenerateResult, error) {
 		if resp.Usage.InputTokensDetails != nil {
 			result.Usage.CacheReadTokens = resp.Usage.InputTokensDetails.CachedTokens
 		}
+		result.Usage.InputTokens -= result.Usage.CacheReadTokens
 	}
 
 	if len(providerMeta) > 0 {

@@ -56,13 +56,19 @@ func retryAfterDuration(err error) time.Duration {
 	}
 	// OpenAI uses retry-after-ms (milliseconds).
 	if ms, ok := apiErr.ResponseHeaders["retry-after-ms"]; ok {
-		if v, parseErr := strconv.ParseInt(ms, 10, 64); parseErr == nil && v > 0 && v <= 60000 {
+		if v, parseErr := strconv.ParseInt(ms, 10, 64); parseErr == nil && v > 0 {
+			if v > 60000 {
+				v = 60000
+			}
 			return time.Duration(v) * time.Millisecond
 		}
 	}
 	// Standard Retry-After (seconds).
 	if secs, ok := apiErr.ResponseHeaders["retry-after"]; ok {
-		if v, parseErr := strconv.ParseInt(secs, 10, 64); parseErr == nil && v > 0 && v <= 60 {
+		if v, parseErr := strconv.ParseInt(secs, 10, 64); parseErr == nil && v > 0 {
+			if v > 60 {
+				v = 60
+			}
 			return time.Duration(v) * time.Second
 		}
 	}

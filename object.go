@@ -134,6 +134,7 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 				Latency:      time.Since(os.startTime),
 				Usage:        os.usage,
 				FinishReason: os.finishReason,
+				Error:        os.streamErr,
 			})
 		}()
 	}
@@ -161,6 +162,11 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 		case provider.ChunkError:
 			if os.streamErr == nil {
 				os.streamErr = chunk.Error
+			}
+		}
+		if partialOut == nil {
+			if os.ctx.Err() != nil {
+				return
 			}
 		}
 	}
@@ -322,5 +328,10 @@ func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "..."
+	// Truncate at rune boundary to avoid splitting multi-byte UTF-8.
+	truncated := []rune(s)
+	if len(truncated) <= max {
+		return s
+	}
+	return string(truncated[:max]) + "..."
 }

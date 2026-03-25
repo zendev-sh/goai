@@ -130,9 +130,7 @@ func codeExecutionTool() provider.ToolDefinition {
 func googleProviderTool(t provider.ToolDefinition) map[string]any {
 	// Map "google.google_search" -> "googleSearch", "google.url_context" -> "urlContext", etc.
 	apiKey := t.ProviderDefinedType
-	if strings.HasPrefix(apiKey, "google.") {
-		apiKey = strings.TrimPrefix(apiKey, "google.")
-	}
+	apiKey = strings.TrimPrefix(apiKey, "google.")
 	// Convert snake_case to camelCase: "google_search" -> "googleSearch"
 	apiKey = snakeToCamel(apiKey)
 

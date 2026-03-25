@@ -23,10 +23,10 @@ const okChatJSON = `{"id":"x","model":"m","choices":[{"message":{"content":"ok"}
 // responsesSSE returns SSE events for a Responses API streaming response.
 func responsesSSE(w http.ResponseWriter, text string) {
 	w.Header().Set("Content-Type", "text/event-stream")
-	fmt.Fprintf(w, "event: response.output_item.added\ndata: {\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\n")
-	fmt.Fprintf(w, "event: response.content_part.added\ndata: {\"output_index\":0,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n")
-	fmt.Fprintf(w, "event: response.output_text.delta\ndata: {\"output_index\":0,\"content_index\":0,\"delta\":\"%s\"}\n\n", text)
-	fmt.Fprintf(w, "event: response.completed\ndata: {\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n\n")
+	_, _ = fmt.Fprintf(w, "event: response.output_item.added\ndata: {\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\n")
+	_, _ = fmt.Fprintf(w, "event: response.content_part.added\ndata: {\"output_index\":0,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n")
+	_, _ = fmt.Fprintf(w, "event: response.output_text.delta\ndata: {\"output_index\":0,\"content_index\":0,\"delta\":\"%s\"}\n\n", text)
+	_, _ = fmt.Fprintf(w, "event: response.completed\ndata: {\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n\n")
 }
 
 func TestChat_Stream(t *testing.T) {
@@ -1067,8 +1067,8 @@ func TestExtractResourceName(t *testing.T) {
 func TestAIServices_Stream(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"index\":0}]}\n\n")
-		fmt.Fprint(w, "data: [DONE]\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"index\":0}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 	}))
 	defer server.Close()
 

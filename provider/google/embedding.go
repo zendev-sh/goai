@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 
 	"github.com/zendev-sh/goai"
@@ -89,10 +90,10 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 	}
 
 	body := map[string]any{"requests": requests}
-	url := fmt.Sprintf("%s/v1beta/models/%s:batchEmbedContents", m.opts.baseURL, m.id)
+	reqURL := fmt.Sprintf("%s/v1beta/models/%s:batchEmbedContents", m.opts.baseURL, url.PathEscape(m.id))
 
 	jsonBody := httpc.MustMarshalJSON(body)
-	req := httpc.MustNewRequest(ctx, "POST", url, jsonBody)
+	req := httpc.MustNewRequest(ctx, "POST", reqURL, jsonBody)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", token)
 

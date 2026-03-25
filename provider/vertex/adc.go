@@ -44,9 +44,13 @@ func ADCTokenSource(ctx context.Context, scopes ...string) (provider.TokenSource
 		if err != nil {
 			return nil, err
 		}
+		var expiresAt time.Time
+		if !tok.Expiry.IsZero() {
+			expiresAt = tok.Expiry.Add(-30 * time.Second) // refresh 30s early
+		}
 		return &provider.Token{
 			Value:     tok.AccessToken,
-			ExpiresAt: tok.Expiry.Add(-30 * time.Second), // refresh 30s early
+			ExpiresAt: expiresAt,
 		}, nil
 	}), nil
 }

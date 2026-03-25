@@ -44,7 +44,7 @@ func sanitizeImpl(obj any) any {
 				}
 			}
 			if nonNull != "" {
-				m["type"] = nonNull
+				result["type"] = nonNull
 				result["nullable"] = true
 			}
 		case []any:
@@ -55,13 +55,19 @@ func sanitizeImpl(obj any) any {
 				}
 			}
 			if nonNull != "" {
-				m["type"] = nonNull
+				result["type"] = nonNull
 				result["nullable"] = true
 			}
 		}
 	}
 
 	for k, v := range m {
+		// Skip "type" if we already normalized it from a nullable array above.
+		if k == "type" {
+			if _, already := result["type"]; already {
+				continue
+			}
+		}
 		if k == "enum" {
 			if enumArr, ok := v.([]any); ok {
 				strEnum := make([]any, len(enumArr))

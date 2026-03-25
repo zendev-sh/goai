@@ -446,3 +446,68 @@ func TestSanitizeSchema_FullSchemaFromOutput(t *testing.T) {
 		t.Error("metadata.properties should be preserved")
 	}
 }
+
+func TestSanitizeSchema_NoInputMutation(t *testing.T) {
+	// Verify that SanitizeSchema does not mutate the input map.
+	input := map[string]any{
+		"type": []string{"object", "null"},
+		"properties": map[string]any{
+			"name": map[string]any{"type": "string"},
+		},
+	}
+	// Save original type value.
+	origType := input["type"].([]string)
+	origLen := len(origType)
+
+	result := SanitizeSchema(input)
+
+	// Input must not be mutated.
+	inputType := input["type"]
+	switch tt := inputType.(type) {
+	case []string:
+		if len(tt) != origLen {
+			t.Errorf("input type was mutated: got %v", tt)
+		}
+		for _, s := range tt {
+			if s != "object" && s != "null" {
+				t.Errorf("input type element mutated to %q", s)
+			}
+		}
+	default:
+		t.Errorf("input type was mutated from []string to %T: %v", inputType, inputType)
+	}
+
+	// Result should have the nullable conversion applied.
+	if result["type"] != "object" {
+		t.Errorf("result type = %v, want 'object'", result["type"])
+	}
+	if result["nullable"] != true {
+		t.Error("result should have nullable: true")
+	}
+}
+
+func TestSanitizeSchema_NoInputMutation_AnySlice(t *testing.T) {
+	// Test the []any path (from JSON unmarshal) also does not mutate input.
+	input := map[string]any{
+		"type": []any{"string", "null"},
+	}
+
+	result := SanitizeSchema(input)
+
+	// Input must not be mutated.
+	inputType, ok := input["type"].([]any)
+	if !ok {
+		t.Fatalf("input type was mutated from []any to %T", input["type"])
+	}
+	if len(inputType) != 2 {
+		t.Errorf("input type length mutated: got %d", len(inputType))
+	}
+
+	// Result should have the nullable conversion.
+	if result["type"] != "string" {
+		t.Errorf("result type = %v, want 'string'", result["type"])
+	}
+	if result["nullable"] != true {
+		t.Error("result should have nullable: true")
+	}
+}

@@ -1,8 +1,8 @@
 # GoAI Roadmap
 
-> Last updated: 2026-03-16
+> Last updated: 2026-03-25
 
-## v0.4.0 - Current release
+## v0.4.3 - Current release
 
 ### Core functions
 

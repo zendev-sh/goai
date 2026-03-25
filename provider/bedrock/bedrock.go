@@ -22,7 +22,9 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -224,6 +226,7 @@ func (m *chatModel) Capabilities() provider.ModelCapabilities {
 	return provider.ModelCapabilities{
 		Temperature:      true,
 		ToolCall:         modelSupportsTools(m.ModelID()),
+		Reasoning:        true,
 		InputModalities:  provider.ModalitySet{Text: true, Image: true},
 		OutputModalities: provider.ModalitySet{Text: true},
 	}
@@ -663,7 +666,12 @@ func (m *chatModel) applyBedrockOptions(body map[string]any, tools []provider.To
 	// - Remove topK, temperature, topP (Anthropic rejects them with thinking)
 	// - Add budgetTokens to maxTokens (Bedrock requires maxTokens >= budget_tokens)
 	if isThinkingEnabled {
-		if ic, ok := body["inferenceConfig"].(map[string]any); ok {
+		ic, ok := body["inferenceConfig"].(map[string]any)
+		if !ok {
+			ic = make(map[string]any)
+			body["inferenceConfig"] = ic
+		}
+		{
 			delete(ic, "topK")
 			delete(ic, "temperature")
 			delete(ic, "topP")
@@ -707,11 +715,15 @@ func (m *chatModel) doHTTP(ctx context.Context, body map[string]any, streaming b
 	id, region := m.readIDRegion()
 
 	var reqURL string
+	escapedID := url.PathEscape(id)
 	if m.opts.baseURL != "" {
-		reqURL = m.opts.baseURL + "/model/" + id + endpoint
+		reqURL = m.opts.baseURL + "/model/" + escapedID + endpoint
 	} else {
+		if !validRegion(region) {
+			return nil, fmt.Errorf("bedrock: invalid AWS region %q", region)
+		}
 		reqURL = fmt.Sprintf("https://bedrock-runtime.%s.amazonaws.com/model/%s%s",
-			region, id, endpoint)
+			region, escapedID, endpoint)
 	}
 
 	req := httpc.MustNewRequest(ctx, "POST", reqURL, jsonBody)
@@ -895,6 +907,13 @@ func toolBetaForType(toolType string) string {
 	default:
 		return ""
 	}
+}
+
+// validRegion checks that the AWS region is safe for hostname interpolation.
+var validRegionRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+
+func validRegion(region string) bool {
+	return validRegionRE.MatchString(region)
 }
 
 func isUnreserved(c byte) bool {

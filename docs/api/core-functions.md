@@ -121,6 +121,14 @@ func (ts *TextStream) Result() *TextResult
 
 Can be called after `Stream()` or `TextStream()` to get usage, finish reason, and the complete text. Can also be called without any streaming method to silently consume the stream and return the result.
 
+#### TextStream.Err
+
+Returns the first error encountered during streaming, or nil if the stream completed successfully. Follows the `bufio.Scanner.Err()` pattern: must be called after the stream is fully consumed (after `Result()`, or after the `Stream()`/`TextStream()` channel is drained). Blocks until the stream is done.
+
+```go
+func (ts *TextStream) Err() error
+```
+
 ---
 
 ## GenerateObject
@@ -195,6 +203,14 @@ func (os *ObjectStream[T]) Result() (*ObjectResult[T], error)
 ```
 
 Returns an error if JSON parsing of the accumulated text fails.
+
+### ObjectStream.Err
+
+Returns the first error encountered during streaming, or nil if the stream completed successfully. Follows the `bufio.Scanner.Err()` pattern: must be called after the stream is fully consumed (after `Result()`, or after the `PartialObjectStream()` channel is drained). Blocks until the stream is done.
+
+```go
+func (os *ObjectStream[T]) Err() error
+```
 
 **Example:**
 

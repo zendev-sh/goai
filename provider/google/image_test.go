@@ -651,11 +651,6 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
 
-// errBodyReader returns IO error on read.
-type errBodyReader struct{}
-
-func (errBodyReader) Read([]byte) (int, error) { return 0, fmt.Errorf("read error") }
-
 func TestImagenModel_TokenSourceError(t *testing.T) {
 	model := &imagenModel{
 		id: "imagen-4.0-generate-001",

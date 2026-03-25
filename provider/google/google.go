@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -133,9 +134,9 @@ func (m *chatModel) DoGenerate(ctx context.Context, params provider.GeneratePara
 	if err != nil {
 		return nil, err
 	}
-	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent", m.opts.baseURL, m.id)
+	reqURL := fmt.Sprintf("%s/v1beta/models/%s:generateContent", m.opts.baseURL, url.PathEscape(m.id))
 
-	resp, err := m.doHTTP(ctx, url, body, params.Headers)
+	resp, err := m.doHTTP(ctx, reqURL, body, params.Headers)
 	if err != nil {
 		return nil, err
 	}
@@ -154,9 +155,9 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 	if err != nil {
 		return nil, err
 	}
-	url := fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse", m.opts.baseURL, m.id)
+	reqURL := fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse", m.opts.baseURL, url.PathEscape(m.id))
 
-	resp, err := m.doHTTP(ctx, url, body, params.Headers)
+	resp, err := m.doHTTP(ctx, reqURL, body, params.Headers)
 	if err != nil {
 		return nil, err
 	}
@@ -174,8 +175,8 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 			case <-done:
 			}
 		}()
+		defer close(done)
 		parseSSE(ctx, resp.Body, out)
-		close(done)
 	}()
 
 	return &provider.StreamResult{Stream: out}, nil

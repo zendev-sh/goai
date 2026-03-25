@@ -268,7 +268,7 @@ result, err := goai.GenerateImage(ctx, openai.Image("gpt-image-1"),
 // result.Images[0].Data = raw bytes, result.Images[0].MediaType = "image/png"
 ```
 
-**Note**: `GenerateImage` uses `ImageOption` (not `Option`): `WithImagePrompt`, `WithImageCount`, `WithImageSize`, `WithAspectRatio`, `WithImageProviderOptions`.
+**Note**: `GenerateImage` uses `ImageOption` (not `Option`): `WithImagePrompt`, `WithImageCount`, `WithImageSize`, `WithAspectRatio`, `WithImageMaxRetries`, `WithImageTimeout`, `WithImageProviderOptions`.
 
 ### 9. Provider-Defined Tools (Server-Side)
 
@@ -379,6 +379,8 @@ goai.WithImagePrompt(prompt string)                // text prompt
 goai.WithImageCount(n int)                         // number of images (default: 1)
 goai.WithImageSize(size string)                    // e.g. "1024x1024"
 goai.WithAspectRatio(ratio string)                 // e.g. "16:9"
+goai.WithImageMaxRetries(n int)                   // retries on 429/5xx
+goai.WithImageTimeout(d time.Duration)            // overall timeout
 goai.WithImageProviderOptions(opts map[string]any) // provider-specific params
 ```
 

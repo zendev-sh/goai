@@ -10,7 +10,7 @@ assignees: ''
 
 **Go version**: (output of `go version`)
 
-**GoAI version**: (e.g., v0.4.0)
+**GoAI version**: (e.g., v0.4.3)
 
 **Description**
 

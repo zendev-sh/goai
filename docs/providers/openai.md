@@ -27,17 +27,17 @@ The provider also reads `OPENAI_BASE_URL` from the environment when no explicit 
 
 | Model ID | Type | Notes |
 |----------|------|-------|
-| `gpt-4o` | Chat | Uses Responses API by default |
-| `gpt-4o-mini` | Chat | Uses Responses API by default |
-| `gpt-5` | Chat | Reasoning model, Responses API |
-| `gpt-5-mini` | Chat | Reasoning model, Responses API |
-| `o3` | Chat | Reasoning model, Responses API |
-| `o4-mini` | Chat | Reasoning model, Responses API |
-| `codex-*` | Chat | Reasoning model, Responses API |
+| `gpt-4o` | Chat | Responses API by default |
+| `gpt-4o-mini` | Chat | Responses API by default |
+| `gpt-5` | Chat | Reasoning model, Responses API by default |
+| `gpt-5-mini` | Chat | Reasoning model, Responses API by default |
+| `o3` | Chat | Reasoning model, Responses API by default |
+| `o4-mini` | Chat | Reasoning model, Responses API by default |
+| `codex-*` | Chat | Reasoning model, Responses API by default |
 | `text-embedding-3-small` | Embedding | 1536 dimensions |
 | `text-embedding-3-large` | Embedding | 3072 dimensions |
 | `text-embedding-ada-002` | Embedding | Legacy |
-| `dall-e-3` | Image | Requires explicit `response_format` |
+| `dall-e-3` | Image | Legacy image generation |
 | `gpt-image-1` | Image | Defaults to b64_json |
 
 ## Tested Models
@@ -313,6 +313,6 @@ This pattern supports Copilot (URL rewrite + OAuth token swap) and Codex (URL re
 ## Notes
 
 - The embedding model supports up to 2048 values per batch call via `MaxValuesPerCall()`. `goai.EmbedMany` auto-chunks larger batches.
-- Image models `gpt-image-1`, `gpt-image-1-mini`, and `gpt-image-1.5` default to `b64_json` response format and reject an explicit `response_format` parameter. Older models like `dall-e-3` require it explicitly.
+- Image models `gpt-image-1`, `gpt-image-1-mini`, and `gpt-image-1.5` default to `b64_json` response format and reject an explicit `response_format` parameter. For older models like `dall-e-3`, the provider automatically sets `response_format` to `b64_json`.
 - Structured output uses `response_format` with `json_schema` for both APIs. The Responses API places it under `text.format`.
 - Per-request headers can be injected via `goai.WithHeaders(map[string]string{...})` for features like Codex session tracking.

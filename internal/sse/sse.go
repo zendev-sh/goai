@@ -33,10 +33,11 @@ func (s *Scanner) Next() (data string, ok bool) {
 
 	for s.scanner.Scan() {
 		line := s.scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
+		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
-		data = strings.TrimPrefix(line, "data: ")
+		data = strings.TrimPrefix(line, "data:")
+		data = strings.TrimPrefix(data, " ")
 
 		if data == "[DONE]" {
 			s.done = true

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/internal/httpc"
@@ -83,13 +84,13 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 		body["parameters"] = parameters
 	}
 
-	url, err := nativeURL(m.opts, fmt.Sprintf("models/%s:predict", m.id))
+	reqURL, err := nativeURL(m.opts, fmt.Sprintf("models/%s:predict", url.PathEscape(m.id)))
 	if err != nil {
 		return nil, err
 	}
 
 	jsonBody := httpc.MustMarshalJSON(body)
-	req := httpc.MustNewRequest(ctx, "POST", url, jsonBody)
+	req := httpc.MustNewRequest(ctx, "POST", reqURL, jsonBody)
 	req.Header.Set("Content-Type", "application/json")
 
 	// Native endpoints use ?key= for API keys (already in URL), Bearer for OAuth.

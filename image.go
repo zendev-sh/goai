@@ -15,7 +15,8 @@ func GenerateImage(ctx context.Context, model provider.ImageModel, opts ...Image
 	}
 
 	o := imageOptions{
-		n: 1,
+		n:          1,
+		maxRetries: 2,
 	}
 	for _, opt := range opts {
 		opt(&o)

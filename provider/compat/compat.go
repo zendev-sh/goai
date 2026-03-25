@@ -311,7 +311,7 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 
 	return &provider.EmbedResult{
 		Embeddings: embeddings,
-		Usage:      provider.Usage{InputTokens: result.Usage.PromptTokens},
+		Usage:      provider.Usage{InputTokens: result.Usage.PromptTokens, TotalTokens: result.Usage.TotalTokens},
 	}, nil
 }
 

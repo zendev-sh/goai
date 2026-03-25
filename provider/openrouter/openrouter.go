@@ -158,8 +158,8 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 			case <-done:
 			}
 		}()
+		defer close(done)
 		openaicompat.ParseStream(ctx, scanner, out)
-		close(done)
 	}()
 
 	return &provider.StreamResult{Stream: out}, nil

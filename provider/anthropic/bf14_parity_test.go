@@ -19,13 +19,13 @@ func TestStream_FirstDelta_CodeExecutionWrapping(t *testing.T) {
 	// the first delta should be wrapped with {"type": "bash_code_execution",...}.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"tc1","name":"bash_code_execution"}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\": \"ls\""}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"}"}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"tc1","name":"bash_code_execution"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\": \"ls\""}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"}"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
 	}))
 	defer server.Close()
 
@@ -71,7 +71,7 @@ func TestStream_FirstDelta_CodeExecutionWrapping(t *testing.T) {
 func TestDoGenerate_Iterations(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"type": "message",
 			"id": "msg_1",
 			"model": "claude-sonnet-4-20250514",
@@ -124,12 +124,12 @@ func TestDoGenerate_Iterations(t *testing.T) {
 func TestStream_Iterations(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":100}}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":50,"iterations":[{"type":"message","input_tokens":60,"output_tokens":30},{"type":"compaction","input_tokens":40,"output_tokens":20}]}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":100}}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":50,"iterations":[{"type":"message","input_tokens":60,"output_tokens":30},{"type":"compaction","input_tokens":40,"output_tokens":20}]}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
 	}))
 	defer server.Close()
 
@@ -171,7 +171,7 @@ func TestStream_Iterations(t *testing.T) {
 func TestDoGenerate_ContextManagement(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"type": "message",
 			"id": "msg_1",
 			"model": "claude-sonnet-4-20250514",
@@ -215,12 +215,12 @@ func TestDoGenerate_ContextManagement(t *testing.T) {
 func TestStream_ContextManagement(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5},"context_management":{"applied_edits":[{"type":"clear_thinking_20251015","cleared_thinking_turns":2,"cleared_input_tokens":300}]}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5},"context_management":{"applied_edits":[{"type":"clear_thinking_20251015","cleared_thinking_turns":2,"cleared_input_tokens":300}]}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
 	}))
 	defer server.Close()
 
@@ -253,7 +253,7 @@ func TestStream_ContextManagement(t *testing.T) {
 func TestDoGenerate_ReasoningTokens(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"type": "message",
 			"id": "msg_1",
 			"model": "claude-sonnet-4-20250514",
@@ -284,12 +284,12 @@ func TestDoGenerate_ReasoningTokens(t *testing.T) {
 func TestStream_ReasoningTokens(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":50,"output_tokens_details":{"thinking_tokens":35}}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":50,"output_tokens_details":{"thinking_tokens":35}}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
 	}))
 	defer server.Close()
 
@@ -343,7 +343,7 @@ func TestDoGenerate_NativeOutputFormat(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"type": "message",
 			"id": "msg_1",
 			"model": "claude-sonnet-4-6-20260310",
@@ -403,7 +403,7 @@ func TestDoGenerate_NativeOutputFormat_Auto_Unsupported(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"type": "message",
 			"id": "msg_1",
 			"model": "claude-3-5-sonnet",
@@ -619,7 +619,7 @@ func TestBuildRequest_Container(t *testing.T) {
 func TestDoGenerate_ContainerResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"type": "message",
 			"id": "msg_1",
 			"model": "claude-sonnet-4-20250514",
@@ -778,7 +778,7 @@ func TestBuildRequest_HandledKeysNotPassthrough(t *testing.T) {
 func TestDoGenerate_Citations(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"type": "message",
 			"id": "msg_1",
 			"model": "claude-sonnet-4-20250514",
@@ -848,13 +848,13 @@ func TestDoGenerate_Citations(t *testing.T) {
 func TestStream_CitationsDelta(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Found"}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","cited_text":"fact","url":"https://ex.com","title":"Ex","encrypted_index":"enc1"}}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Found"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","cited_text":"fact","url":"https://ex.com","title":"Ex","encrypted_index":"enc1"}}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
 	}))
 	defer server.Close()
 
@@ -892,16 +892,16 @@ func TestStream_CitationsDelta(t *testing.T) {
 func TestStream_SignatureDelta(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me think"}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_abc123"}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Answer"}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_stop","index":1}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":10}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me think"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_abc123"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Answer"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":1}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":10}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
 	}))
 	defer server.Close()
 
@@ -935,12 +935,12 @@ func TestStream_SignatureDelta(t *testing.T) {
 func TestStream_ContainerInMessageDelta(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn","container":{"expires_at":"2026-03-10T20:00:00Z","id":"ctr-1"}},"usage":{"output_tokens":5}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn","container":{"expires_at":"2026-03-10T20:00:00Z","id":"ctr-1"}},"usage":{"output_tokens":5}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
 	}))
 	defer server.Close()
 
@@ -973,12 +973,12 @@ func TestStream_ContainerInMessageDelta(t *testing.T) {
 func TestStream_EmptyToolArgs(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tc1","name":"no_args_tool"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tc1","name":"no_args_tool"}}`+"\n\n")
 		// No input_json_delta events -- empty input.
-		fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
 	}))
 	defer server.Close()
 
@@ -1006,13 +1006,13 @@ func TestStream_EmptyToolArgs(t *testing.T) {
 func TestStream_FirstDelta_TextEditorWrapping(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"tc1","name":"text_editor_code_execution"}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\": \"view\""}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"path\": \"/tmp/f.py\"}"}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"tc1","name":"text_editor_code_execution"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\": \"view\""}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"path\": \"/tmp/f.py\"}"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
 	}))
 	defer server.Close()
 
@@ -1045,13 +1045,13 @@ func TestStream_FirstDelta_TextEditorWrapping(t *testing.T) {
 func TestStream_NormalToolUse_NoFirstDeltaWrapping(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tc1","name":"read_file"}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\": \"/tmp\""}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"}"}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}`+"\n\n")
-		fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tc1","name":"read_file"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\": \"/tmp\""}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"}"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
 	}))
 	defer server.Close()
 

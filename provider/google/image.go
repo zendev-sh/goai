@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -107,10 +108,10 @@ func (m *imagenModel) DoGenerate(ctx context.Context, params provider.ImageParam
 		"parameters": parameters,
 	}
 
-	url := fmt.Sprintf("%s/v1beta/models/%s:predict", m.opts.baseURL, m.id)
+	reqURL := fmt.Sprintf("%s/v1beta/models/%s:predict", m.opts.baseURL, url.PathEscape(m.id))
 
 	jsonBody := httpc.MustMarshalJSON(body)
-	req := httpc.MustNewRequest(ctx, "POST", url, jsonBody)
+	req := httpc.MustNewRequest(ctx, "POST", reqURL, jsonBody)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", token)
 
@@ -235,10 +236,10 @@ func (m *geminiImageModel) DoGenerate(ctx context.Context, params provider.Image
 		"generationConfig": genConfig,
 	}
 
-	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent", m.opts.baseURL, m.id)
+	reqURL := fmt.Sprintf("%s/v1beta/models/%s:generateContent", m.opts.baseURL, url.PathEscape(m.id))
 
 	jsonBody := httpc.MustMarshalJSON(body)
-	req := httpc.MustNewRequest(ctx, "POST", url, jsonBody)
+	req := httpc.MustNewRequest(ctx, "POST", reqURL, jsonBody)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", token)
 

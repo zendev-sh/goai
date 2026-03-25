@@ -711,3 +711,30 @@ func TestSanitizeToolSchemas_MarshalError(t *testing.T) {
 		t.Error("expected schema unchanged after marshal error")
 	}
 }
+
+func TestValidGCPIdentifier(t *testing.T) {
+	valid := []string{
+		"us-central1",
+		"my-project-123",
+		"example.com:my-project", // domain-scoped project
+		"a",
+	}
+	for _, v := range valid {
+		if !validGCPIdentifier(v) {
+			t.Errorf("expected %q to be valid", v)
+		}
+	}
+	invalid := []string{
+		"",
+		"../evil",
+		"us-central1/../../x",
+		"has spaces",
+		"-starts-with-dash",
+		"foo..bar", // path traversal
+	}
+	for _, v := range invalid {
+		if validGCPIdentifier(v) {
+			t.Errorf("expected %q to be invalid", v)
+		}
+	}
+}

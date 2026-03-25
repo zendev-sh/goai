@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -505,7 +506,8 @@ func TestChat_Responses_Failed(t *testing.T) {
 	var gotOverflow bool
 	for chunk := range result.Stream {
 		if chunk.Type == provider.ChunkError {
-			if _, ok := chunk.Error.(*goai.ContextOverflowError); ok {
+			var coe *goai.ContextOverflowError
+			if errors.As(chunk.Error, &coe) {
 				gotOverflow = true
 			}
 		}
@@ -948,7 +950,7 @@ func TestMapResponsesFinishReason(t *testing.T) {
 		{"tool_calls", "response.completed", "", true, provider.FinishToolCalls},
 		{"incomplete_length", "response.incomplete", "max_output_tokens", false, provider.FinishLength},
 		{"incomplete_filter", "response.incomplete", "content_filter", false, provider.FinishContentFilter},
-		{"incomplete_default", "response.incomplete", "", false, provider.FinishLength},
+		{"incomplete_default", "response.incomplete", "", false, provider.FinishOther},
 		{"incomplete_with_tools", "response.incomplete", "max_output_tokens", true, provider.FinishToolCalls},
 	}
 	for _, tt := range tests {
@@ -984,7 +986,8 @@ func TestChat_Responses_ErrorEvent(t *testing.T) {
 	var gotOverflow bool
 	for chunk := range result.Stream {
 		if chunk.Type == provider.ChunkError {
-			if _, ok := chunk.Error.(*goai.ContextOverflowError); ok {
+			var coe *goai.ContextOverflowError
+			if errors.As(chunk.Error, &coe) {
 				gotOverflow = true
 			}
 		}
@@ -1010,7 +1013,8 @@ func TestChat_Responses_Generate_Error(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if _, ok := err.(*goai.ContextOverflowError); !ok {
+	var coe *goai.ContextOverflowError
+	if !errors.As(err, &coe) {
 		t.Errorf("expected ContextOverflowError, got %T: %v", err, err)
 	}
 }
@@ -1232,8 +1236,8 @@ func TestStreamResponses_InsufficientQuota(t *testing.T) {
 	var gotError bool
 	for chunk := range result.Stream {
 		if chunk.Type == provider.ChunkError {
-			apiErr, ok := chunk.Error.(*goai.APIError)
-			if ok && !apiErr.IsRetryable {
+			var apiErr *goai.APIError
+			if errors.As(chunk.Error, &apiErr) && !apiErr.IsRetryable {
 				gotError = true
 			}
 		}
@@ -1264,7 +1268,8 @@ func TestStreamResponses_UsageNotIncluded(t *testing.T) {
 	var gotError bool
 	for chunk := range result.Stream {
 		if chunk.Type == provider.ChunkError {
-			if apiErr, ok := chunk.Error.(*goai.APIError); ok {
+			var apiErr *goai.APIError
+			if errors.As(chunk.Error, &apiErr) {
 				if !apiErr.IsRetryable {
 					gotError = true
 				}
@@ -1297,7 +1302,8 @@ func TestStreamResponses_InvalidPrompt(t *testing.T) {
 	var gotError bool
 	for chunk := range result.Stream {
 		if chunk.Type == provider.ChunkError {
-			if apiErr, ok := chunk.Error.(*goai.APIError); ok {
+			var apiErr *goai.APIError
+			if errors.As(chunk.Error, &apiErr) {
 				if !apiErr.IsRetryable && apiErr.Message == "bad prompt" {
 					gotError = true
 				}
@@ -1359,7 +1365,8 @@ func TestStreamResponses_ErrorWithMaxTokensCode(t *testing.T) {
 	var gotOverflow bool
 	for chunk := range result.Stream {
 		if chunk.Type == provider.ChunkError {
-			if _, ok := chunk.Error.(*goai.ContextOverflowError); ok {
+			var coe *goai.ContextOverflowError
+			if errors.As(chunk.Error, &coe) {
 				gotOverflow = true
 			}
 		}
@@ -1390,7 +1397,8 @@ func TestStreamResponses_GenericErrorEvent(t *testing.T) {
 	var gotError bool
 	for chunk := range result.Stream {
 		if chunk.Type == provider.ChunkError {
-			if apiErr, ok := chunk.Error.(*goai.APIError); ok {
+			var apiErr *goai.APIError
+			if errors.As(chunk.Error, &apiErr) {
 				if apiErr.Message == "server error" {
 					gotError = true
 				}
@@ -1423,7 +1431,8 @@ func TestStreamResponses_FailedEmptyMessage(t *testing.T) {
 	var gotError bool
 	for chunk := range result.Stream {
 		if chunk.Type == provider.ChunkError {
-			if apiErr, ok := chunk.Error.(*goai.APIError); ok {
+			var apiErr *goai.APIError
+			if errors.As(chunk.Error, &apiErr) {
 				if apiErr.Message == "response failed" {
 					gotError = true
 				}
@@ -1456,7 +1465,8 @@ func TestStreamResponses_ErrorEmptyMessage(t *testing.T) {
 	var gotError bool
 	for chunk := range result.Stream {
 		if chunk.Type == provider.ChunkError {
-			if apiErr, ok := chunk.Error.(*goai.APIError); ok {
+			var apiErr *goai.APIError
+			if errors.As(chunk.Error, &apiErr) {
 				if apiErr.Message == "stream error" {
 					gotError = true
 				}
@@ -1502,7 +1512,8 @@ func TestParseResponsesResult_GenericError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if apiErr, ok := err.(*goai.APIError); !ok {
+	var apiErr *goai.APIError
+	if !errors.As(err, &apiErr) {
 		t.Errorf("expected APIError, got %T: %v", err, err)
 	} else if apiErr.Message != "some error" {
 		t.Errorf("Message = %q, want %q", apiErr.Message, "some error")
@@ -1828,9 +1839,9 @@ func TestParseResponsesResult_IncompleteNoDetails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Default to FinishLength when no details
-	if result.FinishReason != provider.FinishLength {
-		t.Errorf("FinishReason = %q, want %q", result.FinishReason, provider.FinishLength)
+	// Default to FinishOther when no details
+	if result.FinishReason != provider.FinishOther {
+		t.Errorf("FinishReason = %q, want %q", result.FinishReason, provider.FinishOther)
 	}
 }
 

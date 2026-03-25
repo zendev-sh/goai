@@ -829,6 +829,14 @@ func TestStreamObject_ContextCancelDuringPartial(t *testing.T) {
 	cancel()
 	<-done
 
+	// Verify consume terminated: doneCh should be closed.
+	select {
+	case <-os.doneCh:
+		// expected: consume closed doneCh
+	default:
+		t.Error("expected doneCh to be closed after consume returns")
+	}
+
 	for range partialCh {
 	}
 }
@@ -1127,5 +1135,59 @@ func TestObjectStream_PartialObjectStreamAfterResult(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("expected 0 items from PartialObjectStream after Result(), got %d", count)
+	}
+}
+
+func TestStreamObject_ErrNilOnSuccess(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: `{"name":"Alice","age":30}`},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop},
+			), nil
+		},
+	}
+	type Person struct {
+		Name string `json:"name"`
+		Age  int    `json:"age"`
+	}
+	stream, err := StreamObject[Person](context.Background(), model, WithPrompt("test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = stream.Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stream.Err() != nil {
+		t.Errorf("expected nil Err(), got %v", stream.Err())
+	}
+}
+
+func TestStreamObject_ErrReturnsStreamError(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: `{"name":"Al`},
+				provider.StreamChunk{Type: provider.ChunkError, Error: errors.New("stream broke")},
+			), nil
+		},
+	}
+	type Person struct {
+		Name string `json:"name"`
+		Age  int    `json:"age"`
+	}
+	stream, err := StreamObject[Person](context.Background(), model, WithPrompt("test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = stream.Result()
+	if stream.Err() == nil {
+		t.Fatal("expected non-nil Err()")
+	}
+	if stream.Err().Error() != "stream broke" {
+		t.Errorf("unexpected error: %v", stream.Err())
 	}
 }

@@ -286,6 +286,13 @@ func TestStreamText_ErrorFromProvider(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+	if apiErr.StatusCode != 429 {
+		t.Errorf("status = %d, want 429", apiErr.StatusCode)
+	}
 }
 
 func TestStreamText_ErrorChunk(t *testing.T) {
@@ -1685,5 +1692,48 @@ func TestStreamText_TextStream_CtxCancelStopsConsume(t *testing.T) {
 	// If ctx.Done select works on textOut, we should get far fewer than 500 chunks.
 	if drained >= 450 {
 		t.Errorf("drained %d text chunks - ctx.Done select on textOut did not trigger", drained)
+	}
+}
+
+func TestStreamText_ErrNilOnSuccess(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "hello"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop},
+			), nil
+		},
+	}
+	stream, err := StreamText(context.Background(), model, WithPrompt("hi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = stream.Result()
+	if stream.Err() != nil {
+		t.Errorf("expected nil Err(), got %v", stream.Err())
+	}
+}
+
+func TestStreamText_ErrReturnsStreamError(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "partial"},
+				provider.StreamChunk{Type: provider.ChunkError, Error: errors.New("stream broke")},
+			), nil
+		},
+	}
+	stream, err := StreamText(context.Background(), model, WithPrompt("hi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = stream.Result()
+	if stream.Err() == nil {
+		t.Fatal("expected non-nil Err()")
+	}
+	if stream.Err().Error() != "stream broke" {
+		t.Errorf("unexpected error: %v", stream.Err())
 	}
 }

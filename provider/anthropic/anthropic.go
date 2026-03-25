@@ -26,6 +26,12 @@ import (
 	"github.com/zendev-sh/goai/provider"
 )
 
+// Compile-time interface compliance checks.
+var (
+	_ provider.LanguageModel = (*chatModel)(nil)
+	_ provider.CapableModel  = (*chatModel)(nil)
+)
+
 const (
 	defaultBaseURL    = "https://api.anthropic.com"
 	apiVersion        = "2023-06-01"
@@ -394,11 +400,18 @@ func (m *chatModel) buildRequest(params provider.GenerateParams, streaming bool)
 		"thinking": true, "_headers": true,
 		"disableParallelToolUse": true, "effort": true, "speed": true,
 		"container": true, "contextManagement": true,
+	}
+	protectedKeys := map[string]bool{
+		"model": true, "stream": true, "messages": true,
+		"max_tokens": true, "system": true, "temperature": true,
+		"top_p": true, "top_k": true, "stop_sequences": true,
+		"tools": true, "tool_choice": true,
+		// SDK-internal keys that are never sent on the wire.
 		"structuredOutputMode": true, "sendReasoning": true,
 		"cacheControl": true,
 	}
 	for k, v := range params.ProviderOptions {
-		if handledKeys[k] {
+		if handledKeys[k] || protectedKeys[k] {
 			continue
 		}
 		body[k] = v
@@ -565,12 +578,6 @@ func applyCacheControl(p map[string]any, partCC string, msgCC map[string]any, is
 		p["cache_control"] = msgCC
 	}
 }
-
-// Compile-time interface compliance checks.
-var (
-	_ provider.LanguageModel = (*chatModel)(nil)
-	_ provider.CapableModel  = (*chatModel)(nil)
-)
 
 // --- Response format (structured output via tool trick or native output_format) ---
 

@@ -188,7 +188,7 @@ func TestRetryAfterDuration(t *testing.T) {
 				IsRetryable:     true,
 				ResponseHeaders: map[string]string{"retry-after-ms": "120000"},
 			},
-			want: 0,
+			want: 60000 * time.Millisecond,
 		},
 		{
 			name: "retry-after-ms zero",
@@ -233,7 +233,7 @@ func TestRetryAfterDuration(t *testing.T) {
 				IsRetryable:     true,
 				ResponseHeaders: map[string]string{"retry-after": "120"},
 			},
-			want: 0,
+			want: 60 * time.Second,
 		},
 		{
 			name: "retry-after seconds zero",

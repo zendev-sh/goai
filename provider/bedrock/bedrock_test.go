@@ -4222,3 +4222,18 @@ func TestEnsureToolConfigForHistory_MultipleTools(t *testing.T) {
 		t.Fatalf("expected 2 unique tools, got %d", len(tools))
 	}
 }
+
+func TestValidRegion(t *testing.T) {
+	valid := []string{"us-east-1", "eu-west-2", "ap-southeast-1", "us-gov-west-1"}
+	for _, r := range valid {
+		if !validRegion(r) {
+			t.Errorf("expected %q to be valid", r)
+		}
+	}
+	invalid := []string{"", "us east 1", "../evil", "us-east-1.evil.com", "US-EAST-1"}
+	for _, r := range invalid {
+		if validRegion(r) {
+			t.Errorf("expected %q to be invalid", r)
+		}
+	}
+}

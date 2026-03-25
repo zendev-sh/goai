@@ -248,9 +248,18 @@ func applyProviderOptions(body map[string]any, opts map[string]any) {
 		knownKeys["serviceTier"] = true
 	}
 
+	// Protected keys that must not be overwritten by provider options.
+	protectedKeys := map[string]bool{
+		"model": true, "stream": true, "messages": true,
+		"max_tokens": true, "max_completion_tokens": true,
+		"temperature": true, "top_p": true, "stop": true,
+		"seed": true, "frequency_penalty": true, "presence_penalty": true,
+		"tools": true, "tool_choice": true, "response_format": true,
+	}
+
 	// Pass through any remaining unknown keys.
 	for k, v := range opts {
-		if !knownKeys[k] {
+		if !knownKeys[k] && !protectedKeys[k] {
 			body[k] = v
 		}
 	}

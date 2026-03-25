@@ -24,7 +24,7 @@ func TestADCTokenSource_Type(t *testing.T) {
 	if ts == nil {
 		t.Fatal("ADCTokenSource returned nil without error")
 	}
-	var _ provider.TokenSource = ts
+	var _ = ts
 }
 
 func TestADCTokenSource_FindCredsError(t *testing.T) {

@@ -173,6 +173,7 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 				Latency:      time.Since(ts.startTime),
 				Usage:        ts.usage,
 				FinishReason: ts.finishReason,
+				Error:        ts.streamErr,
 			})
 		}()
 	}
@@ -216,6 +217,11 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 			select {
 			case textOut <- chunk.Text:
 			case <-ts.ctx.Done():
+				return
+			}
+		}
+		if rawOut == nil && textOut == nil {
+			if ts.ctx.Err() != nil {
 				return
 			}
 		}
@@ -446,6 +452,9 @@ func buildToolMap(tools []Tool) map[string]Tool {
 func executeTools(ctx context.Context, calls []provider.ToolCall, toolMap map[string]Tool, onToolCall func(ToolCallInfo)) []provider.Message {
 	var msgs []provider.Message
 	for _, tc := range calls {
+		if ctx.Err() != nil {
+			return msgs
+		}
 		tool, ok := toolMap[tc.Name]
 		if !ok {
 			if onToolCall != nil {

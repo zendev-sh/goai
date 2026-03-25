@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 
 	"github.com/zendev-sh/goai"
@@ -81,13 +82,13 @@ func (m *imageModel) DoGenerate(ctx context.Context, params provider.ImageParams
 		"parameters": parameters,
 	}
 
-	url, err := nativeURL(m.opts, fmt.Sprintf("models/%s:predict", m.id))
+	reqURL, err := nativeURL(m.opts, fmt.Sprintf("models/%s:predict", url.PathEscape(m.id)))
 	if err != nil {
 		return nil, err
 	}
 
 	jsonBody := httpc.MustMarshalJSON(body)
-	req := httpc.MustNewRequest(ctx, "POST", url, jsonBody)
+	req := httpc.MustNewRequest(ctx, "POST", reqURL, jsonBody)
 	req.Header.Set("Content-Type", "application/json")
 
 	// Native endpoints use ?key= for API keys (already in URL), Bearer for OAuth.

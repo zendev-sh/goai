@@ -162,7 +162,7 @@ func completeTrailing(s string) string {
 	// Complete truncated numbers.
 	last := trimmed[len(trimmed)-1]
 	switch last {
-	case '.', '-', 'e', 'E':
+	case '.', '-', '+', 'e', 'E':
 		return trimmed + "0"
 	}
 
@@ -195,6 +195,25 @@ func trimTrailingIncomplete(s string) string {
 			s = strings.TrimRight(s, " \t\n\r,")
 		}
 		return s
+	}
+
+	// Remove dangling key string inside an object (e.g. `{"a":1, "b"` → `{"a":1`).
+	// A trailing `"..."` is a dangling key if preceded by `{` or `,`.
+	if s[len(s)-1] == '"' {
+		idx := strings.LastIndex(s[:len(s)-1], `"`)
+		if idx >= 0 {
+			before := strings.TrimRight(s[:idx], " \t\n\r")
+			if len(before) > 0 {
+				switch before[len(before)-1] {
+				case '{':
+					// Keep the opening brace, just remove the dangling key.
+					return before
+				case ',':
+					// Strip the comma and the dangling key.
+					return strings.TrimRight(before[:len(before)-1], " \t\n\r")
+				}
+			}
+		}
 	}
 
 	return s
