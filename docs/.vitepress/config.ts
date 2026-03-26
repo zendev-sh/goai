@@ -118,6 +118,7 @@ export default defineConfig({
             { text: 'Tools', link: '/concepts/tools' },
             { text: 'Provider-Defined Tools', link: '/concepts/provider-tools' },
             { text: 'TokenSource', link: '/concepts/token-source' },
+            { text: 'MCP Client', link: '/concepts/mcp' },
             { text: 'Error Handling', link: '/concepts/error-handling' },
             { text: 'Prompt Caching', link: '/concepts/prompt-caching' },
           ],

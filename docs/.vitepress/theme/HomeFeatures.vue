@@ -6,6 +6,7 @@ import {
   Wrench,
   KeyRound,
   Rocket,
+  Cable,
 } from 'lucide-vue-next'
 
 const features = [
@@ -38,6 +39,12 @@ const features = [
     title: 'TokenSource',
     link: '/concepts/token-source',
     details: 'Dynamic auth for OAuth, cloud IAM, and rotating keys. <code>CachedTokenSource</code> with TTL and mutex-free network refresh. Built for production.',
+  },
+  {
+    icon: Cable,
+    title: 'MCP Client',
+    link: '/concepts/mcp',
+    details: 'Connect to any MCP server via stdio, HTTP, or SSE. Auto-convert tools for <code>GenerateText</code> with <code>ConvertTools</code>.',
   },
   {
     icon: Rocket,

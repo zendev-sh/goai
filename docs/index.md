@@ -7,7 +7,7 @@ description: "Open-source Go SDK for AI applications. One unified API for OpenAI
 hero:
   name: GoAI
   text: AI SDK, the Go way.
-  tagline: One unified API across 20 providers. Streaming via channels, type-safe structured output with generics, stdlib only.
+  tagline: One unified API across 20+ providers. Streaming, structured output, MCP support, stdlib only.
   image:
     src: /goai-gopher.png
     alt: GoAI Gopher
@@ -38,6 +38,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomat
 - **GenerateImage** — image generation (OpenAI, Google, Azure)
 - **Tool Calling** — custom tools with auto tool loops (`MaxSteps`)
 - **20 Provider-Defined Tools** — web search, code execution, computer use, file search
+- **[MCP Client](/concepts/mcp)** — connect to any MCP server (stdio, HTTP, SSE), auto-convert tools for GoAI
 - **Prompt Caching** — automatic cache control for Anthropic and OpenAI
 
 ## Why GoAI?
@@ -69,6 +70,28 @@ func main() {
     fmt.Println(result.Text)
 }
 ```
+
+## MCP Support <Badge type="tip" text="v0.5.0" />
+
+Connect to any [MCP server](https://modelcontextprotocol.io) and use its tools with GoAI:
+
+```go
+transport := mcp.NewStdioTransport("npx", []string{"-y", "@modelcontextprotocol/server-github"})
+client := mcp.NewClient("my-app", "1.0", mcp.WithTransport(transport))
+_ = client.Connect(ctx)
+defer client.Close()
+
+tools, _ := client.ListTools(ctx, nil)
+goaiTools := mcp.ConvertTools(client, tools.Tools)
+
+result, _ := goai.GenerateText(ctx, model,
+    goai.WithTools(goaiTools...),
+    goai.WithPrompt("Search for popular Go repositories"),
+    goai.WithMaxSteps(5),
+)
+```
+
+3 transports (stdio, HTTP, SSE), tools/prompts/resources, pagination, notifications. [Learn more →](/concepts/mcp)
 
 ## Supported Providers
 

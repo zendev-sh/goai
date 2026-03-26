@@ -242,3 +242,98 @@ Requires a pre-created vector store with uploaded files.
 export OPENAI_API_KEY=...
 go run examples/file-search/main.go openai <vector-store-id>
 ```
+
+---
+
+## MCP
+
+MCP (Model Context Protocol) client examples. Connect to MCP servers and use their tools with GoAI.
+
+### mcp-tools
+
+MCP tools with GoAI LLM integration. Connects to an MCP server, converts its tools, and passes them to `GenerateText` for an agent loop.
+
+- **Provider:** Google Gemini
+- **Features:** `mcp.NewStdioTransport`, `mcp.NewClient`, `mcp.ConvertTools`, `goai.WithTools`, `WithMaxSteps`
+- **Source:** [`examples/mcp-tools/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-tools)
+
+```bash
+export GOOGLE_API_KEY=...
+go run ./examples/mcp-tools
+```
+
+### mcp-filesystem
+
+Filesystem MCP server integration via stdio. Browse, read, write, and search files using the official MCP filesystem server.
+
+- **Transport:** Stdio
+- **Requires:** Node.js (npx)
+- **Features:** `mcp.NewStdioTransport`, `client.ListTools`, tool calling, file operations
+- **Source:** [`examples/mcp-filesystem/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-filesystem)
+
+```bash
+go run ./examples/mcp-filesystem /tmp
+```
+
+### mcp-github
+
+GitHub MCP server integration via stdio. Discover and call GitHub tools.
+
+- **Transport:** Stdio
+- **Requires:** Node.js (npx), `GITHUB_TOKEN`
+- **Features:** `mcp.NewStdioTransport`, GitHub API tools
+- **Source:** [`examples/mcp-github/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-github)
+
+```bash
+export GITHUB_TOKEN=ghp_...
+go run ./examples/mcp-github
+```
+
+### mcp-playwright
+
+Playwright MCP server for browser automation. Navigate, click, fill, screenshot via MCP tools.
+
+- **Transport:** Stdio
+- **Requires:** Node.js (npx)
+- **Features:** `mcp.NewStdioTransport`, browser automation tools
+- **Source:** [`examples/mcp-playwright/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-playwright)
+
+```bash
+go run ./examples/mcp-playwright
+```
+
+### mcp-remote
+
+MCP over Streamable HTTP transport. Demonstrates session management, notifications, and remote tool calling.
+
+- **Transport:** Streamable HTTP
+- **Features:** `mcp.NewHTTPTransport`, session management, remote server
+- **Source:** [`examples/mcp-remote/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-remote)
+
+```bash
+go run ./examples/mcp-remote
+```
+
+### mcp-sse
+
+MCP over legacy SSE transport (protocol version 2024-11-05). Endpoint discovery, tool listing, and tool calling.
+
+- **Transport:** SSE (legacy)
+- **Features:** `mcp.NewSSETransport`, legacy protocol support
+- **Source:** [`examples/mcp-sse/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-sse)
+
+```bash
+go run ./examples/mcp-sse
+```
+
+### mcp-local
+
+MCP client basics without an LLM. Exercises every MCP capability: tools, prompts, and resources.
+
+- **Transport:** Stdio
+- **Features:** `mcp.NewStdioTransport`, `client.ListTools`, `client.ListPrompts`, `client.ListResources`
+- **Source:** [`examples/mcp-local/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-local)
+
+```bash
+go run ./examples/mcp-local
+```

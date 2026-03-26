@@ -52,8 +52,8 @@ onMounted(() => {
           <h1 class="rh-title anim a2">GoAI</h1>
           <p class="rh-slogan anim a3">AI SDK, the Go way.</p>
           <p class="rh-tagline anim a4">
-            One unified API across 20 providers. Streaming via channels,
-            type-safe structured output with generics, stdlib only.
+            One unified API across 20+ providers. Streaming, structured output,
+            MCP support, stdlib only.
           </p>
 
           <div class="rh-install anim a5" @click="copyInstall">
@@ -111,8 +111,25 @@ onMounted(() => {
       </div>
     </section>
 
+    <!-- ▸ WHAT'S NEW -->
+    <section class="rh-whatsnew anim a8">
+      <div class="rh-whatsnew-inner">
+        <p class="rh-section-label">What's new</p>
+        <div class="rh-release-list">
+          <a href="/concepts/mcp" class="rh-release">
+            <span class="rh-release-tag">v0.5.0</span>
+            <span class="rh-release-text"><strong>MCP Client</strong> — Connect to any MCP server (stdio, HTTP, SSE). Auto-convert tools for GenerateText.</span>
+          </a>
+          <a href="https://github.com/zendev-sh/goai/releases" class="rh-release">
+            <span class="rh-release-tag">v0.4.4</span>
+            <span class="rh-release-text"><strong>Provider tools</strong> — 20 tools: computer use, web search, code execution across Anthropic, OpenAI, Google, Groq, xAI.</span>
+          </a>
+        </div>
+      </div>
+    </section>
+
     <!-- ▸ THREE EXAMPLES -->
-    <section class="rh-trio anim a8">
+    <section class="rh-trio anim a9">
       <div class="rh-trio-inner">
 
         <a href="/api/core-functions" class="rh-trio-card">
@@ -158,8 +175,8 @@ recipe, _ := goai.<span class="fn">GenerateObject</span>[Recipe](ctx,
 
       </div>
 
-      <!-- Row 2: Tools + TokenSource -->
-      <div class="rh-duo-inner">
+      <!-- Row 2: Tools + MCP + TokenSource -->
+      <div class="rh-trio-inner">
 
         <a href="/concepts/tools" class="rh-trio-card">
           <div class="rh-trio-head">
@@ -177,9 +194,26 @@ result, _ := goai.<span class="fn">GenerateText</span>(ctx, model,
 )</code></pre>
         </a>
 
-        <a href="/concepts/token-source" class="rh-trio-card">
+        <a href="/concepts/mcp" class="rh-trio-card">
           <div class="rh-trio-head">
             <span class="rh-trio-badge">05</span>
+            <span class="rh-trio-name">MCP Client</span>
+          </div>
+          <pre class="rh-trio-code"><code><span class="cm">// Any MCP server → GoAI tools</span>
+c := mcp.<span class="fn">NewClient</span>(<span class="st">"app"</span>, <span class="st">"1.0"</span>,
+    mcp.<span class="fn">WithTransport</span>(
+        mcp.<span class="fn">NewStdioTransport</span>(
+            <span class="st">"npx"</span>, serverArgs),
+    ),
+)
+c.<span class="fn">Connect</span>(ctx)
+r, _ := c.<span class="fn">ListTools</span>(ctx, <span class="kw">nil</span>)
+mcp.<span class="fn">ConvertTools</span>(c, r.Tools)</code></pre>
+        </a>
+
+        <a href="/concepts/token-source" class="rh-trio-card">
+          <div class="rh-trio-head">
+            <span class="rh-trio-badge">06</span>
             <span class="rh-trio-name">TokenSource</span>
           </div>
           <pre class="rh-trio-code"><code><span class="cm">// Auto-refresh OAuth tokens</span>
@@ -188,20 +222,18 @@ ts := provider.<span class="fn">CachedTokenSource</span>(
         tok, _ := oauth.<span class="fn">Exchange</span>(ctx, code)
         <span class="kw">return</span> &provider.Token{
             Value: tok.AccessToken,
-            ExpiresAt: tok.Expiry,
         }, <span class="kw">nil</span>
     },
 )
-model := openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
-    openai.<span class="fn">WithTokenSource</span>(ts),
-)</code></pre>
+openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
+    openai.<span class="fn">WithTokenSource</span>(ts))</code></pre>
         </a>
 
       </div>
     </section>
 
     <!-- ▸ NUMBERS -->
-    <section class="rh-numbers anim a9">
+    <section class="rh-numbers anim a10">
       <div class="rh-numbers-inner">
         <div class="rh-num"><em>20</em><span>providers</span></div>
         <div class="rh-num"><em>100+</em><span>models tested</span></div>
@@ -231,6 +263,7 @@ model := openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
 .a7 { transition-delay: 0.48s; }
 .a8 { transition-delay: 0.58s; }
 .a9 { transition-delay: 0.68s; }
+.a10 { transition-delay: 0.78s; }
 
 /* ======= TOKENS ======= */
 .rh {
@@ -444,6 +477,7 @@ model := openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
   text-transform: uppercase;
   color: var(--rh-fg3);
   margin: 0 0 1rem;
+  text-align: center;
 }
 
 .rh-provider-grid {
@@ -451,10 +485,6 @@ model := openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
   flex-wrap: wrap;
   gap: 8px;
   justify-content: center;
-}
-
-.rh-section-label {
-  text-align: center;
 }
 
 a.rh-ptag {
@@ -496,6 +526,65 @@ a.rh-ptag {
   filter: invert(1);
 }
 
+/* ======= WHAT'S NEW ======= */
+.rh-whatsnew {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 2rem 2.5rem;
+}
+
+.rh-whatsnew-inner {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.rh-release-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--rh-line);
+  border: 1px solid var(--rh-line);
+}
+
+a.rh-release {
+  text-decoration: none;
+  color: inherit;
+}
+
+.rh-release {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 14px 20px;
+  background: var(--rh-bg);
+  transition: background 0.12s;
+}
+
+.rh-release:hover {
+  background: var(--rh-bg2);
+}
+
+.rh-release-tag {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--rh-fn);
+  white-space: nowrap;
+  min-width: 48px;
+}
+
+.rh-release-text {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--rh-fg2);
+}
+
+.rh-release-text strong {
+  color: var(--rh-fg);
+  font-weight: 600;
+}
+
 /* ======= TRIO EXAMPLES ======= */
 .rh-trio {
   max-width: 1120px;
@@ -509,6 +598,7 @@ a.rh-ptag {
   gap: 1px;
   background: var(--rh-line);
   border: 1px solid var(--rh-line);
+  overflow: hidden;
 }
 
 a.rh-trio-card {
@@ -522,6 +612,7 @@ a.rh-trio-card {
   display: flex;
   flex-direction: column;
   transition: background 0.12s;
+  min-width: 0; /* prevent grid blowout */
 }
 
 .rh-trio-card:hover {
@@ -567,6 +658,8 @@ a.rh-trio-card {
   line-height: 1.55;
   color: var(--rh-fg);
   white-space: pre;
+  display: block;
+  overflow: hidden;
 }
 
 .rh-trio-code .kw { color: var(--rh-kw); }
@@ -574,13 +667,8 @@ a.rh-trio-card {
 .rh-trio-code .st { color: var(--rh-st); }
 .rh-trio-code .cm { color: var(--rh-ln); font-style: italic; }
 
-/* Duo row (2 cards below the 3-col grid) */
-.rh-duo-inner {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 1px;
-  background: var(--rh-line);
-  border: 1px solid var(--rh-line);
+/* Second trio row: remove double border between rows */
+.rh-trio-inner + .rh-trio-inner {
   border-top: 0;
 }
 
@@ -638,7 +726,6 @@ a.rh-trio-card {
   .rh-title { font-size: 4rem; }
   .rh-window { box-shadow: 16px 16px 0 var(--rh-line); }
   .rh-trio-inner { grid-template-columns: 1fr; }
-  .rh-duo-inner { grid-template-columns: 1fr; }
   .rh-numbers-inner { grid-template-columns: repeat(2, 1fr); }
 }
 
