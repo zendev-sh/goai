@@ -1342,3 +1342,252 @@ func TestInitialize_UnsupportedProtocolVersion(t *testing.T) {
 		t.Errorf("error = %q, want to contain 'unsupported protocol version'", err.Error())
 	}
 }
+
+func TestProtocolVersion_Getter(t *testing.T) {
+	mt := newMockTransport()
+	c := NewClient("test", "1.0", WithTransport(mt))
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	pv := c.ProtocolVersion()
+	if pv != DefaultProtocolVersion {
+		t.Errorf("ProtocolVersion() = %q, want %q", pv, DefaultProtocolVersion)
+	}
+}
+
+func TestCallTool_UnmarshalError(t *testing.T) {
+	mt := newMockTransport()
+	c := NewClient("test", "1.0", WithTransport(mt))
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	mt.sendFunc = func(_ context.Context, msg JSONRPCMessage) error {
+		if msg.Method == "tools/call" {
+			// Return invalid JSON as result to trigger unmarshal error
+			mt.inject(JSONRPCMessage{
+				JSONRPC: "2.0",
+				ID:      msg.ID,
+				Result:  json.RawMessage(`not valid json`),
+			})
+		}
+		return nil
+	}
+
+	_, err := c.CallTool(context.Background(), "calc", map[string]any{"x": 1})
+	if err == nil {
+		t.Fatal("expected unmarshal error")
+	}
+	if !strings.Contains(err.Error(), "unmarshal tools/call") {
+		t.Errorf("error = %q, want to contain 'unmarshal tools/call'", err.Error())
+	}
+}
+
+func TestListPrompts_UnmarshalError(t *testing.T) {
+	mt := newMockTransport()
+	c := NewClient("test", "1.0", WithTransport(mt))
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	mt.sendFunc = func(_ context.Context, msg JSONRPCMessage) error {
+		if msg.Method == "prompts/list" {
+			mt.inject(JSONRPCMessage{
+				JSONRPC: "2.0",
+				ID:      msg.ID,
+				Result:  json.RawMessage(`not valid json`),
+			})
+		}
+		return nil
+	}
+
+	_, err := c.ListPrompts(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected unmarshal error")
+	}
+	if !strings.Contains(err.Error(), "unmarshal prompts/list") {
+		t.Errorf("error = %q, want to contain 'unmarshal prompts/list'", err.Error())
+	}
+}
+
+func TestListResources_UnmarshalError(t *testing.T) {
+	mt := newMockTransport()
+	c := NewClient("test", "1.0", WithTransport(mt))
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	mt.sendFunc = func(_ context.Context, msg JSONRPCMessage) error {
+		if msg.Method == "resources/list" {
+			mt.inject(JSONRPCMessage{
+				JSONRPC: "2.0",
+				ID:      msg.ID,
+				Result:  json.RawMessage(`not valid json`),
+			})
+		}
+		return nil
+	}
+
+	_, err := c.ListResources(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected unmarshal error")
+	}
+	if !strings.Contains(err.Error(), "unmarshal resources/list") {
+		t.Errorf("error = %q, want to contain 'unmarshal resources/list'", err.Error())
+	}
+}
+
+func TestInitialize_SendNotificationError(t *testing.T) {
+	// Test the error path when sending the initialized notification fails.
+	callCount := 0
+	mt := newMockTransport()
+	mt.sendFunc = func(ctx context.Context, msg JSONRPCMessage) error {
+		mt.mu.Lock()
+		onMsg := mt.onMessage
+		mt.mu.Unlock()
+
+		callCount++
+		if msg.Method == "initialize" && onMsg != nil {
+			result := InitializeResult{
+				ProtocolVersion: DefaultProtocolVersion,
+				Capabilities:    ServerCapabilities{Tools: &ToolsCapability{}},
+				ServerInfo:      ServerInfo{Name: "test", Version: "1.0"},
+			}
+			resultJSON, _ := json.Marshal(result)
+			go onMsg(JSONRPCMessage{
+				JSONRPC: "2.0",
+				ID:      msg.ID,
+				Result:  resultJSON,
+			})
+			return nil
+		}
+		if msg.Method == "notifications/initialized" {
+			return errors.New("notification send failed")
+		}
+		return nil
+	}
+
+	c := NewClient("test", "1.0", WithTransport(mt))
+	err := c.Connect(context.Background())
+	if err == nil {
+		t.Fatal("expected error from send notification failure")
+	}
+	if !strings.Contains(err.Error(), "send initialized notification") {
+		t.Errorf("error = %q, want to contain 'send initialized notification'", err.Error())
+	}
+}
+
+func TestListTools_UnmarshalError(t *testing.T) {
+	mt := newMockTransport()
+	c := NewClient("test", "1.0", WithTransport(mt))
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	mt.sendFunc = func(_ context.Context, msg JSONRPCMessage) error {
+		if msg.Method == "tools/list" {
+			mt.inject(JSONRPCMessage{
+				JSONRPC: "2.0",
+				ID:      msg.ID,
+				Result:  json.RawMessage(`not valid json`),
+			})
+		}
+		return nil
+	}
+
+	_, err := c.ListTools(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected unmarshal error")
+	}
+	if !strings.Contains(err.Error(), "unmarshal tools/list") {
+		t.Errorf("error = %q, want to contain 'unmarshal tools/list'", err.Error())
+	}
+}
+
+func TestGetPrompt_UnmarshalError(t *testing.T) {
+	mt := newMockTransport()
+	c := NewClient("test", "1.0", WithTransport(mt))
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	mt.sendFunc = func(_ context.Context, msg JSONRPCMessage) error {
+		if msg.Method == "prompts/get" {
+			mt.inject(JSONRPCMessage{
+				JSONRPC: "2.0",
+				ID:      msg.ID,
+				Result:  json.RawMessage(`not valid json`),
+			})
+		}
+		return nil
+	}
+
+	_, err := c.GetPrompt(context.Background(), "greeting", nil)
+	if err == nil {
+		t.Fatal("expected unmarshal error")
+	}
+	if !strings.Contains(err.Error(), "unmarshal prompts/get") {
+		t.Errorf("error = %q, want to contain 'unmarshal prompts/get'", err.Error())
+	}
+}
+
+func TestReadResource_UnmarshalError(t *testing.T) {
+	mt := newMockTransport()
+	c := NewClient("test", "1.0", WithTransport(mt))
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	mt.sendFunc = func(_ context.Context, msg JSONRPCMessage) error {
+		if msg.Method == "resources/read" {
+			mt.inject(JSONRPCMessage{
+				JSONRPC: "2.0",
+				ID:      msg.ID,
+				Result:  json.RawMessage(`not valid json`),
+			})
+		}
+		return nil
+	}
+
+	_, err := c.ReadResource(context.Background(), "file:///x")
+	if err == nil {
+		t.Fatal("expected unmarshal error")
+	}
+	if !strings.Contains(err.Error(), "unmarshal resources/read") {
+		t.Errorf("error = %q, want to contain 'unmarshal resources/read'", err.Error())
+	}
+}
+
+func TestInitialize_UnmarshalError(t *testing.T) {
+	mt := newMockTransport()
+	mt.sendFunc = func(ctx context.Context, msg JSONRPCMessage) error {
+		mt.mu.Lock()
+		onMsg := mt.onMessage
+		mt.mu.Unlock()
+		if msg.Method == "initialize" && onMsg != nil {
+			go onMsg(JSONRPCMessage{
+				JSONRPC: "2.0",
+				ID:      msg.ID,
+				Result:  json.RawMessage(`not valid json`),
+			})
+		}
+		return nil
+	}
+
+	c := NewClient("test", "1.0", WithTransport(mt))
+	err := c.Connect(context.Background())
+	if err == nil {
+		t.Fatal("expected unmarshal error from initialize")
+	}
+	if !strings.Contains(err.Error(), "unmarshal initialize") {
+		t.Errorf("error = %q, want to contain 'unmarshal initialize'", err.Error())
+	}
+}

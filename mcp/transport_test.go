@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1056,4 +1057,381 @@ func TestHTTPTransport_DispatchError_NilHandler(t *testing.T) {
 	ht := NewHTTPTransport("http://localhost:0")
 	// Should not panic with nil handler
 	ht.dispatchError(fmt.Errorf("test error"))
+}
+
+func TestStdioTransport_SendAfterClose(t *testing.T) {
+	st := NewStdioTransport("cat", nil)
+	st.OnMessage(func(m JSONRPCMessage) {})
+	ctx := context.Background()
+	if err := st.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	st.Close()
+
+	// Send after close should return error about transport closed
+	err := st.Send(ctx, JSONRPCMessage{JSONRPC: "2.0", Method: "test"})
+	if err == nil {
+		t.Fatal("expected error from send after close")
+	}
+	if !strings.Contains(err.Error(), "transport closed") {
+		t.Errorf("error = %q, want to contain 'transport closed'", err.Error())
+	}
+}
+
+func TestHTTPTransport_Start_ContentTypeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte("{}"))
+	}))
+	defer srv.Close()
+
+	ht := NewHTTPTransport(srv.URL)
+	ht.OnMessage(func(m JSONRPCMessage) {})
+
+	err := ht.Start(context.Background())
+	if err == nil {
+		ht.Close()
+		t.Fatal("expected content type error")
+	}
+	if !strings.Contains(err.Error(), "expected text/event-stream") {
+		t.Errorf("error = %q, want to contain 'expected text/event-stream'", err.Error())
+	}
+}
+
+func TestReadSSEBody_InvalidJSONDispatch(t *testing.T) {
+	// Test that readSSEBody dispatches error for invalid JSON in SSE data
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			return
+		}
+		fmt.Fprintf(w, "data: {invalid json}\n\n")
+		flusher.Flush()
+		time.Sleep(100 * time.Millisecond)
+	}))
+	defer srv.Close()
+
+	ht := NewHTTPTransport(srv.URL)
+
+	var errCalled atomic.Bool
+	ht.OnError(func(err error) {
+		if strings.Contains(err.Error(), "invalid JSON") {
+			errCalled.Store(true)
+		}
+	})
+	ht.OnMessage(func(m JSONRPCMessage) {})
+
+	if err := ht.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+	if !errCalled.Load() {
+		t.Error("OnError not called for invalid JSON in SSE data")
+	}
+	ht.Close()
+}
+
+func TestReadSSEBodyCancellable_ContextCancel(t *testing.T) {
+	// Test that readSSEBodyCancellable properly handles context cancellation.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			return
+		}
+		// Send one event, then keep connection open
+		fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":{}}\n\n")
+		flusher.Flush()
+		// Keep alive long enough to be cancelled
+		time.Sleep(5 * time.Second)
+	}))
+	defer srv.Close()
+
+	ht := NewHTTPTransport(srv.URL)
+
+	var msgReceived atomic.Bool
+	ht.OnMessage(func(m JSONRPCMessage) {
+		msgReceived.Store(true)
+	})
+
+	// Make a Send call that returns SSE stream
+	msg := JSONRPCMessage{JSONRPC: "2.0", Method: "test", ID: "1"}
+	if err := ht.Send(context.Background(), msg); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	if !msgReceived.Load() {
+		t.Error("expected to receive message from SSE stream")
+	}
+
+	// Close the transport which should cancel the postCancels context
+	ht.Close()
+	// If we get here without hanging, the context cancellation worked
+}
+
+func TestWithSSEHeaders(t *testing.T) {
+	headers := map[string]string{"X-Key": "val", "Authorization": "Bearer tok"}
+	st := NewSSETransport("http://example.com/sse", WithSSEHeaders(headers))
+	if st.Headers["X-Key"] != "val" {
+		t.Errorf("X-Key = %q, want %q", st.Headers["X-Key"], "val")
+	}
+	if st.Headers["Authorization"] != "Bearer tok" {
+		t.Errorf("Authorization = %q, want %q", st.Headers["Authorization"], "Bearer tok")
+	}
+}
+
+func TestWithSSEHTTPClient(t *testing.T) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	st := NewSSETransport("http://example.com/sse", WithSSEHTTPClient(client))
+	if st.HTTPClient != client {
+		t.Error("HTTPClient not set by WithSSEHTTPClient")
+	}
+}
+
+func TestNewSSETransport_WithOptions(t *testing.T) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	headers := map[string]string{"X-Auth": "token"}
+	st := NewSSETransport("http://example.com/sse",
+		WithSSEHeaders(headers),
+		WithSSEHTTPClient(client),
+	)
+	if st.URL != "http://example.com/sse" {
+		t.Errorf("URL = %q", st.URL)
+	}
+	if st.Headers["X-Auth"] != "token" {
+		t.Errorf("header not set")
+	}
+	if st.HTTPClient != client {
+		t.Error("http client not set")
+	}
+}
+
+func TestSSETransport_Start_ContentTypeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte("{}"))
+	}))
+	defer srv.Close()
+
+	st := NewSSETransport(srv.URL)
+	st.OnMessage(func(m JSONRPCMessage) {})
+
+	err := st.Start(context.Background())
+	if err == nil {
+		st.Close()
+		t.Fatal("expected content type error")
+	}
+	if !strings.Contains(err.Error(), "expected text/event-stream") {
+		t.Errorf("error = %q, want to contain 'expected text/event-stream'", err.Error())
+	}
+}
+
+func TestSSETransport_Send_JSONResponseDispatch(t *testing.T) {
+	postSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"jsonrpc":"2.0","id":"1","result":{"value":99}}`))
+	}))
+	defer postSrv.Close()
+
+	st := NewSSETransport("http://example.com/sse")
+	st.Endpoint = postSrv.URL
+
+	var received JSONRPCMessage
+	var wg sync.WaitGroup
+	wg.Add(1)
+	st.OnMessage(func(m JSONRPCMessage) {
+		received = m
+		wg.Done()
+	})
+
+	msg := JSONRPCMessage{JSONRPC: "2.0", Method: "test", ID: "1"}
+	if err := st.Send(context.Background(), msg); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	wg.Wait()
+	if string(received.Result) != `{"value":99}` {
+		t.Errorf("result = %s, want {\"value\":99}", received.Result)
+	}
+}
+
+func TestSSETransport_Send_ContextCancelledWhileWaiting(t *testing.T) {
+	st := NewSSETransport("http://example.com/sse")
+	st.endpointReady = make(chan struct{}) // never closed = no endpoint
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := st.Send(ctx, JSONRPCMessage{JSONRPC: "2.0", Method: "test"})
+	if err == nil {
+		t.Fatal("expected context error")
+	}
+	// Either context.DeadlineExceeded or context.Canceled
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %v, want context deadline or canceled", err)
+	}
+}
+
+func TestStripSSEValue_NoLeadingSpace(t *testing.T) {
+	got := stripSSEValue("hello")
+	if got != "hello" {
+		t.Errorf("stripSSEValue(%q) = %q, want %q", "hello", got, "hello")
+	}
+}
+
+func TestStripSSEValue_WithLeadingSpace(t *testing.T) {
+	got := stripSSEValue(" hello")
+	if got != "hello" {
+		t.Errorf("stripSSEValue(%q) = %q, want %q", " hello", got, "hello")
+	}
+}
+
+func TestStripSSEValue_EmptyString(t *testing.T) {
+	got := stripSSEValue("")
+	if got != "" {
+		t.Errorf("stripSSEValue(%q) = %q, want %q", "", got, "")
+	}
+}
+
+func TestHTTPTransport_Send_SSEResponseFromPost(t *testing.T) {
+	// Test SSE response from POST (text/event-stream content type)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			return
+		}
+		fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":\"99\",\"result\":{\"ok\":true}}\n\n")
+		flusher.Flush()
+	}))
+	defer srv.Close()
+
+	ht := NewHTTPTransport(srv.URL)
+
+	var received JSONRPCMessage
+	var wg sync.WaitGroup
+	wg.Add(1)
+	ht.OnMessage(func(m JSONRPCMessage) {
+		received = m
+		wg.Done()
+	})
+
+	msg := JSONRPCMessage{JSONRPC: "2.0", Method: "test", ID: "1"}
+	if err := ht.Send(context.Background(), msg); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if string(received.Result) != `{"ok":true}` {
+			t.Errorf("result = %s", received.Result)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for SSE response from POST")
+	}
+
+	ht.Close()
+}
+
+func TestSSETransport_Send_NonJSONResponse(t *testing.T) {
+	// Verify that non-JSON response body doesn't dispatch
+	postSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("ok"))
+	}))
+	defer postSrv.Close()
+
+	st := NewSSETransport("http://example.com/sse")
+	st.Endpoint = postSrv.URL
+
+	st.OnMessage(func(m JSONRPCMessage) {
+		t.Error("should not dispatch for non-JSON response")
+	})
+
+	msg := JSONRPCMessage{JSONRPC: "2.0", Method: "test", ID: "1"}
+	if err := st.Send(context.Background(), msg); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+}
+
+func TestSSETransport_Start_ConnectionError(t *testing.T) {
+	st := NewSSETransport("http://127.0.0.1:1") // unreachable
+	st.OnMessage(func(m JSONRPCMessage) {})
+
+	err := st.Start(context.Background())
+	if err == nil {
+		st.Close()
+		t.Fatal("expected connection error")
+	}
+	if !strings.Contains(err.Error(), "SSE connection") {
+		t.Errorf("error = %q, want to contain 'SSE connection'", err.Error())
+	}
+}
+
+func TestSSETransport_ReadSSE_JSONParseError(t *testing.T) {
+	// Test the JSON unmarshal error path in readSSE (non-endpoint events with bad JSON)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		// First send an endpoint event
+		fmt.Fprintf(w, "event: endpoint\ndata: http://localhost:9999/post\n\n")
+		flusher.Flush()
+		// Then send a message event with invalid JSON
+		fmt.Fprintf(w, "event: message\ndata: {bad json}\n\n")
+		flusher.Flush()
+		time.Sleep(100 * time.Millisecond)
+	}))
+	defer srv.Close()
+
+	st := NewSSETransport(srv.URL)
+
+	var errCalled atomic.Bool
+	st.OnError(func(err error) {
+		errCalled.Store(true)
+	})
+	st.OnMessage(func(m JSONRPCMessage) {})
+
+	if err := st.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+	if !errCalled.Load() {
+		t.Error("OnError not called for JSON parse error in readSSE")
+	}
+	st.Close()
+}
+
+func TestSSETransport_WithCustomHTTPClient(t *testing.T) {
+	// Tests NewSSETransport with WithSSEHTTPClient used in Start
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		fmt.Fprintf(w, "event: endpoint\ndata: http://localhost:9999/post\n\n")
+		flusher.Flush()
+		time.Sleep(100 * time.Millisecond)
+	}))
+	defer srv.Close()
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	st := NewSSETransport(srv.URL, WithSSEHTTPClient(client))
+	st.OnMessage(func(m JSONRPCMessage) {})
+
+	if err := st.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	st.Close()
 }
