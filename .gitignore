@@ -4,9 +4,6 @@ docs/.vitepress/dist/
 coverage.out
 cov.html
 .DS_Store
-
-# Local hook installs
 hooks/
-
-# AI agent sessions
 .zenbot/
+des/

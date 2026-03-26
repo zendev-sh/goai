@@ -27,6 +27,10 @@ goai/
 ├── errors.go               # APIError, ContextOverflowError
 ├── retry.go                # Exponential backoff (errors.As, not type assertion)
 ├── caching.go              # Prompt cache control (copies msgs, no mutation)
+├── types.go                # Result/Option types
+├── messages.go             # Message builders
+├── hooks.go                # Telemetry hooks
+├── partial_json.go         # Partial JSON parser for streaming
 ├── provider/
 │   ├── provider.go         # LanguageModel, EmbeddingModel, ImageModel interfaces
 │   ├── types.go            # Message, Part, Usage, StreamChunk
@@ -40,13 +44,13 @@ goai/
 │   ├── cohere/             # Cohere (Chat v2 + Embed)
 │   ├── compat/             # Generic OpenAI-compatible
 │   └── <12 more>/          # OpenAI-compat via internal/openaicompat
-│   # tools.go files: anthropic/ (10), openai/ (4), google/ (3), xai/ (2), groq/ (1)
+│   # tools.go files: anthropic/ (1), openai/ (1), google/ (1), xai/ (1), groq/ (1)
 ├── internal/
 │   ├── openaicompat/       # Shared codec for 13+ providers
 │   ├── gemini/             # Schema sanitization (Vertex, Google)
 │   ├── sse/                # SSE parser
 │   └── httpc/              # HTTP helpers + ParseDataURL
-├── examples/               # 16 runnable examples
+├── examples/               # 23 runnable examples (including 7 MCP examples)
 └── bench/                  # Performance benchmarks (GoAI vs Vercel AI SDK)
 ```
 

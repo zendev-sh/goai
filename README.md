@@ -5,7 +5,7 @@
 <h1 align="center">GoAI</h1>
 
 <p align="center"><em>AI SDK, the Go way.</em></p>
-<p align="center">Go SDK for building AI applications. One SDK, 20 providers.</p>
+<p align="center">Go SDK for building AI applications. One SDK, 20+ providers, MCP support.</p>
 
 <p align="center">
   <a href="bench/RESULTS.md"><img src="https://img.shields.io/badge/streaming-1.1x_faster-brightgreen" alt="Streaming"></a>
@@ -27,6 +27,12 @@
 
 Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstractions, idiomatically adapted for Go with generics, interfaces, and functional options.
 
+## What's New
+
+> **v0.5.0**  - MCP (Model Context Protocol) client. Connect to any MCP server with 3 transports (stdio, HTTP, SSE). Auto-convert MCP tools for use with `GenerateText`. [Docs →](https://goai.sh/concepts/mcp)
+>
+> **v0.4.4**  - Provider-defined tools: 20 tools across Anthropic, OpenAI, Google, Groq, xAI. Computer use, web search, code execution. [Changelog →](https://github.com/zendev-sh/goai/releases)
+
 ## Features
 
 - **7 core functions**: `GenerateText`, `StreamText`, `GenerateObject[T]`, `StreamObject[T]`, `Embed`, `EmbedMany`, `GenerateImage`
@@ -41,18 +47,19 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 - **Code execution**: Server-side Python sandboxes via OpenAI, Anthropic, Google. No local setup
 - **Computer use**: Anthropic computer, bash, text editor tools for autonomous desktop interaction
 - **20 provider-defined tools**: Web fetch, file search, image generation, X search, and more - [full list](#provider-defined-tools)
+- **MCP client**: Connect to any MCP server (stdio, HTTP, SSE), auto-convert tools for use with GoAI
 - **Telemetry hooks**: `OnRequest`, `OnResponse`, `OnStepFinish`, `OnToolCall` callbacks
 - **Retry/backoff**: Automatic retry with exponential backoff on 429/5xx errors
 - **Minimal dependencies**: Core uses only stdlib; Vertex adds `golang.org/x/oauth2` for ADC
 
 ## Performance vs Vercel AI SDK
 
-| Metric | GoAI | Vercel AI SDK | Improvement |
-|--------|------|---------------|-------------|
-| Streaming throughput | 1.46ms | 1.62ms | 1.1x faster |
-| Cold start | 569us | 13.9ms | 24x faster |
-| Memory (1 stream) | 220KB | 676KB | 3.1x less |
-| GenerateText | 56us | 79us | 1.4x faster |
+| Metric               | GoAI   | Vercel AI SDK | Improvement |
+| -------------------- | ------ | ------------- | ----------- |
+| Streaming throughput | 1.46ms | 1.62ms        | 1.1x faster |
+| Cold start           | 569us  | 13.9ms        | 24x faster  |
+| Memory (1 stream)    | 220KB  | 676KB         | 3.1x less   |
+| GenerateText         | 56us   | 79us          | 1.4x faster |
 
 > Mock HTTP server, identical SSE fixtures, Apple M2. [Full report](bench/RESULTS.md)
 
@@ -74,6 +81,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
 
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/provider/openai"
@@ -87,7 +96,7 @@ func main() {
 		goai.WithPrompt("What is the capital of France?"),
 	)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	fmt.Println(result.Text)
 }
@@ -101,7 +110,7 @@ stream, err := goai.StreamText(ctx, model,
 	goai.WithPrompt("Write a haiku about Go."),
 )
 if err != nil {
-	panic(err)
+	log.Fatal(err)
 }
 
 for text := range stream.TextStream() {
@@ -109,6 +118,9 @@ for text := range stream.TextStream() {
 }
 
 result := stream.Result()
+if err := stream.Err(); err != nil {
+	log.Fatal(err)
+}
 fmt.Printf("\nTokens: %d in, %d out\n",
 	result.TotalUsage.InputTokens, result.TotalUsage.OutputTokens)
 ```
@@ -128,6 +140,9 @@ type Recipe struct {
 result, err := goai.GenerateObject[Recipe](ctx, model,
 	goai.WithPrompt("Give me a recipe for chocolate chip cookies"),
 )
+if err != nil {
+	log.Fatal(err)
+}
 fmt.Printf("Recipe: %s (%s)\n", result.Object.Name, result.Object.Difficulty)
 ```
 
@@ -137,6 +152,9 @@ Streaming partial objects:
 stream, err := goai.StreamObject[Recipe](ctx, model,
 	goai.WithPrompt("Give me a recipe for pancakes"),
 )
+if err != nil {
+	log.Fatal(err)
+}
 for partial := range stream.PartialObjectStream() {
 	fmt.Printf("\r%s (%d ingredients so far)", partial.Name, len(partial.Ingredients))
 }
@@ -158,7 +176,9 @@ weatherTool := goai.Tool{
 	}`),
 	Execute: func(ctx context.Context, input json.RawMessage) (string, error) {
 		var args struct{ City string `json:"city"` }
-		json.Unmarshal(input, &args)
+		if err := json.Unmarshal(input, &args); err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("22°C and sunny in %s", args.City), nil
 	},
 }
@@ -168,8 +188,37 @@ result, err := goai.GenerateText(ctx, model,
 	goai.WithTools(weatherTool),
 	goai.WithMaxSteps(3),
 )
+if err != nil {
+	log.Fatal(err)
+}
 fmt.Println(result.Text) // "It's 22°C and sunny in Tokyo."
 ```
+
+## MCP (Model Context Protocol)
+
+Connect to any MCP server and use its tools with GoAI. Supports stdio, Streamable HTTP, and legacy SSE transports.
+
+```go
+import "github.com/zendev-sh/goai/mcp"
+
+// Connect to any MCP server
+transport := mcp.NewStdioTransport("npx", []string{"-y", "@modelcontextprotocol/server-filesystem", "."})
+client := mcp.NewClient("my-app", "1.0", mcp.WithTransport(transport))
+_ = client.Connect(ctx)
+defer client.Close()
+
+// Use MCP tools with GoAI
+tools, _ := client.ListTools(ctx, nil)
+goaiTools := mcp.ConvertTools(client, tools.Tools)
+
+result, _ := goai.GenerateText(ctx, model,
+    goai.WithTools(goaiTools...),
+    goai.WithPrompt("List files in the current directory"),
+    goai.WithMaxSteps(5),
+)
+```
+
+See [examples/mcp-tools](examples/mcp-tools/) and the [MCP documentation](https://goai.sh/concepts/mcp) for more.
 
 ## Citations / Sources
 
@@ -179,6 +228,9 @@ Providers that support grounding (Google, xAI, Perplexity) or inline citations (
 result, err := goai.GenerateText(ctx, model,
 	goai.WithPrompt("What were the major news events today?"),
 )
+if err != nil {
+	log.Fatal(err)
+}
 
 if len(result.Sources) > 0 {
 	for _, s := range result.Sources {
@@ -201,29 +253,38 @@ See [Provider-Defined Tools > Computer Use](#computer-use-1) and [examples/compu
 ## Embeddings
 
 ```go
-model := openai.Embedding("text-embedding-3-small",
-	openai.WithAPIKey(os.Getenv("OPENAI_API_KEY")),
-)
+ctx := context.Background()
+model := openai.Embedding("text-embedding-3-small")
 
 // Single
 result, err := goai.Embed(ctx, model, "Hello world")
+if err != nil {
+	log.Fatal(err)
+}
 fmt.Printf("Dimensions: %d\n", len(result.Embedding))
 
 // Batch (auto-chunked, parallel)
 many, err := goai.EmbedMany(ctx, model, []string{"foo", "bar", "baz"},
 	goai.WithMaxParallelCalls(4),
 )
+if err != nil {
+	log.Fatal(err)
+}
 ```
 
 ## Image Generation
 
 ```go
-model := openai.Image("gpt-image-1", openai.WithAPIKey(os.Getenv("OPENAI_API_KEY")))
+ctx := context.Background()
+model := openai.Image("gpt-image-1")
 
 result, err := goai.GenerateImage(ctx, model,
 	goai.WithImagePrompt("A sunset over mountains, oil painting style"),
 	goai.WithImageSize("1024x1024"),
 )
+if err != nil {
+	log.Fatal(err)
+}
 os.WriteFile("sunset.png", result.Images[0].Data, 0644)
 ```
 
@@ -257,28 +318,28 @@ result, err := goai.GenerateText(ctx, model, goai.WithPrompt("Hello"))
 
 ### Provider Table
 
-| Provider | Chat | Embed | Image | Auth | E2E | Import |
-|----------|------|-------|-------|------|-----|--------|
-| OpenAI | `gpt-4o`, `o3`, `codex-*` | `text-embedding-3-*` | `gpt-image-1` | API key, TokenSource | Full | `provider/openai` |
-| Anthropic | `claude-*` | - | - | API key, TokenSource | Full | `provider/anthropic` |
-| Google | `gemini-*` | `text-embedding-004` | `imagen-*` | API key, TokenSource | Full | `provider/google` |
-| Bedrock | `anthropic.*`, `meta.*` | - | - | AWS keys, bearer token | Full | `provider/bedrock` |
-| Vertex | `gemini-*` | `text-embedding-004` | `imagen-*` | TokenSource, ADC | Unit | `provider/vertex` |
-| Azure | `gpt-4o`, `claude-*` | - | via Azure | API key, TokenSource | Full | `provider/azure` |
-| OpenRouter | various | - | - | API key | Unit | `provider/openrouter` |
-| Mistral | `mistral-large`, `magistral-*` | - | - | API key | Full | `provider/mistral` |
-| Groq | `mixtral-*`, `llama-*` | - | - | API key | Full | `provider/groq` |
-| xAI | `grok-*` | - | - | API key | Unit | `provider/xai` |
-| Cohere | `command-r-*` | `embed-*` | - | API key | Unit | `provider/cohere` |
-| DeepSeek | `deepseek-*` | - | - | API key | Unit | `provider/deepseek` |
-| Fireworks | various | - | - | API key | Unit | `provider/fireworks` |
-| Together | various | - | - | API key | Unit | `provider/together` |
-| DeepInfra | various | - | - | API key | Unit | `provider/deepinfra` |
-| Perplexity | `sonar-*` | - | - | API key | Unit | `provider/perplexity` |
-| Cerebras | `llama-*` | - | - | API key | Full | `provider/cerebras` |
-| Ollama | local models | local models | - | none | Unit | `provider/ollama` |
-| vLLM | local models | local models | - | none | Unit | `provider/vllm` |
-| Compat | any OpenAI-compatible | any | - | configurable | Unit | `provider/compat` |
+| Provider   | Chat                           | Embed                | Image         | Auth                                        | E2E  | Import                |
+| ---------- | ------------------------------ | -------------------- | ------------- | ------------------------------------------- | ---- | --------------------- |
+| OpenAI     | `gpt-4o`, `o3`, `codex-*`      | `text-embedding-3-*` | `gpt-image-1` | `OPENAI_API_KEY`, TokenSource               | Full | `provider/openai`     |
+| Anthropic  | `claude-*`                     | -                    | -             | `ANTHROPIC_API_KEY`, TokenSource            | Full | `provider/anthropic`  |
+| Google     | `gemini-*`                     | `text-embedding-004` | `imagen-*`    | `GOOGLE_GENERATIVE_AI_API_KEY`, TokenSource | Full | `provider/google`     |
+| Bedrock    | `anthropic.*`, `meta.*`        | -                    | -             | AWS keys, bearer token                      | Full | `provider/bedrock`    |
+| Vertex     | `gemini-*`                     | `text-embedding-004` | `imagen-*`    | TokenSource, ADC                            | Unit | `provider/vertex`     |
+| Azure      | `gpt-4o`, `claude-*`           | -                    | via Azure     | `AZURE_OPENAI_API_KEY`, TokenSource         | Full | `provider/azure`      |
+| OpenRouter | various                        | -                    | -             | `OPENROUTER_API_KEY`, TokenSource           | Unit | `provider/openrouter` |
+| Mistral    | `mistral-large`, `magistral-*` | -                    | -             | `MISTRAL_API_KEY`, TokenSource              | Full | `provider/mistral`    |
+| Groq       | `mixtral-*`, `llama-*`         | -                    | -             | `GROQ_API_KEY`, TokenSource                 | Full | `provider/groq`       |
+| xAI        | `grok-*`                       | -                    | -             | `XAI_API_KEY`, TokenSource                  | Unit | `provider/xai`        |
+| Cohere     | `command-r-*`                  | `embed-*`            | -             | `COHERE_API_KEY`, TokenSource               | Unit | `provider/cohere`     |
+| DeepSeek   | `deepseek-*`                   | -                    | -             | `DEEPSEEK_API_KEY`, TokenSource             | Unit | `provider/deepseek`   |
+| Fireworks  | various                        | -                    | -             | `FIREWORKS_API_KEY`, TokenSource            | Unit | `provider/fireworks`  |
+| Together   | various                        | -                    | -             | `TOGETHER_AI_API_KEY`, TokenSource          | Unit | `provider/together`   |
+| DeepInfra  | various                        | -                    | -             | `DEEPINFRA_API_KEY`, TokenSource            | Unit | `provider/deepinfra`  |
+| Perplexity | `sonar-*`                      | -                    | -             | `PERPLEXITY_API_KEY`, TokenSource           | Unit | `provider/perplexity` |
+| Cerebras   | `llama-*`                      | -                    | -             | `CEREBRAS_API_KEY`, TokenSource             | Unit | `provider/cerebras`   |
+| Ollama     | local models                   | local models         | -             | none                                        | Unit | `provider/ollama`     |
+| vLLM       | local models                   | local models         | -             | `API_KEY`, TokenSource                      | Unit | `provider/vllm`       |
+| Compat     | any OpenAI-compatible          | any                  | -             | configurable                                | Unit | `provider/compat`     |
 
 **E2E column**: "Full" = tested with real API calls. "Unit" = tested with mock HTTP servers (100% coverage).
 
@@ -287,43 +348,43 @@ result, err := goai.GenerateText(ctx, model, goai.WithPrompt("Hello"))
 <details>
 <summary><strong>E2E tested - 99 models across 6 providers</strong> (real API calls, click to expand)</summary>
 
-Last run: 2026-03-15. **98 generate PASS, 99 stream PASS, 0 FAIL**.
+Last run: 2026-03-15. 99 models tested (generate + stream).
 
-| Provider | Models E2E tested (generate + stream) |
-|----------|---------------------------------------|
-| Google (9) | `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-pro` (stream), `gemini-3-flash-preview`, `gemini-3-pro-preview`, `gemini-3.1-pro-preview`, `gemini-2.0-flash`, `gemini-flash-latest`, `gemini-flash-lite-latest` |
-| Azure (21) | `claude-opus-4-6`, `claude-sonnet-4-6`, `DeepSeek-V3.2`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-5`, `gpt-5-codex`, `gpt-5-mini`, `gpt-5-pro`, `gpt-5.1`, `gpt-5.1-codex`, `gpt-5.1-codex-max`, `gpt-5.1-codex-mini`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5.3-codex`, `gpt-5.4`, `gpt-5.4-pro`, `Kimi-K2.5`, `model-router`, `o3` |
+| Provider     | Models E2E tested (generate + stream)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Google (9)   | `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-pro` (stream), `gemini-3-flash-preview`, `gemini-3-pro-preview`, `gemini-3.1-pro-preview`, `gemini-2.0-flash`, `gemini-flash-latest`, `gemini-flash-lite-latest`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Azure (21)   | `claude-opus-4-6`, `claude-sonnet-4-6`, `DeepSeek-V3.2`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-5`, `gpt-5-codex`, `gpt-5-mini`, `gpt-5-pro`, `gpt-5.1`, `gpt-5.1-codex`, `gpt-5.1-codex-max`, `gpt-5.1-codex-mini`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5.3-codex`, `gpt-5.4`, `gpt-5.4-pro`, `Kimi-K2.5`, `model-router`, `o3`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | Bedrock (61) | **Anthropic**: `claude-sonnet-4-6`, `claude-sonnet-4-5`, `claude-sonnet-4`, `claude-opus-4-6-v1`, `claude-opus-4-5`, `claude-opus-4-1`, `claude-haiku-4-5`, `claude-3-5-sonnet`, `claude-3-5-haiku`, `claude-3-haiku` · **Amazon**: `nova-micro`, `nova-lite`, `nova-pro`, `nova-premier`, `nova-2-lite` · **Meta**: `llama4-scout`, `llama4-maverick`, `llama3-3-70b`, `llama3-2-{90,11,3,1}b`, `llama3-1-{70,8}b`, `llama3-{70,8}b` · **Mistral**: `mistral-large`, `mixtral-8x7b`, `mistral-7b`, `ministral-3-{14,8}b`, `voxtral-{mini,small}` · **Others**: `deepseek.v3`, `deepseek.r1`, `ai21.jamba-1-5-{mini,large}`, `cohere.command-r{-plus,}`, `google.gemma-3-{4,12,27}b`, `minimax.{m2,m2.1}`, `moonshotai.kimi-k2{-thinking,.5}`, `nvidia.nemotron-nano-{12,9}b`, `openai.gpt-oss-{120,20}b{,-safeguard}`, `qwen.qwen3-{32,235,coder-30,coder-480}b`, `qwen.qwen3-next-80b`, `writer.palmyra-{x4,x5}`, `zai.glm-4.7{,-flash}` |
-| Groq (2) | `llama-3.1-8b-instant`, `llama-3.3-70b-versatile` |
-| Mistral (5) | `mistral-small-latest`, `mistral-large-latest`, `devstral-small-2507`, `codestral-latest`, `magistral-medium-latest` |
-| Cerebras (1) | `llama3.1-8b` |
+| Groq (2)     | `llama-3.1-8b-instant`, `llama-3.3-70b-versatile`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Mistral (5)  | `mistral-small-latest`, `mistral-large-latest`, `devstral-small-2507`, `codestral-latest`, `magistral-medium-latest`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Cerebras (1) | `llama3.1-8b`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 </details>
 
 <details>
 <summary><strong>Unit tested</strong> (mock HTTP server, 100% coverage, click to expand)</summary>
 
-| Provider | Models in unit tests |
-|----------|---------------------|
-| OpenAI | `gpt-4o`, `o3`, `text-embedding-3-small`, `dall-e-3`, `gpt-image-1` |
-| Anthropic | `claude-sonnet-4-20250514`, `claude-sonnet-4-5-20241022`, `claude-sonnet-4-6-20260310` |
-| Google | `gemini-2.5-flash`, `gemini-2.5-flash-image`, `imagen-4.0-fast-generate-001`, `text-embedding-004` |
-| Bedrock | `us.anthropic.claude-sonnet-4-6`, `anthropic.claude-sonnet-4-20250514-v1:0`, `meta.llama3-70b` |
-| Azure | `gpt-4o`, `gpt-5.2-chat`, `dall-e-3`, `claude-sonnet-4-6` |
-| Vertex | `gemini-2.5-pro`, `imagen-3.0-generate-002`, `text-embedding-004` |
-| Cohere | `command-r-plus`, `command-a-reasoning`, `embed-v4.0` |
-| Mistral | `mistral-large-latest` |
-| Groq | `llama-3.3-70b-versatile` |
-| xAI | `grok-3` |
-| DeepSeek | `deepseek-chat` |
-| DeepInfra | `meta-llama/Llama-3.3-70B-Instruct` |
-| Fireworks | `accounts/fireworks/models/llama-v3p3-70b-instruct` |
-| OpenRouter | `anthropic/claude-sonnet-4` |
-| Perplexity | `sonar-pro` |
-| Together | `meta-llama/Llama-3.3-70B-Instruct-Turbo` |
-| Cerebras | `llama-3.3-70b` |
-| Ollama | `llama3`, `llama3.2:1b`, `nomic-embed-text` |
-| vLLM | `meta-llama/Llama-3-8b` |
+| Provider   | Models in unit tests                                                                               |
+| ---------- | -------------------------------------------------------------------------------------------------- |
+| OpenAI     | `gpt-4o`, `o3`, `text-embedding-3-small`, `dall-e-3`, `gpt-image-1`                                |
+| Anthropic  | `claude-sonnet-4-20250514`, `claude-sonnet-4-5-20241022`, `claude-sonnet-4-6-20260310`             |
+| Google     | `gemini-2.5-flash`, `gemini-2.5-flash-image`, `imagen-4.0-fast-generate-001`, `text-embedding-004` |
+| Bedrock    | `us.anthropic.claude-sonnet-4-6`, `anthropic.claude-sonnet-4-20250514-v1:0`, `meta.llama3-70b`     |
+| Azure      | `gpt-4o`, `gpt-5.2-chat`, `dall-e-3`, `claude-sonnet-4-6`                                          |
+| Vertex     | `gemini-2.5-pro`, `imagen-3.0-generate-002`, `text-embedding-004`                                  |
+| Cohere     | `command-r-plus`, `command-a-reasoning`, `embed-v4.0`                                              |
+| Mistral    | `mistral-large-latest`                                                                             |
+| Groq       | `llama-3.3-70b-versatile`                                                                          |
+| xAI        | `grok-3`                                                                                           |
+| DeepSeek   | `deepseek-chat`                                                                                    |
+| DeepInfra  | `meta-llama/Llama-3.3-70B-Instruct`                                                                |
+| Fireworks  | `accounts/fireworks/models/llama-v3p3-70b-instruct`                                                |
+| OpenRouter | `anthropic/claude-sonnet-4`                                                                        |
+| Perplexity | `sonar-pro`                                                                                        |
+| Together   | `meta-llama/Llama-3.3-70B-Instruct-Turbo`                                                          |
+| Cerebras   | `llama-3.3-70b`                                                                                    |
+| Ollama     | `llama3`, `llama3.2:1b`, `nomic-embed-text`                                                        |
+| vLLM       | `meta-llama/Llama-3-8b`                                                                            |
 
 </details>
 
@@ -404,58 +465,62 @@ fmt.Printf("Model used: %s\n", result.Response.Model)
 
 ### Generation Options
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `WithSystem(s)` | System prompt | - |
-| `WithPrompt(s)` | Single user message | - |
-| `WithMessages(...)` | Conversation history | - |
-| `WithTools(...)` | Available tools | - |
-| `WithMaxOutputTokens(n)` | Response length limit | provider default |
-| `WithTemperature(t)` | Randomness (0.0-2.0) | provider default |
-| `WithTopP(p)` | Nucleus sampling | provider default |
-| `WithStopSequences(...)` | Stop triggers | - |
-| `WithMaxSteps(n)` | Tool loop iterations | 1 (no loop) |
-| `WithMaxRetries(n)` | Retries on 429/5xx | 2 |
-| `WithTimeout(d)` | Overall timeout | none |
-| `WithHeaders(h)` | Per-request HTTP headers | - |
-| `WithProviderOptions(m)` | Provider-specific params | - |
-| `WithPromptCaching(b)` | Enable prompt caching | false |
-| `WithToolChoice(tc)` | "auto", "none", "required", or tool name | - |
+| Option                    | Description                              | Default          |
+| ------------------------- | ---------------------------------------- | ---------------- |
+| `WithSystem(s)`           | System prompt                            | -                |
+| `WithPrompt(s)`           | Single user message                      | -                |
+| `WithMessages(...)`       | Conversation history                     | -                |
+| `WithTools(...)`          | Available tools                          | -                |
+| `WithMaxOutputTokens(n)`  | Response length limit                    | provider default |
+| `WithTemperature(t)`      | Randomness (0.0-2.0)                     | provider default |
+| `WithTopP(p)`             | Nucleus sampling                         | provider default |
+| `WithTopK(k)`             | Top-K sampling                           | provider default |
+| `WithFrequencyPenalty(p)` | Frequency penalty                        | provider default |
+| `WithPresencePenalty(p)`  | Presence penalty                         | provider default |
+| `WithSeed(s)`             | Deterministic generation                 | -                |
+| `WithStopSequences(...)`  | Stop triggers                            | -                |
+| `WithMaxSteps(n)`         | Tool loop iterations                     | 1 (no loop)      |
+| `WithMaxRetries(n)`       | Retries on 429/5xx                       | 2                |
+| `WithTimeout(d)`          | Overall timeout                          | none             |
+| `WithHeaders(h)`          | Per-request HTTP headers                 | -                |
+| `WithProviderOptions(m)`  | Provider-specific params                 | -                |
+| `WithPromptCaching(b)`    | Enable prompt caching                    | false            |
+| `WithToolChoice(tc)`      | "auto", "none", "required", or tool name | -                |
 
 ### Telemetry Hooks
 
-| Option | Description |
-|--------|-------------|
-| `WithOnRequest(fn)` | Called before each API call |
-| `WithOnResponse(fn)` | Called after each API call |
+| Option                 | Description                      |
+| ---------------------- | -------------------------------- |
+| `WithOnRequest(fn)`    | Called before each API call      |
+| `WithOnResponse(fn)`   | Called after each API call       |
 | `WithOnStepFinish(fn)` | Called after each tool loop step |
-| `WithOnToolCall(fn)` | Called after each tool execution |
+| `WithOnToolCall(fn)`   | Called after each tool execution |
 
 ### Structured Output Options
 
-| Option | Description |
-|--------|-------------|
-| `WithExplicitSchema(s)` | Override auto-generated JSON Schema |
-| `WithSchemaName(n)` | Schema name for provider (default "response") |
+| Option                  | Description                                   |
+| ----------------------- | --------------------------------------------- |
+| `WithExplicitSchema(s)` | Override auto-generated JSON Schema           |
+| `WithSchemaName(n)`     | Schema name for provider (default "response") |
 
 ### Embedding Options
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `WithMaxParallelCalls(n)` | Batch parallelism | 4 |
-| `WithEmbeddingProviderOptions(m)` | Embedding provider params | - |
+| Option                            | Description               | Default |
+| --------------------------------- | ------------------------- | ------- |
+| `WithMaxParallelCalls(n)`         | Batch parallelism         | 4       |
+| `WithEmbeddingProviderOptions(m)` | Embedding provider params | -       |
 
 ### Image Options
 
-| Option | Description |
-|--------|-------------|
-| `WithImagePrompt(s)` | Text description |
-| `WithImageCount(n)` | Number of images |
-| `WithImageSize(s)` | Dimensions (e.g., "1024x1024") |
-| `WithAspectRatio(s)` | Aspect ratio (e.g., "16:9") |
-| `WithImageMaxRetries(n)` | Retries on 429/5xx |
-| `WithImageTimeout(d)` | Overall timeout |
-| `WithImageProviderOptions(m)` | Image provider params |
+| Option                        | Description                    |
+| ----------------------------- | ------------------------------ |
+| `WithImagePrompt(s)`          | Text description               |
+| `WithImageCount(n)`           | Number of images               |
+| `WithImageSize(s)`            | Dimensions (e.g., "1024x1024") |
+| `WithAspectRatio(s)`          | Aspect ratio (e.g., "16:9")    |
+| `WithImageMaxRetries(n)`      | Retries on 429/5xx             |
+| `WithImageTimeout(d)`         | Overall timeout                |
+| `WithImageProviderOptions(m)` | Image provider params          |
 
 ## Error Handling
 
@@ -484,13 +549,13 @@ if err != nil {
 
 Providers expose built-in tools that the model can invoke server-side. GoAI supports 20 provider-defined tools across 5 providers:
 
-| Provider | Tools | Import |
-|----------|-------|--------|
+| Provider  | Tools                                                                                                                                                                  | Import               |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
 | Anthropic | `Computer`, `Computer_20251124`, `Bash`, `TextEditor`, `TextEditor_20250728`, `WebSearch`, `WebSearch_20260209`, `WebFetch`, `CodeExecution`, `CodeExecution_20250825` | `provider/anthropic` |
-| OpenAI | `WebSearch`, `CodeInterpreter`, `FileSearch`, `ImageGeneration` | `provider/openai` |
-| Google | `GoogleSearch`, `URLContext`, `CodeExecution` | `provider/google` |
-| xAI | `WebSearch`, `XSearch` | `provider/xai` |
-| Groq | `BrowserSearch` | `provider/groq` |
+| OpenAI    | `WebSearch`, `CodeInterpreter`, `FileSearch`, `ImageGeneration`                                                                                                        | `provider/openai`    |
+| Google    | `GoogleSearch`, `URLContext`, `CodeExecution`                                                                                                                          | `provider/google`    |
+| xAI       | `WebSearch`, `XSearch`                                                                                                                                                 | `provider/xai`       |
+| Groq      | `BrowserSearch`                                                                                                                                                        | `provider/groq`      |
 
 All tools follow the same pattern: create a definition with `<provider>.Tools.ToolName()` (e.g., `openai.Tools`, `anthropic.Tools`), then pass it as a `goai.Tool`:
 
@@ -619,6 +684,13 @@ See the [examples/](examples/) directory:
 - [google-code-execution](examples/google-code-execution/) - Google Gemini code execution tool
 - [file-search](examples/file-search/) - OpenAI file search tool
 - [image-generation](examples/image-generation/) - OpenAI image generation via Responses API
+- [mcp-tools](examples/mcp-tools/) - MCP tools with GoAI LLM integration
+- [mcp-filesystem](examples/mcp-filesystem/) - Filesystem MCP server via stdio
+- [mcp-github](examples/mcp-github/) - GitHub MCP server via stdio
+- [mcp-playwright](examples/mcp-playwright/) - Playwright MCP server for browser automation
+- [mcp-remote](examples/mcp-remote/) - MCP over Streamable HTTP transport
+- [mcp-sse](examples/mcp-sse/) - MCP over legacy SSE transport
+- [mcp-local](examples/mcp-local/) - MCP client basics (no LLM needed)
 
 ## Project Structure
 
