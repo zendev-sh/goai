@@ -320,10 +320,10 @@ result, err := goai.GenerateText(ctx, model, goai.WithPrompt("Hello"))
 
 | Provider   | Chat                           | Embed                | Image         | Auth                                        | E2E  | Import                |
 | ---------- | ------------------------------ | -------------------- | ------------- | ------------------------------------------- | ---- | --------------------- |
-| OpenAI     | `gpt-4o`, `o3`, `codex-*`      | `text-embedding-3-*` | `gpt-image-1` | `OPENAI_API_KEY`, TokenSource               | Full | `provider/openai`     |
-| Anthropic  | `claude-*`                     | -                    | -             | `ANTHROPIC_API_KEY`, TokenSource            | Full | `provider/anthropic`  |
-| Google     | `gemini-*`                     | `text-embedding-004` | `imagen-*`    | `GOOGLE_GENERATIVE_AI_API_KEY`, TokenSource | Full | `provider/google`     |
-| Bedrock    | `anthropic.*`, `meta.*`        | -                    | -             | AWS keys, bearer token                      | Full | `provider/bedrock`    |
+| OpenAI     | `gpt-4o`, `o3`, `codex-*`      | `text-embedding-3-*` | `gpt-image-1` | `OPENAI_API_KEY`, `OPENAI_BASE_URL`         | Full | `provider/openai`     |
+| Anthropic  | `claude-*`                     | -                    | -             | `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`   | Full | `provider/anthropic`  |
+| Google     | `gemini-*`                     | `text-embedding-004` | `imagen-*`    | `GEMINI_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` | Full | `provider/google`     |
+| Bedrock    | `anthropic.*`, `meta.*`        | -                    | -             | AWS keys, `AWS_BEARER_TOKEN_BEDROCK`, `AWS_BEDROCK_BASE_URL` | Full | `provider/bedrock`    |
 | Vertex     | `gemini-*`                     | `text-embedding-004` | `imagen-*`    | TokenSource, ADC                            | Unit | `provider/vertex`     |
 | Azure      | `gpt-4o`, `claude-*`           | -                    | via Azure     | `AZURE_OPENAI_API_KEY`, TokenSource         | Full | `provider/azure`      |
 | OpenRouter | various                        | -                    | -             | `OPENROUTER_API_KEY`, TokenSource           | Unit | `provider/openrouter` |
@@ -539,11 +539,21 @@ if err != nil {
 			// 429 rate limit, 503 - already retried MaxRetries times
 		}
 		fmt.Printf("API error %d: %s\n", apiErr.StatusCode, apiErr.Message)
+		// apiErr.ResponseBody and apiErr.ResponseHeaders available for debugging
 	default:
 		// Network error, context cancelled, etc.
 	}
 }
 ```
+
+Error types:
+
+| Type | Fields | When |
+|------|--------|------|
+| `APIError` | `StatusCode`, `Message`, `IsRetryable`, `ResponseBody`, `ResponseHeaders` | Non-2xx API responses |
+| `ContextOverflowError` | `Message`, `ResponseBody` | Prompt exceeds model context window |
+
+Retry behavior: automatic exponential backoff on 429/5xx. Respects `Retry-After` header. OpenAI 404 treated as retryable (model propagation delay).
 
 ## Provider-Defined Tools
 
