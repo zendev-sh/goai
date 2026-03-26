@@ -1444,14 +1444,12 @@ func TestListResources_UnmarshalError(t *testing.T) {
 
 func TestInitialize_SendNotificationError(t *testing.T) {
 	// Test the error path when sending the initialized notification fails.
-	callCount := 0
 	mt := newMockTransport()
 	mt.sendFunc = func(ctx context.Context, msg JSONRPCMessage) error {
 		mt.mu.Lock()
 		onMsg := mt.onMessage
 		mt.mu.Unlock()
 
-		callCount++
 		if msg.Method == "initialize" && onMsg != nil {
 			result := InitializeResult{
 				ProtocolVersion: DefaultProtocolVersion,
