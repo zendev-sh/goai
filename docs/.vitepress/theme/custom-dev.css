@@ -1,0 +1,396 @@
+/* ============================================================
+   GoAI Docs - "Dev Raw" Theme Variant
+   Clean. Flat. Monospace accents. Zero radius. No decoration.
+
+   Scoped under [data-theme-variant="dev"] on <html>.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+/* ============================================================
+   VARIABLES
+   ============================================================ */
+
+[data-theme-variant="dev"] {
+  --vp-c-brand-1: #111;
+  --vp-c-brand-2: #333;
+  --vp-c-brand-3: #555;
+  --vp-c-brand-soft: rgba(0, 0, 0, 0.04);
+  --vp-font-family-base: 'Space Grotesk', system-ui, sans-serif !important;
+  --vp-font-family-mono: 'IBM Plex Mono', 'SF Mono', monospace !important;
+  --vp-layout-max-width: 1200px;
+  --vp-c-bg: #fcfcfc;
+  --vp-c-bg-alt: #f3f3f3;
+  --vp-c-bg-soft: #ededed;
+  --vp-c-bg-elv: #fcfcfc;
+  --vp-c-text-1: #111;
+  --vp-c-text-2: #555;
+  --vp-c-text-3: #999;
+  --vp-c-divider: #e2e2e2;
+  --vp-sidebar-bg-color: #fcfcfc;
+  --vp-code-color: #111;
+  --vp-code-bg: #f0f0f0;
+  --vp-code-block-bg: #f7f7f7;
+  --vp-home-hero-name-color: #111;
+  --vp-home-hero-image-background-image: none;
+  --vp-home-hero-image-filter: none;
+  --raw-accent: #0550ae;
+  --raw-border: #d4d4d4;
+  --raw-border-hover: #999;
+}
+
+[data-theme-variant="dev"].dark,
+.dark[data-theme-variant="dev"] {
+  --vp-c-brand-1: #e0e0e0;
+  --vp-c-brand-2: #ccc;
+  --vp-c-brand-3: #aaa;
+  --vp-c-brand-soft: rgba(255, 255, 255, 0.04);
+  --vp-c-bg: #0a0a0a;
+  --vp-c-bg-alt: #141414;
+  --vp-c-bg-soft: #1e1e1e;
+  --vp-c-bg-elv: #0e0e0e;
+  --vp-c-text-1: #e0e0e0;
+  --vp-c-text-2: #8a8a8a;
+  --vp-c-text-3: #555;
+  --vp-c-divider: #222;
+  --vp-sidebar-bg-color: #0a0a0a;
+  --vp-code-color: #e0e0e0;
+  --vp-code-bg: #1a1a1a;
+  --vp-code-block-bg: #111;
+  --vp-home-hero-name-color: #e0e0e0;
+  --raw-accent: #6cb6ff;
+  --raw-border: #2a2a2a;
+  --raw-border-hover: #444;
+}
+
+/* ============================================================
+   GLOBAL - zero radius
+   ============================================================ */
+
+[data-theme-variant="dev"] *:not(.VPSwitch):not(.VPSwitch *) {
+  border-radius: 0 !important;
+}
+
+/* ============================================================
+   NAVBAR - solid bg, no blur, mono brand
+   ============================================================ */
+
+[data-theme-variant="dev"] .VPNav {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: var(--vp-c-bg) !important;
+}
+
+[data-theme-variant="dev"] .VPNavBarTitle .title {
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-weight: 700;
+  font-size: 0.88rem;
+}
+
+[data-theme-variant="dev"] .VPNavBarTitle img,
+[data-theme-variant="dev"] .VPNavBarTitle .logo {
+  display: none !important;
+}
+
+[data-theme-variant="dev"] .VPNavBarMenu .VPNavBarMenuLink {
+  font-family: 'Space Grotesk', system-ui, sans-serif !important;
+  font-weight: 500;
+  font-size: 0.85rem;
+}
+
+/* Flyout links */
+[data-theme-variant="dev"] .VPMenuLink .link {
+  font-family: 'Space Grotesk', system-ui, sans-serif !important;
+  font-size: 0.84rem;
+}
+
+/* ============================================================
+   SIDEBAR - Space Grotesk body, mono section labels only
+   ============================================================ */
+
+[data-theme-variant="dev"] .VPSidebarItem.level-0 > .item > .text {
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-weight: 600;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--vp-c-text-3);
+}
+
+[data-theme-variant="dev"] .VPSidebarItem.level-1 > .item > .link > .text,
+[data-theme-variant="dev"] .VPSidebarItem.level-2 > .item > .link > .text {
+  font-family: 'Space Grotesk', system-ui, sans-serif !important;
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
+[data-theme-variant="dev"] .VPSidebarItem.level-1 > .item > .text {
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-weight: 600;
+  font-size: 0.64rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vp-c-text-3);
+}
+
+[data-theme-variant="dev"] .VPSidebarItem.is-active > .item > .link > .text {
+  font-weight: 600;
+  color: var(--vp-c-text-1);
+}
+
+/* ============================================================
+   DOC HEADINGS
+   ============================================================ */
+
+[data-theme-variant="dev"] .vp-doc h1,
+[data-theme-variant="dev"] .vp-doc h2,
+[data-theme-variant="dev"] .vp-doc h3,
+[data-theme-variant="dev"] .vp-doc h4 {
+  font-family: 'Space Grotesk', system-ui, sans-serif !important;
+}
+
+[data-theme-variant="dev"] .vp-doc h1 {
+  font-weight: 700;
+  font-size: 1.65rem;
+  letter-spacing: -0.03em;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--vp-c-text-1);
+  margin-bottom: 1.25rem;
+}
+
+[data-theme-variant="dev"] .vp-doc h2 {
+  font-weight: 600;
+  font-size: 1.2rem;
+  letter-spacing: -0.02em;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--vp-c-divider);
+}
+
+[data-theme-variant="dev"] .vp-doc h3 {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+/* ============================================================
+   DOC BODY TEXT
+   ============================================================ */
+
+[data-theme-variant="dev"] .vp-doc p,
+[data-theme-variant="dev"] .vp-doc li {
+  font-family: 'Space Grotesk', system-ui, sans-serif !important;
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+
+/* ============================================================
+   INLINE CODE + CODE BLOCKS
+   ============================================================ */
+
+[data-theme-variant="dev"] .vp-doc :not(pre) > code {
+  font-family: var(--vp-font-family-mono) !important;
+  font-size: 0.82em;
+  font-weight: 500;
+  padding: 1px 5px;
+  border: 1px solid var(--raw-border) !important;
+  background: var(--vp-code-bg) !important;
+}
+
+[data-theme-variant="dev"] .vp-doc div[class*='language-'] {
+  border: 1px solid var(--vp-c-divider) !important;
+  box-shadow: none !important;
+}
+
+[data-theme-variant="dev"] .vp-doc div[class*='language-'] code {
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+[data-theme-variant="dev"] .vp-doc div[class*='language-'] > span.lang {
+  font-family: var(--vp-font-family-mono) !important;
+  font-weight: 600;
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+}
+
+/* ============================================================
+   TABLES
+   ============================================================ */
+
+[data-theme-variant="dev"] .vp-doc table {
+  font-size: 0.84rem;
+}
+
+[data-theme-variant="dev"] .vp-doc th {
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-weight: 600;
+  font-size: 0.74rem;
+  text-transform: none !important;
+}
+
+[data-theme-variant="dev"] .vp-doc td {
+  font-size: 0.84rem;
+}
+
+/* ============================================================
+   LINKS
+   ============================================================ */
+
+[data-theme-variant="dev"] .vp-doc a {
+  color: var(--raw-accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--raw-accent) 30%, transparent);
+  text-underline-offset: 3px;
+  background-image: none !important;
+  background-size: unset !important;
+  transition: text-decoration-color 0.12s ease;
+}
+
+[data-theme-variant="dev"] .vp-doc a:hover {
+  text-decoration-color: var(--raw-accent);
+  background-size: unset !important;
+}
+
+/* ============================================================
+   CUSTOM BLOCKS - left border only
+   ============================================================ */
+
+[data-theme-variant="dev"] .vp-doc .custom-block {
+  border-left: 3px solid var(--vp-c-text-3);
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+  background: var(--vp-c-bg-alt);
+}
+
+[data-theme-variant="dev"] .vp-doc .custom-block.tip {
+  border-left-color: var(--vp-c-text-1);
+}
+
+[data-theme-variant="dev"] .vp-doc .custom-block .custom-block-title {
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-weight: 600;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ============================================================
+   RIGHT ASIDE - "On this page"
+   ============================================================ */
+
+[data-theme-variant="dev"] .VPDocAsideOutline .outline-title {
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+[data-theme-variant="dev"] .VPDocAsideOutline .outline-link {
+  font-family: 'Space Grotesk', system-ui, sans-serif !important;
+  font-size: 0.78rem;
+}
+
+/* ============================================================
+   PREV/NEXT + EDIT LINK
+   ============================================================ */
+
+[data-theme-variant="dev"] .VPDocFooter .pager-link .desc {
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+[data-theme-variant="dev"] .VPDocFooter .pager-link .title {
+  font-family: 'Space Grotesk', system-ui, sans-serif !important;
+  font-weight: 600;
+}
+
+[data-theme-variant="dev"] .VPDocFooter .edit-link-button {
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-size: 0.76rem;
+}
+
+/* ============================================================
+   SEARCH - keep VitePress default position, just restyle
+   ============================================================ */
+
+[data-theme-variant="dev"] .VPNavBarSearchButton {
+  font-family: 'IBM Plex Mono', monospace !important;
+}
+
+[data-theme-variant="dev"] .VPLocalSearchBox .search-input {
+  font-family: 'IBM Plex Mono', monospace !important;
+}
+
+/* ============================================================
+   FOOTER
+   ============================================================ */
+
+[data-theme-variant="dev"] .VPFooter .message,
+[data-theme-variant="dev"] .VPFooter .copyright {
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-size: 0.72rem;
+}
+
+/* ============================================================
+   SCROLLBAR
+   ============================================================ */
+
+[data-theme-variant="dev"] ::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+[data-theme-variant="dev"] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+[data-theme-variant="dev"] ::-webkit-scrollbar-thumb {
+  background: var(--raw-border);
+}
+
+/* ============================================================
+   HOME PAGE OVERRIDES
+   ============================================================ */
+
+[data-theme-variant="dev"] .VPHome .VPHero { display: none !important; }
+[data-theme-variant="dev"] .VPHome .VPFeatures { display: none !important; }
+
+[data-theme-variant="dev"] .VPHome .name,
+[data-theme-variant="dev"] .VPHome .text {
+  font-family: 'Space Grotesk', system-ui, sans-serif !important;
+}
+[data-theme-variant="dev"] .VPHome .tagline {
+  font-family: 'IBM Plex Mono', monospace !important;
+}
+
+/* Craft home components - hide when in dev */
+[data-theme-variant="dev"] .install-cmd {
+  border-color: var(--raw-border) !important;
+}
+[data-theme-variant="dev"] .install-cmd code {
+  font-family: var(--vp-font-family-mono) !important;
+  color: var(--vp-c-text-1) !important;
+}
+[data-theme-variant="dev"] .copy-hint {
+  font-family: var(--vp-font-family-mono) !important;
+}
+[data-theme-variant="dev"] .home-example h2 {
+  font-family: 'IBM Plex Mono', monospace !important;
+}
+[data-theme-variant="dev"] .code-wrapper {
+  border-color: var(--raw-border) !important;
+  box-shadow: none !important;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+
+@media (max-width: 768px) {
+  [data-theme-variant="dev"] .vp-doc h1 {
+    font-size: 1.4rem;
+  }
+}
