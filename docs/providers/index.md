@@ -1,11 +1,11 @@
 ---
 title: Supported Providers
-description: "GoAI SDK supports 20+ LLM providers: OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM and more."
+description: "GoAI SDK supports 21+ LLM providers: OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, MiniMax, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM and more."
 ---
 
 # Providers
 
-GoAI SDK supports 20+ LLM providers with a single unified API. All providers auto-resolve credentials from environment variables. No explicit API key configuration needed for standard deployments.
+GoAI SDK supports 21+ LLM providers with a single unified API. All providers auto-resolve credentials from environment variables. No explicit API key configuration needed for standard deployments.
 
 All 7 core functions — `GenerateText`, `StreamText`, `GenerateObject[T]`, `StreamObject[T]`, `Embed`, `EmbedMany`, and `GenerateImage` — work identically across all providers.
 
@@ -31,6 +31,7 @@ Dedicated implementations with extended API support.
 | [xAI (Grok)](xai.md)    | ✅ `grok-*`                             | —            | —     | 2 tools        | `XAI_API_KEY`      |
 | [Groq](groq.md)         | ✅ `llama-*`, `mixtral-*`               | —            | —     | 1 tool         | `GROQ_API_KEY`     |
 | [DeepSeek](deepseek.md) | ✅ `deepseek-chat`, `deepseek-reasoner` | —            | —     | —              | `DEEPSEEK_API_KEY` |
+| [MiniMax](minimax.md)   | ✅ `MiniMax-M2.7`, `MiniMax-M2.5`, `MiniMax-M2.1`, `MiniMax-M2` | — | — | — | `MINIMAX_API_KEY` |
 
 ## Tier 3
 

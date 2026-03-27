@@ -1,13 +1,13 @@
 ---
 layout: home
-title: GoAI SDK — Go SDK for AI Applications. One API, 20+ LLM Providers.
+title: GoAI SDK — Go SDK for AI Applications. One API, 21+ LLM Providers.
 titleTemplate: false
-description: "Open-source Go SDK for AI applications. One unified API for OpenAI, Anthropic, Google Gemini, AWS Bedrock, and 20+ LLM providers. Stdlib only."
+description: "Open-source Go SDK for AI applications. One unified API for OpenAI, Anthropic, Google Gemini, AWS Bedrock, and 21+ LLM providers. Stdlib only."
 
 hero:
   name: GoAI
   text: AI SDK, the Go way.
-  tagline: One unified API across 20+ providers. Streaming, structured output, MCP support, stdlib only.
+  tagline: One unified API across 21+ providers. Streaming, structured output, MCP support, stdlib only.
   image:
     src: /goai-gopher.png
     alt: GoAI Gopher
@@ -24,7 +24,7 @@ hero:
 
 ## What is GoAI SDK?
 
-GoAI SDK is an open-source Go library for building AI applications. It provides one unified API across 20+ LLM providers — OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM, and more.
+GoAI SDK is an open-source Go library for building AI applications. It provides one unified API across 21+ LLM providers — OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM, and more.
 
 Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomatically for Go with generics, interfaces, and channels.
 
@@ -43,7 +43,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomat
 
 ## Why GoAI?
 
-- **One API, 20+ providers** — switch providers by changing one line of code
+- **One API, 21+ providers** — switch providers by changing one line of code
 - **Stdlib only** — no external dependencies (except `golang.org/x/oauth2` for Vertex AI)
 - **Go-native design** — generics for type safety, channels for streaming, interfaces for extensibility
 - **24x faster cold start** than Vercel AI SDK (569μs vs 13.9ms)

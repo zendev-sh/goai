@@ -14,7 +14,7 @@ go test ./provider/openai/  # Test single package
 
 ## Architecture
 
-GoAI is a Go SDK for AI applications - one API across 20+ LLM providers. Inspired by Vercel AI SDK, adapted to Go idioms.
+GoAI is a Go SDK for AI applications - one API across 21+ LLM providers. Inspired by Vercel AI SDK, adapted to Go idioms.
 
 ```
 goai/

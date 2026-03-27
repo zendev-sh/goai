@@ -11,7 +11,7 @@
 - **Embed** / **EmbedMany** - Single and batch embeddings with auto-chunking + parallel execution
 - **GenerateImage** - Text-to-image generation (OpenAI DALL-E, Google Imagen, Azure, Vertex AI)
 
-### Providers (20+)
+### Providers (21+)
 
 | Category        | Providers                                           |
 | --------------- | --------------------------------------------------- |

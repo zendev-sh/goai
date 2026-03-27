@@ -5,7 +5,7 @@
 
 ## Overview
 
-GoAI is a Go SDK for AI applications. One unified API across 20+ LLM providers. Inspired by the Vercel AI SDK, adapted to Go idioms (generics, interfaces, channels).
+GoAI is a Go SDK for AI applications. One unified API across 21+ LLM providers. Inspired by the Vercel AI SDK, adapted to Go idioms (generics, interfaces, channels).
 
 - **Package**: `github.com/zendev-sh/goai`
 - **Go version**: 1.25+

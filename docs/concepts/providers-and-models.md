@@ -1,6 +1,6 @@
 ---
 title: Providers and Models
-description: "Understand GoAI's provider architecture, model interfaces, capabilities system, and the full list of 20+ supported LLM providers."
+description: "Understand GoAI's provider architecture, model interfaces, capabilities system, and the full list of 21+ supported LLM providers."
 ---
 
 # Providers and Models

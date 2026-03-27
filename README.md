@@ -5,7 +5,7 @@
 <h1 align="center">GoAI</h1>
 
 <p align="center"><em>AI SDK, the Go way.</em></p>
-<p align="center">Go SDK for building AI applications. One SDK, 20+ providers, MCP support.</p>
+<p align="center">Go SDK for building AI applications. One SDK, 21+ providers, MCP support.</p>
 
 <p align="center">
   <a href="bench/RESULTS.md"><img src="https://img.shields.io/badge/streaming-1.1x_faster-brightgreen" alt="Streaming"></a>
@@ -29,6 +29,8 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 
 ## What's New
 
+> **v0.5.1**  - MiniMax provider: M2.7, M2.5, M2.1, M2 via Anthropic-compatible API. Thinking/reasoning, tool calling, streaming. [Docs →](https://goai.sh/providers/minimax)
+>
 > **v0.5.0**  - MCP (Model Context Protocol) client. Connect to any MCP server with 3 transports (stdio, HTTP, SSE). Auto-convert MCP tools for use with `GenerateText`. [Docs →](https://goai.sh/concepts/mcp)
 >
 > **v0.4.4**  - Provider-defined tools: 20 tools across Anthropic, OpenAI, Google, Groq, xAI. Computer use, web search, code execution. [Changelog →](https://github.com/zendev-sh/goai/releases)
@@ -36,7 +38,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 ## Features
 
 - **7 core functions**: `GenerateText`, `StreamText`, `GenerateObject[T]`, `StreamObject[T]`, `Embed`, `EmbedMany`, `GenerateImage`
-- **20+ providers**: OpenAI, Anthropic, Google, Bedrock, Azure, Vertex, Mistral, xAI, Groq, Cohere, DeepSeek, Fireworks, Together, DeepInfra, OpenRouter, Perplexity, Cerebras, Ollama, vLLM, + generic OpenAI-compatible
+- **21+ providers**: OpenAI, Anthropic, Google, Bedrock, Azure, Vertex, Mistral, xAI, Groq, Cohere, DeepSeek, MiniMax, Fireworks, Together, DeepInfra, OpenRouter, Perplexity, Cerebras, Ollama, vLLM, + generic OpenAI-compatible
 - **Auto tool loop**: Define tools with `Execute` handlers, set `MaxSteps`, GoAI handles the loop
 - **Structured output**: `GenerateObject[T]` auto-generates JSON Schema from Go types via reflection
 - **Streaming**: Real-time text and partial object streaming via channels
@@ -332,6 +334,7 @@ result, err := goai.GenerateText(ctx, model, goai.WithPrompt("Hello"))
 | xAI        | `grok-*`                       | -                    | -             | `XAI_API_KEY`, TokenSource                  | Unit | `provider/xai`        |
 | Cohere     | `command-r-*`                  | `embed-*`            | -             | `COHERE_API_KEY`, TokenSource               | Unit | `provider/cohere`     |
 | DeepSeek   | `deepseek-*`                   | -                    | -             | `DEEPSEEK_API_KEY`, TokenSource             | Unit | `provider/deepseek`   |
+| MiniMax    | `MiniMax-M2.7`, `MiniMax-M2.5`, `MiniMax-M2.1`, `MiniMax-M2` | - | -  | `MINIMAX_API_KEY`, `MINIMAX_BASE_URL`, TokenSource | Full | `provider/minimax`    |
 | Fireworks  | various                        | -                    | -             | `FIREWORKS_API_KEY`, TokenSource            | Unit | `provider/fireworks`  |
 | Together   | various                        | -                    | -             | `TOGETHER_AI_API_KEY`, TokenSource          | Unit | `provider/together`   |
 | DeepInfra  | various                        | -                    | -             | `DEEPINFRA_API_KEY`, TokenSource            | Unit | `provider/deepinfra`  |
@@ -346,9 +349,9 @@ result, err := goai.GenerateText(ctx, model, goai.WithPrompt("Hello"))
 ### Tested Models
 
 <details>
-<summary><strong>E2E tested - 99 models across 6 providers</strong> (real API calls, click to expand)</summary>
+<summary><strong>E2E tested - 103 models across 7 providers</strong> (real API calls, click to expand)</summary>
 
-Last run: 2026-03-15. 99 models tested (generate + stream).
+Last run: 2026-03-27. 103 models tested (generate + stream).
 
 | Provider     | Models E2E tested (generate + stream)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -358,6 +361,7 @@ Last run: 2026-03-15. 99 models tested (generate + stream).
 | Groq (2)     | `llama-3.1-8b-instant`, `llama-3.3-70b-versatile`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | Mistral (5)  | `mistral-small-latest`, `mistral-large-latest`, `devstral-small-2507`, `codestral-latest`, `magistral-medium-latest`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | Cerebras (1) | `llama3.1-8b`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| MiniMax (4)  | `MiniMax-M2.7`, `MiniMax-M2.5`, `MiniMax-M2.1`, `MiniMax-M2` (generate + stream + tools + thinking)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 </details>
 
@@ -717,6 +721,7 @@ goai/                       # Core SDK
 │   ├── vertex/             # Google Vertex AI (OpenAI-compat)
 │   ├── azure/              # Azure OpenAI
 │   ├── cohere/             # Cohere (Chat v2 + Embed)
+│   ├── minimax/            # MiniMax (Anthropic-compatible API)
 │   ├── compat/             # Generic OpenAI-compatible
 │   └── ...                 # 12 more OpenAI-compatible providers
 ├── internal/

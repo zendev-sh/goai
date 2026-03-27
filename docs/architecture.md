@@ -5,7 +5,7 @@ description: "GoAI SDK architecture overview — layers, data flow, provider sys
 
 # Architecture
 
-GoAI is a Go SDK that provides one unified API across 20 LLM providers. This document describes the overall architecture, key layers, data flow, and design decisions.
+GoAI is a Go SDK that provides one unified API across 21+ LLM providers. This document describes the overall architecture, key layers, data flow, and design decisions.
 
 ## High-Level Overview
 
@@ -306,7 +306,7 @@ HTTP error response
   │
   ├─ goai.ParseHTTPErrorWithHeaders(providerID, status, body, headers)
   │   ├─ extractErrorMessage() — tries 3 JSON paths ({error.message}, {message}, {error} as string)
-  │   ├─ IsOverflow(message) — matches 14 regex patterns across 20 providers
+  │   ├─ IsOverflow(message) — matches 14 regex patterns across 21+ providers
   │   │   └─ return *ContextOverflowError
   │   └─ return *APIError{StatusCode, IsRetryable, ResponseHeaders}
   │
@@ -358,7 +358,7 @@ Key architectural decisions that shape the SDK:
 
 - **OpenAI dual API routing**: All models default to Responses API (matching Vercel v2.0.89+). Chat Completions available via `useResponsesAPI: false` in ProviderOptions. `isReasoningModel` is used only for capability detection (temperature, reasoning), not routing. Separate `responses.go` handles different SSE format.
 - **Token caching without blocking**: `CachedTokenSource` releases mutex before network calls, accepting brief double‑fetch to avoid goroutine deadlock.
-- **Cross‑provider error pattern matching**: 14 regex patterns detect "context overflow" across 20 providers' inconsistent error messages, enabling uniform `ContextOverflowError`.
+- **Cross‑provider error pattern matching**: 14 regex patterns detect "context overflow" across 21+ providers' inconsistent error messages, enabling uniform `ContextOverflowError`.
 - **Bedrock AWS independence**: Manual SigV4 signing and EventStream binary protocol parsing avoid AWS SDK dependency.
 - **Provider‑defined tools scale**: 20 tools across 5 providers, each with options structs, version handling, and provider‑specific serialization (~1200 LOC).
 - **Structured output multi‑strategy**: Anthropic uses native `output_format` (Opus 4.1+, Sonnet 4.5+: claude‑opus‑4‑1, claude‑sonnet‑4‑5, claude‑opus‑4‑5, claude‑sonnet‑4‑6, claude‑opus‑4‑6) or tool trick (older models), adapting to varying provider capabilities.
