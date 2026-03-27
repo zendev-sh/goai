@@ -14,7 +14,7 @@ go test ./provider/openai/  # Test single package
 
 ## Architecture
 
-GoAI is a Go SDK for AI applications - one API across 20+ LLM providers. Inspired by Vercel AI SDK, adapted to Go idioms.
+GoAI is a Go SDK for AI applications - one API across 21+ LLM providers. Inspired by Vercel AI SDK, adapted to Go idioms.
 
 ```
 goai/
@@ -38,6 +38,7 @@ goai/
 │   ├── vertex/             # Vertex AI
 │   ├── azure/              # Azure OpenAI
 │   ├── cohere/             # Cohere (Chat v2 + Embed)
+│   ├── minimax/            # MiniMax (Anthropic-compat, delegates to anthropic/)
 │   ├── compat/             # Generic OpenAI-compatible
 │   └── <13 more>/          # OpenAI-compat via internal/openaicompat
 │   # tools.go files: anthropic/ (10), openai/ (4), google/ (3), xai/ (2), groq/ (1)
