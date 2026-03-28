@@ -306,7 +306,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 		}
 
 		// Model requested tool calls — execute them and continue.
-		toolMessages := executeTools(ctx, result.ToolCalls, toolMap, o.OnToolCall)
+		toolMessages := executeTools(ctx, result.ToolCalls, toolMap, step, o.OnToolCall)
 		params.Messages = appendToolRoundTrip(params.Messages, result, toolMessages)
 	}
 

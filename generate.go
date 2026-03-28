@@ -429,7 +429,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		}
 
 		// Execute tools and build continuation messages.
-		toolMessages := executeTools(ctx, result.ToolCalls, toolMap, o.OnToolCall)
+		toolMessages := executeTools(ctx, result.ToolCalls, toolMap, step, o.OnToolCall)
 
 		// Append assistant message with tool calls + tool result messages.
 		params.Messages = appendToolRoundTrip(params.Messages, result, toolMessages)
@@ -457,7 +457,7 @@ func buildToolMap(tools []Tool) map[string]Tool {
 }
 
 // executeTools runs each tool call and returns the tool result messages.
-func executeTools(ctx context.Context, calls []provider.ToolCall, toolMap map[string]Tool, onToolCall func(ToolCallInfo)) []provider.Message {
+func executeTools(ctx context.Context, calls []provider.ToolCall, toolMap map[string]Tool, step int, onToolCall func(ToolCallInfo)) []provider.Message {
 	var msgs []provider.Message
 	for _, tc := range calls {
 		if ctx.Err() != nil {
@@ -466,7 +466,7 @@ func executeTools(ctx context.Context, calls []provider.ToolCall, toolMap map[st
 		tool, ok := toolMap[tc.Name]
 		if !ok {
 			if onToolCall != nil {
-				onToolCall(ToolCallInfo{ToolName: tc.Name, Input: tc.Input, Error: ErrUnknownTool})
+				onToolCall(ToolCallInfo{ToolCallID: tc.ID, ToolName: tc.Name, Step: step, Input: tc.Input, Error: ErrUnknownTool})
 			}
 			msgs = append(msgs, ToolMessage(tc.ID, tc.Name, "error: unknown tool"))
 			continue
@@ -474,7 +474,7 @@ func executeTools(ctx context.Context, calls []provider.ToolCall, toolMap map[st
 		start := time.Now()
 		output, err := tool.Execute(ctx, tc.Input)
 		if onToolCall != nil {
-			onToolCall(ToolCallInfo{ToolName: tc.Name, Input: tc.Input, Output: output, Duration: time.Since(start), Error: err})
+			onToolCall(ToolCallInfo{ToolCallID: tc.ID, ToolName: tc.Name, Step: step, Input: tc.Input, Output: output, Duration: time.Since(start), Error: err})
 		}
 		if err != nil {
 			msgs = append(msgs, ToolMessage(tc.ID, tc.Name, "error: "+err.Error()))

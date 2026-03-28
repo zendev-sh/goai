@@ -142,8 +142,14 @@ func TestWithOnToolCall_Success(t *testing.T) {
 	if len(captured) != 1 {
 		t.Fatalf("OnToolCall called %d times, want 1", len(captured))
 	}
+	if captured[0].ToolCallID != "tc1" {
+		t.Errorf("ToolCallID = %q, want tc1", captured[0].ToolCallID)
+	}
 	if captured[0].ToolName != "read" {
 		t.Errorf("ToolName = %q, want read", captured[0].ToolName)
+	}
+	if captured[0].Step != 1 {
+		t.Errorf("Step = %d, want 1", captured[0].Step)
 	}
 	if string(captured[0].Input) != `{"path":"a.txt"}` {
 		t.Errorf("Input = %s, want {\"path\":\"a.txt\"}", captured[0].Input)

@@ -1758,7 +1758,7 @@ func TestExecuteTools_ContextCancelled(t *testing.T) {
 		{ID: "tc2", Name: "slow", Input: json.RawMessage(`{}`)},
 	}
 
-	msgs := executeTools(ctx, calls, toolMap, nil)
+	msgs := executeTools(ctx, calls, toolMap, 1, nil)
 	// With a cancelled context, executeTools should return early (0 or fewer results).
 	if len(msgs) >= 2 {
 		t.Errorf("expected fewer than 2 messages (ctx cancelled), got %d", len(msgs))

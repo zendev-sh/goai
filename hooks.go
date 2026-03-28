@@ -42,8 +42,14 @@ type ResponseInfo struct {
 
 // ToolCallInfo is passed to the OnToolCall hook after a tool executes.
 type ToolCallInfo struct {
+	// ToolCallID is the provider-assigned identifier for this tool call.
+	ToolCallID string
+
 	// ToolName is the name of the tool that was called.
 	ToolName string
+
+	// Step is the 1-based index of the generation step in which this tool was called.
+	Step int
 
 	// Input is the raw JSON arguments passed to the tool.
 	Input json.RawMessage
