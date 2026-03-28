@@ -18,7 +18,7 @@ type ObjectResult[T any] struct {
 	// Object is the parsed structured output.
 	Object T
 
-	// Usage tracks token consumption.
+	// Usage tracks total token consumption across all steps.
 	Usage provider.Usage
 
 	// FinishReason indicates why generation stopped.
@@ -29,6 +29,10 @@ type ObjectResult[T any] struct {
 
 	// ProviderMetadata contains provider-specific response data.
 	ProviderMetadata map[string]map[string]any
+
+	// Steps contains results from each generation step (for multi-step tool loops).
+	// The final step is always the structured output step.
+	Steps []StepResult
 }
 
 // ObjectStream is a streaming structured output response.
@@ -188,6 +192,11 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 
 // GenerateObject performs a non-streaming structured output generation.
 // The schema is auto-generated from T, or can be overridden with WithExplicitSchema.
+//
+// When tools with Execute functions are provided and MaxSteps > 1, GenerateObject
+// runs a tool loop first (up to MaxSteps-1 intermediate steps), then performs a
+// final structured-output generation. This enables tool-using agents that return
+// typed results: gather information via tools, then produce structured output.
 func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, opts ...Option) (*ObjectResult[T], error) {
 	if model == nil {
 		return nil, errors.New("goai: model must not be nil")
@@ -210,10 +219,78 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 	schemaName := cmp.Or(o.SchemaName, "response")
 
 	params := buildParams(o)
+	toolMap := buildToolMap(o.Tools)
+
+	var steps []StepResult
+	var totalUsage provider.Usage
+
+	// Tool loop: run intermediate steps (without ResponseFormat) until the model
+	// stops calling tools or we reach MaxSteps-1. The final step always requests
+	// structured output, so MaxSteps=1 (the default) skips the loop entirely.
+	for step := 1; step < o.MaxSteps && len(toolMap) > 0; step++ {
+		if o.OnRequest != nil {
+			o.OnRequest(RequestInfo{
+				Model:        model.ModelID(),
+				MessageCount: len(params.Messages),
+				ToolCount:    len(params.Tools),
+				Timestamp:    time.Now(),
+			})
+		}
+
+		start := time.Now()
+		result, err := withRetry(ctx, o.MaxRetries, func() (*provider.GenerateResult, error) {
+			return model.DoGenerate(ctx, params)
+		})
+
+		if o.OnResponse != nil {
+			info := ResponseInfo{Latency: time.Since(start), Error: err}
+			if err == nil {
+				info.Usage = result.Usage
+				info.FinishReason = result.FinishReason
+			}
+			var apiErr *APIError
+			if errors.As(err, &apiErr) {
+				info.StatusCode = apiErr.StatusCode
+			}
+			o.OnResponse(info)
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		stepResult := StepResult{
+			Number:           step,
+			Text:             result.Text,
+			ToolCalls:        result.ToolCalls,
+			FinishReason:     result.FinishReason,
+			Usage:            result.Usage,
+			Response:         result.Response,
+			ProviderMetadata: result.ProviderMetadata,
+		}
+		steps = append(steps, stepResult)
+		totalUsage = addUsage(totalUsage, result.Usage)
+
+		if o.OnStepFinish != nil {
+			o.OnStepFinish(stepResult)
+		}
+
+		// Stop looping if no tool calls were requested.
+		if result.FinishReason != provider.FinishToolCalls || len(result.ToolCalls) == 0 {
+			break
+		}
+
+		toolMessages := executeTools(ctx, result.ToolCalls, toolMap, o.OnToolCall)
+		params.Messages = appendToolRoundTrip(params.Messages, result, toolMessages)
+	}
+
+	// Final step: structured output.
 	params.ResponseFormat = &provider.ResponseFormat{
 		Name:   schemaName,
 		Schema: schema,
 	}
+
+	finalStepNum := len(steps) + 1
 
 	if o.OnRequest != nil {
 		o.OnRequest(RequestInfo{
@@ -246,6 +323,22 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 		return nil, err
 	}
 
+	totalUsage = addUsage(totalUsage, result.Usage)
+
+	finalStep := StepResult{
+		Number:           finalStepNum,
+		Text:             result.Text,
+		FinishReason:     result.FinishReason,
+		Usage:            result.Usage,
+		Response:         result.Response,
+		ProviderMetadata: result.ProviderMetadata,
+	}
+	steps = append(steps, finalStep)
+
+	if o.OnStepFinish != nil {
+		o.OnStepFinish(finalStep)
+	}
+
 	// Parse the JSON response into T.
 	var obj T
 	text := result.Text
@@ -258,10 +351,11 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 
 	return &ObjectResult[T]{
 		Object:           obj,
-		Usage:            result.Usage,
+		Usage:            totalUsage,
 		FinishReason:     result.FinishReason,
 		Response:         result.Response,
 		ProviderMetadata: result.ProviderMetadata,
+		Steps:            steps,
 	}, nil
 }
 
