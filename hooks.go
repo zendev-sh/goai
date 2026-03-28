@@ -1,6 +1,7 @@
 package goai
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/zendev-sh/goai/provider"
@@ -44,8 +45,12 @@ type ToolCallInfo struct {
 	// ToolName is the name of the tool that was called.
 	ToolName string
 
-	// InputSize is the byte length of the tool input JSON.
-	InputSize int
+	// Input is the raw JSON arguments passed to the tool.
+	Input json.RawMessage
+
+	// Output is the string result returned by the tool.
+	// Empty if the tool returned an error or was not found.
+	Output string
 
 	// Duration is how long the tool execution took.
 	Duration time.Duration

@@ -145,8 +145,11 @@ func TestWithOnToolCall_Success(t *testing.T) {
 	if captured[0].ToolName != "read" {
 		t.Errorf("ToolName = %q, want read", captured[0].ToolName)
 	}
-	if captured[0].InputSize != len(`{"path":"a.txt"}`) {
-		t.Errorf("InputSize = %d", captured[0].InputSize)
+	if string(captured[0].Input) != `{"path":"a.txt"}` {
+		t.Errorf("Input = %s, want {\"path\":\"a.txt\"}", captured[0].Input)
+	}
+	if captured[0].Output != "file contents" {
+		t.Errorf("Output = %q, want \"file contents\"", captured[0].Output)
 	}
 	if captured[0].Duration < 0 {
 		t.Error("Duration should be >= 0")

@@ -466,7 +466,7 @@ func executeTools(ctx context.Context, calls []provider.ToolCall, toolMap map[st
 		tool, ok := toolMap[tc.Name]
 		if !ok {
 			if onToolCall != nil {
-				onToolCall(ToolCallInfo{ToolName: tc.Name, InputSize: len(tc.Input), Error: ErrUnknownTool})
+				onToolCall(ToolCallInfo{ToolName: tc.Name, Input: tc.Input, Error: ErrUnknownTool})
 			}
 			msgs = append(msgs, ToolMessage(tc.ID, tc.Name, "error: unknown tool"))
 			continue
@@ -474,7 +474,7 @@ func executeTools(ctx context.Context, calls []provider.ToolCall, toolMap map[st
 		start := time.Now()
 		output, err := tool.Execute(ctx, tc.Input)
 		if onToolCall != nil {
-			onToolCall(ToolCallInfo{ToolName: tc.Name, InputSize: len(tc.Input), Duration: time.Since(start), Error: err})
+			onToolCall(ToolCallInfo{ToolName: tc.Name, Input: tc.Input, Output: output, Duration: time.Since(start), Error: err})
 		}
 		if err != nil {
 			msgs = append(msgs, ToolMessage(tc.ID, tc.Name, "error: "+err.Error()))
