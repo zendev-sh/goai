@@ -1,6 +1,6 @@
 # GoAI Roadmap
 
-> Last updated: 2026-03-26
+> Last updated: 2026-03-28
 
 ## v0.4.4
 
@@ -11,14 +11,14 @@
 - **Embed** / **EmbedMany** - Single and batch embeddings with auto-chunking + parallel execution
 - **GenerateImage** - Text-to-image generation (OpenAI DALL-E, Google Imagen, Azure, Vertex AI)
 
-### Providers (21+)
+### Providers (22+)
 
 | Category        | Providers                                           |
 | --------------- | --------------------------------------------------- |
 | Flagship        | OpenAI, Anthropic, Google (Gemini + Imagen)         |
 | Cloud platforms | AWS Bedrock (SigV4), Azure OpenAI, Google Vertex AI |
 | Fast inference  | Groq, Cerebras, Fireworks, Together, DeepInfra      |
-| Specialized     | Mistral, xAI, DeepSeek, Cohere, Perplexity          |
+| Specialized     | Mistral, xAI, DeepSeek, Cohere, Perplexity, MiniMax |
 | Aggregators     | OpenRouter                                          |
 | Local           | Ollama, vLLM                                        |
 | Bring your own  | `compat.Chat()` for any OpenAI-compatible endpoint  |
@@ -42,16 +42,16 @@
 
 ---
 
-## v0.5.0 - Current release
+## v0.5.1 - Current release
 
-| Feature           | Description                                                                           |
-| ----------------- | ------------------------------------------------------------------------------------- |
-| **MCP client** ✓  | `mcp/` package: 3 transports (stdio, HTTP, SSE), tools/prompts/resources, ConvertTools for GoAI integration, 7 examples |
-| Output.array      | Stream validated array elements incrementally                                         |
-| Output.choice     | Convenience enum selection wrapper                                                    |
-| `goai/otel`       | Pre-built OpenTelemetry integration (optional import)                                 |
-| xAI Responses API | Enable xAI provider-defined tools (web_search, x_search) via `/v1/responses` endpoint |
-| New providers     | Based on community requests                                                           |
+| Feature        | Description                                                                        |
+| -------------- | ---------------------------------------------------------------------------------- |
+| **MCP client** | 3 transports (stdio, HTTP, SSE), tools/prompts/resources, ConvertTools, 7 examples |
+| Output.array   | Stream validated array elements incrementally                                      |
+| Output.choice  | Convenience enum selection wrapper                                                 |
+| `goai/otel`    | Pre-built OpenTelemetry integration (optional import)                              |
+| xAI Responses  | Provider-defined tools (web_search, x_search) via `/v1/responses`                  |
+| MiniMax        | M2.7, M2.5, M2.1, M2 models                                                        |
 
 ### v1.0.0 - Stable API
 
@@ -64,11 +64,11 @@ GoAI reaches v1.0 when the API is complete enough that most Go+AI applications c
 
 ### Future
 
-| Feature    | Description                                                     |
-| ---------- | --------------------------------------------------------------- |
-| Agent      | Multi-step agent abstraction with built-in tool loop and memory |
-| Reranking  | `goai.Rerank()` for search and retrieval pipelines              |
-| Speech     | Server-side audio generation and transcription                  |
+| Feature   | Description                                                     |
+| --------- | --------------------------------------------------------------- |
+| Agent     | Multi-step agent abstraction with built-in tool loop and memory |
+| Reranking | `goai.Rerank()` for search and retrieval pipelines              |
+| Speech    | Server-side audio generation and transcription                  |
 
 ---
 
