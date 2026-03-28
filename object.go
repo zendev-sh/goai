@@ -194,9 +194,12 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 // The schema is auto-generated from T, or can be overridden with WithExplicitSchema.
 //
 // When tools with Execute functions are provided and MaxSteps > 1, GenerateObject
-// runs a tool loop first (up to MaxSteps-1 intermediate steps), then performs a
-// final structured-output generation. This enables tool-using agents that return
-// typed results: gather information via tools, then produce structured output.
+// runs a tool loop (identical to GenerateText) with ResponseFormat set on every
+// step. The model decides when to call tools vs produce the final JSON output.
+// Structured output is parsed from whichever step returns finishReason "stop".
+// If MaxSteps is exhausted with tool calls still pending, an error is returned.
+//
+// This matches the Vercel AI SDK's generateText with output: Output.object({schema}).
 func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, opts ...Option) (*ObjectResult[T], error) {
 	if model == nil {
 		return nil, errors.New("goai: model must not be nil")
@@ -219,15 +222,20 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 	schemaName := cmp.Or(o.SchemaName, "response")
 
 	params := buildParams(o)
+	// ResponseFormat is set upfront and sent on every step — the model decides
+	// when to call tools vs return structured JSON. This mirrors Vercel AI SDK
+	// where output parsing happens only on the step with finishReason "stop".
+	params.ResponseFormat = &provider.ResponseFormat{
+		Name:   schemaName,
+		Schema: schema,
+	}
+
 	toolMap := buildToolMap(o.Tools)
 
 	var steps []StepResult
 	var totalUsage provider.Usage
 
-	// Tool loop: run intermediate steps (without ResponseFormat) until the model
-	// stops calling tools or we reach MaxSteps-1. The final step always requests
-	// structured output, so MaxSteps=1 (the default) skips the loop entirely.
-	for step := 1; step < o.MaxSteps && len(toolMap) > 0; step++ {
+	for step := 1; step <= o.MaxSteps; step++ {
 		if o.OnRequest != nil {
 			o.OnRequest(RequestInfo{
 				Model:        model.ModelID(),
@@ -275,88 +283,34 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 			o.OnStepFinish(stepResult)
 		}
 
-		// Stop looping if no tool calls were requested.
-		if result.FinishReason != provider.FinishToolCalls || len(result.ToolCalls) == 0 {
-			break
+		// Parse structured output only when the model finished with "stop"
+		// (not tool calls). This is identical to Vercel's behaviour.
+		if result.FinishReason != provider.FinishToolCalls || len(result.ToolCalls) == 0 || len(toolMap) == 0 {
+			text := result.Text
+			if text == "" {
+				return nil, fmt.Errorf("goai: empty response from model")
+			}
+			var obj T
+			if err := json.Unmarshal([]byte(text), &obj); err != nil {
+				return nil, fmt.Errorf("parsing structured output: %w (raw: %s)", err, truncate(text, 200))
+			}
+			return &ObjectResult[T]{
+				Object:           obj,
+				Usage:            totalUsage,
+				FinishReason:     result.FinishReason,
+				Response:         result.Response,
+				ProviderMetadata: result.ProviderMetadata,
+				Steps:            steps,
+			}, nil
 		}
 
+		// Model requested tool calls — execute them and continue.
 		toolMessages := executeTools(ctx, result.ToolCalls, toolMap, o.OnToolCall)
 		params.Messages = appendToolRoundTrip(params.Messages, result, toolMessages)
 	}
 
-	// Final step: structured output.
-	params.ResponseFormat = &provider.ResponseFormat{
-		Name:   schemaName,
-		Schema: schema,
-	}
-
-	finalStepNum := len(steps) + 1
-
-	if o.OnRequest != nil {
-		o.OnRequest(RequestInfo{
-			Model:        model.ModelID(),
-			MessageCount: len(params.Messages),
-			ToolCount:    len(params.Tools),
-			Timestamp:    time.Now(),
-		})
-	}
-
-	start := time.Now()
-	result, err := withRetry(ctx, o.MaxRetries, func() (*provider.GenerateResult, error) {
-		return model.DoGenerate(ctx, params)
-	})
-
-	if o.OnResponse != nil {
-		info := ResponseInfo{Latency: time.Since(start), Error: err}
-		if err == nil {
-			info.Usage = result.Usage
-			info.FinishReason = result.FinishReason
-		}
-		var apiErr *APIError
-		if errors.As(err, &apiErr) {
-			info.StatusCode = apiErr.StatusCode
-		}
-		o.OnResponse(info)
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	totalUsage = addUsage(totalUsage, result.Usage)
-
-	finalStep := StepResult{
-		Number:           finalStepNum,
-		Text:             result.Text,
-		FinishReason:     result.FinishReason,
-		Usage:            result.Usage,
-		Response:         result.Response,
-		ProviderMetadata: result.ProviderMetadata,
-	}
-	steps = append(steps, finalStep)
-
-	if o.OnStepFinish != nil {
-		o.OnStepFinish(finalStep)
-	}
-
-	// Parse the JSON response into T.
-	var obj T
-	text := result.Text
-	if text == "" {
-		return nil, fmt.Errorf("goai: empty response from model")
-	}
-	if err := json.Unmarshal([]byte(text), &obj); err != nil {
-		return nil, fmt.Errorf("parsing structured output: %w (raw: %s)", err, truncate(text, 200))
-	}
-
-	return &ObjectResult[T]{
-		Object:           obj,
-		Usage:            totalUsage,
-		FinishReason:     result.FinishReason,
-		Response:         result.Response,
-		ProviderMetadata: result.ProviderMetadata,
-		Steps:            steps,
-	}, nil
+	// MaxSteps exhausted with tool calls still pending — no structured output produced.
+	return nil, fmt.Errorf("goai: max steps (%d) reached without producing structured output", o.MaxSteps)
 }
 
 // StreamObject performs a streaming structured output generation.

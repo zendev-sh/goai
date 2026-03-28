@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1291,10 +1292,9 @@ func TestGenerateObject_ToolLoop(t *testing.T) {
 		t.Error("tool result not present in final step messages")
 	}
 
-	// Final step must have ResponseFormat; first step must not.
-	// (We infer this from the fact that step 1 returned FinishToolCalls — if
-	// ResponseFormat were set on step 1, the provider would have returned JSON
-	// instead of tool calls. The mock mimics correct provider behaviour.)
+	// ResponseFormat is set on every call — the mock returns FinishToolCalls on
+	// step 1 because real providers call tools even when ResponseFormat is present,
+	// deferring JSON output until they have enough information.
 }
 
 // TestGenerateObject_ToolLoop_MaxSteps1_NoLoop verifies that MaxSteps=1 (the
@@ -1347,38 +1347,32 @@ func TestGenerateObject_ToolLoop_MaxSteps1_NoLoop(t *testing.T) {
 }
 
 // TestGenerateObject_ToolLoop_StopsEarlyWhenNoToolCalls verifies that the loop
-// exits before MaxSteps when the model stops requesting tools.
+// exits immediately when the model returns finishReason "stop" without calling
+// any tools, and that the text from that step is parsed as structured output.
 func TestGenerateObject_ToolLoop_StopsEarlyWhenNoToolCalls(t *testing.T) {
 	callCount := 0
 	model := &mockModel{
 		id: "test",
-		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+		generateFn: func(_ context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
 			callCount++
-			switch callCount {
-			case 1:
-				// Model decides it doesn't need tools.
-				return &provider.GenerateResult{
-					Text:         "intermediate text",
-					FinishReason: provider.FinishStop,
-					Usage:        provider.Usage{InputTokens: 5},
-				}, nil
-			case 2:
-				// Final structured-output step.
-				return &provider.GenerateResult{
-					Text:         `{"name":"Carol","age":22}`,
-					FinishReason: provider.FinishStop,
-					Usage:        provider.Usage{InputTokens: 8},
-				}, nil
-			default:
-				t.Fatalf("unexpected call count %d", callCount)
-				return nil, nil
+			if params.ResponseFormat == nil {
+				t.Error("ResponseFormat must be set on every step")
 			}
+			if callCount > 1 {
+				t.Fatalf("unexpected call count %d — should have stopped after step 1", callCount)
+			}
+			// Model decides it doesn't need tools, returns JSON directly.
+			return &provider.GenerateResult{
+				Text:         `{"name":"Carol","age":22}`,
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 5},
+			}, nil
 		},
 	}
 
 	result, err := GenerateObject[simpleObject](t.Context(), model,
 		WithPrompt("generate"),
-		WithMaxSteps(5), // high limit — should stop after 2 calls
+		WithMaxSteps(5), // high limit — model stops on its own after 1 call
 		WithTools(Tool{
 			Name:        "some_tool",
 			Description: "some tool",
@@ -1391,15 +1385,46 @@ func TestGenerateObject_ToolLoop_StopsEarlyWhenNoToolCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if callCount != 2 {
-		t.Errorf("DoGenerate called %d times, want 2", callCount)
+	if callCount != 1 {
+		t.Errorf("DoGenerate called %d times, want 1", callCount)
 	}
 	if result.Object.Name != "Carol" {
 		t.Errorf("Object.Name = %q, want Carol", result.Object.Name)
 	}
-	// Step 1: no-tool-call intermediate; Step 2: final structured output.
-	if len(result.Steps) != 2 {
-		t.Errorf("Steps len = %d, want 2", len(result.Steps))
+	if len(result.Steps) != 1 {
+		t.Errorf("Steps len = %d, want 1", len(result.Steps))
+	}
+}
+
+// TestGenerateObject_ToolLoop_MaxStepsExhausted verifies that an error is
+// returned when MaxSteps is reached with tool calls still pending.
+func TestGenerateObject_ToolLoop_MaxStepsExhausted(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			// Always requests a tool call — never produces stop.
+			return &provider.GenerateResult{
+				FinishReason: provider.FinishToolCalls,
+				ToolCalls:    []provider.ToolCall{{ID: "c", Name: "t", Input: json.RawMessage(`{}`)}},
+			}, nil
+		},
+	}
+
+	_, err := GenerateObject[simpleObject](t.Context(), model,
+		WithPrompt("generate"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:        "t",
+			Description: "t",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+			Execute:     func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err == nil {
+		t.Fatal("expected error when max steps exhausted")
+	}
+	if !strings.Contains(err.Error(), "max steps") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
