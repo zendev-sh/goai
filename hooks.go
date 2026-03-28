@@ -58,6 +58,10 @@ type ToolCallInfo struct {
 	// Empty if the tool returned an error or was not found.
 	Output string
 
+	// OutputObject is the parsed JSON value of Output when the tool returned valid JSON.
+	// Nil if the output is not valid JSON or the tool returned an error.
+	OutputObject any
+
 	// Duration is how long the tool execution took.
 	Duration time.Duration
 

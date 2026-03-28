@@ -474,7 +474,12 @@ func executeTools(ctx context.Context, calls []provider.ToolCall, toolMap map[st
 		start := time.Now()
 		output, err := tool.Execute(ctx, tc.Input)
 		if onToolCall != nil {
-			onToolCall(ToolCallInfo{ToolCallID: tc.ID, ToolName: tc.Name, Step: step, Input: tc.Input, Output: output, Duration: time.Since(start), Error: err})
+			info := ToolCallInfo{ToolCallID: tc.ID, ToolName: tc.Name, Step: step, Input: tc.Input, Output: output, Duration: time.Since(start), Error: err}
+			var parsed any
+			if err == nil && json.Unmarshal([]byte(output), &parsed) == nil {
+				info.OutputObject = parsed
+			}
+			onToolCall(info)
 		}
 		if err != nil {
 			msgs = append(msgs, ToolMessage(tc.ID, tc.Name, "error: "+err.Error()))

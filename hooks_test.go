@@ -157,6 +157,9 @@ func TestWithOnToolCall_Success(t *testing.T) {
 	if captured[0].Output != "file contents" {
 		t.Errorf("Output = %q, want \"file contents\"", captured[0].Output)
 	}
+	if captured[0].OutputObject != nil {
+		t.Errorf("OutputObject should be nil for non-JSON output, got %v", captured[0].OutputObject)
+	}
 	if captured[0].Duration < 0 {
 		t.Error("Duration should be >= 0")
 	}
@@ -204,6 +207,52 @@ func TestWithOnToolCall_Error(t *testing.T) {
 	}
 	if captured.Error.Error() != "tool failed" {
 		t.Errorf("Error = %q, want 'tool failed'", captured.Error)
+	}
+}
+
+func TestWithOnToolCall_JSONOutput(t *testing.T) {
+	var captured ToolCallInfo
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "info", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "info",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return `{"temperature":22,"city":"Tokyo"}`, nil
+			},
+		}),
+		WithOnToolCall(func(info ToolCallInfo) {
+			captured = info
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if captured.OutputObject == nil {
+		t.Fatal("OutputObject should be non-nil for JSON output")
+	}
+	m, ok := captured.OutputObject.(map[string]any)
+	if !ok {
+		t.Fatalf("OutputObject type = %T, want map[string]any", captured.OutputObject)
+	}
+	if m["city"] != "Tokyo" {
+		t.Errorf("OutputObject[city] = %v, want Tokyo", m["city"])
 	}
 }
 
