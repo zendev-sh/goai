@@ -197,9 +197,10 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 // runs a tool loop (identical to GenerateText) with ResponseFormat set on every
 // step. The model decides when to call tools vs produce the final JSON output.
 // Structured output is parsed from whichever step returns finishReason "stop".
-// If MaxSteps is exhausted with tool calls still pending, an error is returned.
 //
-// This matches the Vercel AI SDK's generateText with output: Output.object({schema}).
+// If MaxSteps is exhausted before a "stop" step occurs, an error is returned.
+// This differs slightly from Vercel AI SDK, which returns a partial result with
+// a nil output field — in Go, returning an error is the idiomatic equivalent.
 func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, opts ...Option) (*ObjectResult[T], error) {
 	if model == nil {
 		return nil, errors.New("goai: model must not be nil")
