@@ -34,7 +34,7 @@ goai/
 │   ├── openai/             # OpenAI (Chat Completions + Responses API)
 │   ├── anthropic/          # Anthropic (Messages API)
 │   ├── google/             # Google Gemini (REST)
-│   ├── bedrock/            # AWS Bedrock (Converse API + SigV4 + EventStream, RWMutex for fallback)
+│   ├── bedrock/            # AWS Bedrock (Converse API + SigV4 + EventStream, RWMutex for fallback; InvokeModel API for embeddings)
 │   ├── vertex/             # Vertex AI
 │   ├── azure/              # Azure OpenAI
 │   ├── cohere/             # Cohere (Chat v2 + Embed)

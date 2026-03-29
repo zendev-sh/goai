@@ -82,7 +82,7 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 		return m.doNovaEmbed(ctx, values[0], params)
 	case strings.Contains(m.id, "twelvelabs") || strings.Contains(m.id, "marengo"):
 		return m.doMarengoEmbed(ctx, values[0], params)
-	case m.id == "amazon.titan-embed-image-v1":
+	case strings.HasPrefix(m.id, "amazon.titan-embed-image-v1"):
 		return m.doTitanMultimodalEmbed(ctx, values[0], params)
 	default:
 		return m.doTitanEmbed(ctx, values[0], params)
@@ -129,7 +129,7 @@ func (m *embeddingModel) doTitanEmbed(ctx context.Context, value string, params 
 
 // isTitanV2 returns true for Titan V2 which supports normalize/dimensions/embeddingTypes.
 func isTitanV2(modelID string) bool {
-	return strings.Contains(modelID, "v2")
+	return strings.Contains(modelID, "titan-embed-text-v2")
 }
 
 // doTitanMultimodalEmbed handles amazon.titan-embed-image-v1 using the text-only path.
@@ -330,6 +330,9 @@ func parseCohereEmbeddings(raw json.RawMessage) ([][]float64, error) {
 	}
 	if err := json.Unmarshal(raw, &nested); err != nil {
 		return nil, errors.New("unrecognised embeddings format")
+	}
+	if len(nested.Float) == 0 {
+		return nil, errors.New("cohere embeddings: no float embeddings in response (embedding_types may not include \"float\")")
 	}
 	return nested.Float, nil
 }

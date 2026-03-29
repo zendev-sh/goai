@@ -189,6 +189,43 @@ result, err := goai.GenerateText(ctx, model,
 )
 ```
 
+## Embeddings
+
+```go
+import (
+    "context"
+    "fmt"
+
+    "github.com/zendev-sh/goai"
+    "github.com/zendev-sh/goai/provider/bedrock"
+)
+
+// Single embedding
+model := bedrock.Embedding("amazon.titan-embed-text-v2:0")
+result, err := goai.Embed(context.Background(), model, "hello world")
+fmt.Println(result.Embedding) // []float64
+
+// Batch — EmbedMany auto-chunks Cohere (96/call) and serialises the rest
+model = bedrock.Embedding("cohere.embed-english-v3")
+results, err := goai.EmbedMany(context.Background(), model, []string{"foo", "bar", "baz"})
+```
+
+### Supported Embedding Models
+
+| Model ID | Batch | ProviderOptions |
+|---|---|---|
+| `amazon.titan-embed-text-v1` | 1 | — |
+| `amazon.titan-embed-text-v2:0` | 1 | `dimensions` (256/512/1024), `normalize`, `embeddingTypes` |
+| `amazon.titan-embed-image-v1` | 1 | `outputEmbeddingLength` (256/384/1024) |
+| `amazon.nova-2-multimodal-embeddings-v1:0` | 1 | `embeddingPurpose`, `embeddingDimension`, `truncationMode` |
+| `cohere.embed-english-v3` | 96 | `input_type`, `truncate` |
+| `cohere.embed-multilingual-v3` | 96 | `input_type`, `truncate` |
+| `cohere.embed-v4:0` | 96 | `input_type`, `truncate`, `output_dimension`, `embedding_types` |
+| `twelvelabs.marengo-embed-2-7-v1:0` | 1 | `textTruncate` |
+| `twelvelabs.marengo-embed-3-0-v1:0` | 1 | — |
+
+Embeddings use the InvokeModel API (not Converse) and share the same credentials and options as `bedrock.Chat`.
+
 ## Notes
 
 - For direct Anthropic API access without AWS, see the [Anthropic provider](anthropic.md).

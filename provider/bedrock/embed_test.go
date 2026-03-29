@@ -738,3 +738,59 @@ func TestEmbedding_BearerToken(t *testing.T) {
 		t.Errorf("Authorization = %q, want 'Bearer my-bearer-token'", gotAuth)
 	}
 }
+
+// TestEmbedding_CohereV4_NonFloatEmbeddingType verifies that requesting a non-float
+// embedding type (e.g. int8) returns an error rather than silently returning nil embeddings.
+func TestEmbedding_CohereV4_NonFloatEmbeddingType(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Response with only int8 embeddings — no "float" key.
+		_, _ = w.Write([]byte(`{"id":"x","embeddings":{"int8":[[1,2,3]]},"texts":["hi"]}`))
+	}))
+	defer server.Close()
+
+	model := Embedding("cohere.embed-v4:0",
+		WithAccessKey("AK"),
+		WithSecretKey("SK"),
+		WithBaseURL(server.URL),
+	)
+	_, err := model.DoEmbed(t.Context(), []string{"hi"}, provider.EmbedParams{})
+	if err == nil {
+		t.Fatal("expected error when float embeddings are absent")
+	}
+	if !strings.Contains(err.Error(), "float") {
+		t.Errorf("error = %v", err)
+	}
+}
+
+// TestEmbedding_TitanImage_VersionedID verifies that a versioned model ID like
+// amazon.titan-embed-image-v1:0 is routed to doTitanMultimodalEmbed, not doTitanEmbed.
+func TestEmbedding_TitanImage_VersionedID(t *testing.T) {
+	var gotBody map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		resp, _ := json.Marshal(map[string]any{"embedding": []float64{0.1, 0.2}})
+		_, _ = w.Write(resp)
+	}))
+	defer server.Close()
+
+	model := Embedding("amazon.titan-embed-image-v1:0",
+		WithAccessKey("AK"),
+		WithSecretKey("SK"),
+		WithBaseURL(server.URL),
+	)
+	result, err := model.DoEmbed(t.Context(), []string{"hello"}, provider.EmbedParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Embeddings) != 1 {
+		t.Fatalf("embeddings len = %d, want 1", len(result.Embeddings))
+	}
+	// Multimodal format uses embeddingConfig; text-only format uses inputText directly.
+	if _, ok := gotBody["embeddingConfig"]; !ok {
+		t.Error("expected embeddingConfig key — versioned ID should route to doTitanMultimodalEmbed")
+	}
+}
