@@ -130,7 +130,7 @@ func (m *chatModel) Capabilities() provider.ModelCapabilities {
 	return provider.ModelCapabilities{
 		Temperature:      true,
 		ToolCall:         true,
-		Reasoning:        true,
+		Reasoning:        strings.Contains(m.id, "reasoning"),
 		InputModalities:  provider.ModalitySet{Text: true},
 		OutputModalities: provider.ModalitySet{Text: true},
 	}
@@ -642,6 +642,21 @@ func parseChatStream(ctx context.Context, body io.Reader, out chan<- provider.St
 	var pending *pendingToolCall
 	var isReasoning bool
 	var streamCitations []cohereCitation
+	var finishSent bool
+	var streamResponseMeta provider.ResponseMetadata
+
+	// Deferred fallback: if the stream ends without a message-end event (e.g. [DONE]
+	// arrived without message-end, premature close, or mid-loop return on context cancel),
+	// emit a ChunkFinish so consumers always see one.
+	defer func() {
+		if !finishSent {
+			provider.TrySend(ctx, out, provider.StreamChunk{
+				Type:         provider.ChunkFinish,
+				FinishReason: provider.FinishOther,
+				Response:     streamResponseMeta,
+			})
+		}
+	}()
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -656,6 +671,9 @@ func parseChatStream(ctx context.Context, body io.Reader, out chan<- provider.St
 		var event struct {
 			Type  string `json:"type"`
 			Index int    `json:"index"`
+			// message-start fields.
+			ID    string `json:"id"`
+			Model string `json:"model"`
 			Delta struct {
 				Message struct {
 					Content json.RawMessage `json:"content"`
@@ -694,6 +712,13 @@ func parseChatStream(ctx context.Context, body io.Reader, out chan<- provider.St
 		}
 
 		switch event.Type {
+		case "message-start":
+			// Capture response ID and model for use in ChunkFinish.
+			streamResponseMeta = provider.ResponseMetadata{
+				ID:    event.ID,
+				Model: event.Model,
+			}
+
 		case "content-start":
 			// Check if this is a thinking content block.
 			var ct struct {
@@ -820,11 +845,12 @@ func parseChatStream(ctx context.Context, body io.Reader, out chan<- provider.St
 				Type:         provider.ChunkFinish,
 				FinishReason: fr,
 				Usage:        usage,
-				Response:     provider.ResponseMetadata{},
+				Response:     streamResponseMeta,
 			}
 			if sources := extractCohereCitations(streamCitations); len(sources) > 0 {
 				finishChunk.Metadata = map[string]any{"sources": sources}
 			}
+			finishSent = true
 			if !provider.TrySend(ctx, out, finishChunk) {
 				return
 			}
@@ -837,6 +863,7 @@ func parseChatStream(ctx context.Context, body io.Reader, out chan<- provider.St
 			Error: fmt.Errorf("reading stream: %w", err),
 		})
 	}
+	// Deferred fallback (above) handles ChunkFinish emission.
 }
 
 func mapFinishReason(reason string) provider.FinishReason {

@@ -47,13 +47,14 @@ type ObjectStream[T any] struct {
 	startTime  time.Time
 
 	// Accumulated state.
-	text         strings.Builder
-	finishReason provider.FinishReason
-	usage        provider.Usage
-	response     provider.ResponseMetadata
-	finalObject  *T
-	parseErr     error
-	streamErr    error
+	text             strings.Builder
+	finishReason     provider.FinishReason
+	usage            provider.Usage
+	response         provider.ResponseMetadata
+	providerMetadata map[string]map[string]any
+	finalObject      *T
+	parseErr         error
+	streamErr        error
 }
 
 func newObjectStream[T any](ctx context.Context, source <-chan provider.StreamChunk) *ObjectStream[T] {
@@ -99,16 +100,18 @@ func (os *ObjectStream[T]) Result() (*ObjectResult[T], error) {
 
 	if os.finalObject == nil {
 		return &ObjectResult[T]{
-			Usage:        os.usage,
-			FinishReason: os.finishReason,
-			Response:     os.response,
+			Usage:            os.usage,
+			FinishReason:     os.finishReason,
+			Response:         os.response,
+			ProviderMetadata: os.providerMetadata,
 		}, nil
 	}
 	return &ObjectResult[T]{
-		Object:       *os.finalObject,
-		Usage:        os.usage,
-		FinishReason: os.finishReason,
-		Response:     os.response,
+		Object:           *os.finalObject,
+		Usage:            os.usage,
+		FinishReason:     os.finishReason,
+		Response:         os.response,
+		ProviderMetadata: os.providerMetadata,
 	}, nil
 }
 
@@ -162,6 +165,25 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 			os.finishReason = chunk.FinishReason
 			os.usage = chunk.Usage
 			os.response = chunk.Response
+			// Extract provider metadata embedded in the finish chunk.
+			// openaicompat encodes it as Metadata["providerMetadata"] = map[string]map[string]any.
+			// The type assertion safely returns false for any other type (no panic).
+			if pm, ok := chunk.Metadata["providerMetadata"].(map[string]map[string]any); ok {
+				os.providerMetadata = pm
+			}
+			// Copy remaining flat metadata keys into Response.ProviderMetadata.
+			// Providers use this for per-response data: Anthropic ("iterations",
+			// "contextManagement", "container"), Bedrock ("cacheWriteInputTokens").
+			// Skip "providerMetadata" (handled above) and "sources" (ObjectResult has no Sources field).
+			for k, v := range chunk.Metadata {
+				if k == "providerMetadata" || k == "sources" {
+					continue
+				}
+				if os.response.ProviderMetadata == nil {
+					os.response.ProviderMetadata = map[string]any{}
+				}
+				os.response.ProviderMetadata[k] = v
+			}
 		case provider.ChunkError:
 			if os.streamErr == nil {
 				os.streamErr = chunk.Error

@@ -159,6 +159,7 @@ export default defineConfig({
                 { text: 'OpenRouter', link: '/providers/openrouter' },
                 { text: 'Perplexity', link: '/providers/perplexity' },
                 { text: 'Cerebras', link: '/providers/cerebras' },
+                { text: 'RunPod', link: '/providers/runpod' },
               ],
             },
             {

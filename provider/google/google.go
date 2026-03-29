@@ -116,13 +116,12 @@ func (m *chatModel) ModelID() string { return m.id }
 func (m *chatModel) Capabilities() provider.ModelCapabilities {
 	return provider.ModelCapabilities{
 		Temperature: true,
-		Reasoning:   true,
+		Reasoning:   modelSupportsThinking(m.id),
 		ToolCall:    true,
 		Attachment:  true,
 		InputModalities: provider.ModalitySet{
 			Text:  true,
 			Image: true,
-			Video: true,
 			PDF:   true,
 		},
 		OutputModalities: provider.ModalitySet{Text: true},

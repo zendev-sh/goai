@@ -183,8 +183,14 @@ func WithMaxSteps(n int) Option {
 }
 
 // WithMaxRetries sets the retry count for transient errors.
+// Values below 0 are clamped to 0 (no retries).
 func WithMaxRetries(n int) Option {
-	return func(o *options) { o.MaxRetries = n }
+	return func(o *options) {
+		if n < 0 {
+			n = 0
+		}
+		o.MaxRetries = n
+	}
 }
 
 // WithTimeout sets the timeout for the entire generation call.

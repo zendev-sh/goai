@@ -258,7 +258,7 @@ MCP tools with GoAI LLM integration. Connects to an MCP server, converts its too
 - **Source:** [`examples/mcp-tools/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-tools)
 
 ```bash
-export GOOGLE_API_KEY=...
+export GEMINI_API_KEY=...
 go run ./examples/mcp-tools
 ```
 

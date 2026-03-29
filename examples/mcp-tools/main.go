@@ -5,12 +5,12 @@
 // Connects to an MCP testserver, converts its tools to GoAI tools, and passes
 // them to GenerateText so the LLM can call MCP tools in an agent loop.
 //
-// Requires a GOOGLE_API_KEY (Gemini) for the LLM. The MCP servers are local
+// Requires a GEMINI_API_KEY (Gemini) for the LLM. The MCP servers are local
 // (no external dependencies beyond the API key).
 //
 // Usage:
 //
-//	export GOOGLE_API_KEY=...
+//	export GEMINI_API_KEY=...
 //	go run ./examples/mcp-tools
 package main
 
@@ -26,9 +26,9 @@ import (
 )
 
 func main() {
-	apiKey := os.Getenv("GOOGLE_API_KEY")
+	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
-		log.Fatal("GOOGLE_API_KEY environment variable is required")
+		log.Fatal("GEMINI_API_KEY environment variable is required")
 	}
 
 	ctx := context.Background()

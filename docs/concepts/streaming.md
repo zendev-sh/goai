@@ -48,6 +48,22 @@ for chunk := range stream.Stream() {
 }
 ```
 
+### Chunk Types
+
+| Type | Fields Used | Description |
+|------|------------|-------------|
+| `ChunkText` | `Text`, `Metadata` | Generated text content |
+| `ChunkReasoning` | `Text`, `Metadata` | Extended thinking / chain-of-thought |
+| `ChunkToolCall` | `ToolCallID`, `ToolName`, `ToolInput` | Complete tool call |
+| `ChunkToolCallStreamStart` | `ToolCallID`, `ToolName` | Start of a streaming tool call |
+| `ChunkToolCallDelta` | `ToolInput` | Incremental tool call input |
+| `ChunkToolResult` | `Text` | Tool execution result |
+| `ChunkStepFinish` | `FinishReason`, `Usage`, `Response`, `Metadata` | End of a tool-loop step |
+| `ChunkFinish` | `FinishReason`, `Usage`, `Response`, `Metadata` | End of generation |
+| `ChunkError` | `Error` | Stream error |
+
+`Metadata` carries provider-specific data: `ChunkFinish` may include `"providerMetadata"` (OpenAI Chat Completions via openaicompat) or flat keys like `"iterations"` (Anthropic) and `"cacheWriteInputTokens"` (Bedrock). These are propagated into `TextResult.ProviderMetadata` and `Response.ProviderMetadata` respectively. Note: the OpenAI Responses API streaming path does not populate `ProviderMetadata` on the finish chunk — logprobs are only available via `GenerateText`. Reasoning summaries are delivered as `ChunkReasoning` chunks during streaming rather than appearing in `ProviderMetadata`.
+
 ### Result() - block for final result
 
 Blocks until the stream completes, then returns a `*TextResult` with accumulated text, tool calls, usage, and metadata.

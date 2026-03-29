@@ -5,7 +5,7 @@ description: "GoAI SDK architecture overview — layers, data flow, provider sys
 
 # Architecture
 
-GoAI is a Go SDK that provides one unified API across 21+ LLM providers. This document describes the overall architecture, key layers, data flow, and design decisions.
+GoAI is a Go SDK that provides one unified API across 22+ LLM providers. This document describes the overall architecture, key layers, data flow, and design decisions.
 
 ## High-Level Overview
 
@@ -24,7 +24,7 @@ GoAI is a Go SDK that provides one unified API across 21+ LLM providers. This do
 └──┬─────────┬──────────┬──────────┬──────────┬─────────┬──────────┘
    │         │          │          │          │         │
 ┌──▼───┐ ┌───▼───┐ ┌───▼───┐ ┌───▼────┐ ┌───▼──┐ ┌───▼────────┐
-│OpenAI│ │Anthro.│ │Google │ │Bedrock │ │Cohere│ │12 compat   │
+│OpenAI│ │Anthro.│ │Google │ │Bedrock │ │Cohere│ │13 compat   │
 │      │ │       │ │       │ │        │ │      │ │providers   │
 └──┬───┘ └───┬───┘ └───┬───┘ └───┬────┘ └───┬──┘ └───┬────────┘
    │         │         │         │          │        │
@@ -112,7 +112,7 @@ An optional `CapableModel` interface allows providers to declare feature support
 
 | Package                 | Description                                                                                                                                                                                                    |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `internal/openaicompat` | Shared request building and response parsing for all OpenAI-compatible APIs. `BuildRequest` constructs the wire format, `ParseStream`/`ParseResponse` decode responses into GoAI types. Used by 13 packages directly. |
+| `internal/openaicompat` | Shared request building and response parsing for all OpenAI-compatible APIs. `BuildRequest` constructs the wire format, `ParseStream`/`ParseResponse` decode responses into GoAI types. Used by 14 packages directly. |
 | `internal/gemini`       | Gemini schema sanitization (`SanitizeSchema`). Used by the Vertex and Google providers to conform JSON Schemas to Gemini's stricter requirements.                                                                     |
 | `internal/sse`          | Minimal SSE (Server-Sent Events) scanner. Handles `data:` prefix, blank lines, `[DONE]` sentinel. JSON deserialization is left to the caller.                                                                         |
 | `internal/httpc`        | HTTP utilities: `MustMarshalJSON`, `MustNewRequest`, `ParseDataURL`. Shared across all providers.                                                                                                                     |
@@ -130,29 +130,30 @@ These providers implement their own request/response codec because their APIs di
 | **OpenAI**    | Chat Completions + Responses API | All models default to Responses API (matching Vercel v2.0.89+). Chat Completions available via `useResponsesAPI: false` in ProviderOptions. Separate `responses.go` handles different SSE format. Provider-defined tools: web search, code interpreter, file search, image generation. |
 | **Anthropic** | Messages API                     | Custom SSE event format (`message_start`, `content_block_start`, `content_block_delta`, etc.). Structured output via tool trick (injects synthetic tool) or native `output_format`. Provider-defined tools: computer use, bash, text editor, web search, web fetch, code execution.               |
 | **Google**    | Gemini REST API                  | Custom JSON format with `contents[]` array, `generationConfig`, `tools[]`. Structured output via `responseMimeType` + `responseSchema` in `generationConfig`. Provider-defined tools: Google Search grounding, URL context, code execution.                                                        |
-| **Bedrock**   | AWS Converse API                 | Binary EventStream protocol for streaming, SigV4 request signing (without AWS SDK), cross-region inference fallback with `us.` prefix retry.                                                                                                                                                       |
+| **Bedrock**   | AWS Converse + InvokeModel API   | Binary EventStream protocol for streaming, SigV4 request signing (without AWS SDK), cross-region inference fallback with `us.` prefix retry. InvokeModel API for embeddings (Titan, Cohere, Nova, Marengo).                                                                                                                                                       |
 | **Cohere**    | Chat v2 + Embed API              | Custom message format with native embed API. Tool results use standard `role: "tool"` with `tool_call_id`. Structured output via native `response_format` (`json_object` type with `json_schema`).                                                                                                                      |
 
 ### OpenAI-Compatible Providers (shared codec)
 
-13 packages directly import `internal/openaicompat` (including `openai` for its Chat Completions path). Each thin wrapper:
+14 packages directly import `internal/openaicompat` (including `openai` for its Chat Completions path). Each thin wrapper:
 
 1. Sets the correct base URL and auth headers
 2. Resolves credentials from environment variables
 3. Delegates to `openaicompat.BuildRequest` / `ParseStream` / `ParseResponse`
 
 ```
-Direct openaicompat importers (13):
+Direct openaicompat importers (14):
 ├── openai/      ← Chat Completions path uses openaicompat; Responses path is native
 ├── vertex/      ← Uses OAuth2 ADC for auth
 ├── mistral/     ├── groq/       ├── xai/
 ├── deepseek/    ├── fireworks/  ├── together/
 ├── deepinfra/   ├── openrouter/ ├── perplexity/
-├── cerebras/
+├── cerebras/    ├── runpod/
 └── compat/      ← Generic, user-configured endpoint
 
 Indirect users (via delegation):
 ├── azure/       ← Delegates to openai/ (OpenAI models), anthropic/ (Claude), AI Services (others)
+├── minimax/     ← Delegates to anthropic/ (Anthropic-compatible API)
 ├── ollama/      ← Wraps compat/ (localhost:11434)
 └── vllm/        ← Wraps compat/ (localhost:8000)
 ```
@@ -306,7 +307,7 @@ HTTP error response
   │
   ├─ goai.ParseHTTPErrorWithHeaders(providerID, status, body, headers)
   │   ├─ extractErrorMessage() — tries 3 JSON paths ({error.message}, {message}, {error} as string)
-  │   ├─ IsOverflow(message) — matches 14 regex patterns across 21+ providers
+  │   ├─ IsOverflow(message) — matches 14 regex patterns across 22+ providers
   │   │   └─ return *ContextOverflowError
   │   └─ return *APIError{StatusCode, IsRetryable, ResponseHeaders}
   │
@@ -358,7 +359,7 @@ Key architectural decisions that shape the SDK:
 
 - **OpenAI dual API routing**: All models default to Responses API (matching Vercel v2.0.89+). Chat Completions available via `useResponsesAPI: false` in ProviderOptions. `isReasoningModel` is used only for capability detection (temperature, reasoning), not routing. Separate `responses.go` handles different SSE format.
 - **Token caching without blocking**: `CachedTokenSource` releases mutex before network calls, accepting brief double‑fetch to avoid goroutine deadlock.
-- **Cross‑provider error pattern matching**: 14 regex patterns detect "context overflow" across 21+ providers' inconsistent error messages, enabling uniform `ContextOverflowError`.
+- **Cross‑provider error pattern matching**: 14 regex patterns detect "context overflow" across 22+ providers' inconsistent error messages, enabling uniform `ContextOverflowError`.
 - **Bedrock AWS independence**: Manual SigV4 signing and EventStream binary protocol parsing avoid AWS SDK dependency.
 - **Provider‑defined tools scale**: 20 tools across 5 providers, each with options structs, version handling, and provider‑specific serialization (~1200 LOC).
 - **Structured output multi‑strategy**: Anthropic uses native `output_format` (Opus 4.1+, Sonnet 4.5+: claude‑opus‑4‑1, claude‑sonnet‑4‑5, claude‑opus‑4‑5, claude‑sonnet‑4‑6, claude‑opus‑4‑6) or tool trick (older models), adapting to varying provider capabilities.
@@ -387,13 +388,14 @@ goai/
 │   ├── openai/             # OpenAI (Chat Completions + Responses API)
 │   ├── anthropic/          # Anthropic (Messages API)
 │   ├── google/             # Google Gemini (REST API)
-│   ├── bedrock/            # AWS Bedrock (Converse API + SigV4 + EventStream)
+│   ├── bedrock/            # AWS Bedrock (Converse API + SigV4 + EventStream; InvokeModel for embeddings)
 │   ├── vertex/             # Vertex AI (OpenAI-compat + OAuth2 ADC)
 │   ├── azure/              # Azure OpenAI (+ auto-routes Claude to Anthropic endpoint)
 │   ├── cohere/             # Cohere (Chat v2 + native Embed)
 │   ├── compat/             # Generic OpenAI-compatible
 │   └── ...                 # mistral, groq, xai, deepseek, fireworks, together,
-│                           # deepinfra, openrouter, perplexity, cerebras, ollama, vllm
+│                           # deepinfra, openrouter, perplexity, cerebras, runpod,
+│                           # minimax, ollama, vllm
 │
 ├── internal/
 │   ├── openaicompat/       # Shared codec: BuildRequest, ParseStream, ParseResponse

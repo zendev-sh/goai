@@ -121,7 +121,7 @@ If no API key or token source is provided, providers read from environment varia
 | Google     | `github.com/zendev-sh/goai/provider/google`     | `Chat`, `Embedding`, `Image` |
 | Azure      | `github.com/zendev-sh/goai/provider/azure`      | `Chat`, `Image`              |
 | Vertex AI  | `github.com/zendev-sh/goai/provider/vertex`     | `Chat`, `Embedding`, `Image` |
-| Bedrock    | `github.com/zendev-sh/goai/provider/bedrock`    | `Chat`                       |
+| Bedrock    | `github.com/zendev-sh/goai/provider/bedrock`    | `Chat`, `Embedding`          |
 | Mistral    | `github.com/zendev-sh/goai/provider/mistral`    | `Chat`                       |
 | xAI        | `github.com/zendev-sh/goai/provider/xai`        | `Chat`                       |
 | Groq       | `github.com/zendev-sh/goai/provider/groq`       | `Chat`                       |
@@ -133,6 +133,8 @@ If no API key or token source is provided, providers read from environment varia
 | Cohere     | `github.com/zendev-sh/goai/provider/cohere`     | `Chat`, `Embedding`          |
 | Cerebras   | `github.com/zendev-sh/goai/provider/cerebras`   | `Chat`                       |
 | Perplexity | `github.com/zendev-sh/goai/provider/perplexity` | `Chat`                       |
+| MiniMax    | `github.com/zendev-sh/goai/provider/minimax`    | `Chat`                       |
+| RunPod     | `github.com/zendev-sh/goai/provider/runpod`     | `Chat`                       |
 | Ollama     | `github.com/zendev-sh/goai/provider/ollama`     | `Chat`, `Embedding`          |
 | vLLM       | `github.com/zendev-sh/goai/provider/vllm`       | `Chat`, `Embedding`          |
 | Compat     | `github.com/zendev-sh/goai/provider/compat`     | `Chat`, `Embedding`          |

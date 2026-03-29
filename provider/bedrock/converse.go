@@ -495,6 +495,21 @@ func parseEventStream(ctx context.Context, body io.ReadCloser, out chan<- provid
 	}
 	blocks := make(map[int]*blockInfo)
 
+	var finishSent bool
+	var accUsage provider.Usage
+
+	defer func() {
+		// Fallback: if the stream ended without a metadata frame (e.g. premature
+		// connection close), emit a ChunkFinish so consumers always see one.
+		if !finishSent {
+			provider.TrySend(ctx, out, provider.StreamChunk{
+				Type:     provider.ChunkFinish,
+				Usage:    accUsage,
+				Response: responseMeta,
+			})
+		}
+	}()
+
 	for {
 		frame, err := decoder.Next()
 		if err != nil {
@@ -647,6 +662,7 @@ func parseEventStream(ctx context.Context, body io.ReadCloser, out chan<- provid
 				usage.CacheReadTokens = intVal(u, "cacheReadInputTokens")
 				usage.CacheWriteTokens = intVal(u, "cacheWriteInputTokens")
 			}
+			accUsage = usage
 			chunk := provider.StreamChunk{
 				Type:     provider.ChunkFinish,
 				Usage:    usage,
@@ -658,6 +674,7 @@ func parseEventStream(ctx context.Context, body io.ReadCloser, out chan<- provid
 					"cacheWriteInputTokens": usage.CacheWriteTokens,
 				}
 			}
+			finishSent = true
 			if !provider.TrySend(ctx, out, chunk) {
 				return
 			}

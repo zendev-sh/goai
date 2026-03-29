@@ -329,10 +329,10 @@ func parseCohereEmbeddings(raw json.RawMessage) ([][]float64, error) {
 		Float [][]float64 `json:"float"`
 	}
 	if err := json.Unmarshal(raw, &nested); err != nil {
-		return nil, errors.New("unrecognised embeddings format")
+		return nil, errors.New("bedrock: unrecognised embeddings format")
 	}
 	if len(nested.Float) == 0 {
-		return nil, errors.New("cohere embeddings: no float embeddings in response (embedding_types may not include \"float\")")
+		return nil, errors.New("bedrock: no float embeddings in response (embedding_types may not include \"float\")")
 	}
 	return nested.Float, nil
 }

@@ -126,9 +126,9 @@ func codeExecutionTool() provider.ToolDefinition {
 // ---------------------------------------------------------------------------
 
 // googleProviderTool maps a ProviderDefinedType to the Gemini API tool format.
-// Gemini uses camelCase keys: {"googleSearchRetrieval": {...}}, {"urlContext": {}}, {"codeExecution": {}}.
+// Gemini uses camelCase keys: {"googleSearch": {...}}, {"urlContext": {}}, {"codeExecution": {}}.
 func googleProviderTool(t provider.ToolDefinition) map[string]any {
-	// Map "google.google_search" -> "googleSearchRetrieval", "google.url_context" -> "urlContext", etc.
+	// Map "google.google_search" -> "googleSearch", "google.url_context" -> "urlContext", etc.
 	apiKey := t.ProviderDefinedType
 	apiKey = strings.TrimPrefix(apiKey, "google.")
 

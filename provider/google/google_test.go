@@ -951,8 +951,18 @@ func TestCapabilities(t *testing.T) {
 	if !caps.Temperature || !caps.Reasoning || !caps.ToolCall || !caps.Attachment {
 		t.Error("unexpected capabilities")
 	}
-	if !caps.InputModalities.Video {
-		t.Error("expected Video input modality")
+	if caps.InputModalities.Video {
+		t.Error("expected Video input modality to be false: no PartVideo type exists")
+	}
+	if !caps.InputModalities.PDF {
+		t.Error("expected PDF input modality")
+	}
+
+	// Non-thinking model should not advertise Reasoning.
+	model2 := Chat("gemini-1.5-flash", WithAPIKey("key"))
+	caps2 := provider.ModelCapabilitiesOf(model2)
+	if caps2.Reasoning {
+		t.Error("gemini-1.5-flash should have Reasoning=false")
 	}
 }
 

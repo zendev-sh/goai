@@ -115,10 +115,17 @@ type chatModel struct {
 
 func (m *chatModel) ModelID() string { return m.id }
 
+// supportsThinking returns true for Anthropic models that support extended thinking.
+func supportsThinking(modelID string) bool {
+	return strings.Contains(modelID, "claude-3-7-sonnet") ||
+		strings.Contains(modelID, "claude-sonnet-4") ||
+		strings.Contains(modelID, "claude-opus-4")
+}
+
 func (m *chatModel) Capabilities() provider.ModelCapabilities {
 	return provider.ModelCapabilities{
 		Temperature: true,
-		Reasoning:   true,
+		Reasoning:   supportsThinking(m.id),
 		ToolCall:    true,
 		Attachment:  true,
 		InputModalities: provider.ModalitySet{
