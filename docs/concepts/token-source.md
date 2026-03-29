@@ -66,6 +66,7 @@ Key properties:
 - **Thread-safe.** Multiple goroutines can call `Token()` concurrently.
 - **Lazy.** The fetch function is not called until the first `Token()` call.
 - **TTL-based.** The cached token is reused as long as `time.Now()` is before `ExpiresAt`. Set `ExpiresAt` to zero for tokens that never expire.
+- **Non-blocking refresh.** The fetch function is called outside any lock. Concurrent callers during a refresh are never blocked waiting on each other's network call (brief double-fetch is acceptable).
 
 ## Token Invalidation
 
@@ -113,6 +114,8 @@ model := azure.Chat("gpt-4o", azure.WithTokenSource(ts))
 ```
 
 ### Google Service Account
+
+> **Note:** The Google Gemini provider (`provider/google`) sends all tokens via the `x-goog-api-key` header, which only accepts API keys — not OAuth2 Bearer tokens. For OAuth2 or service account authentication with Google, use the Vertex AI provider (`provider/vertex`) instead, which supports standard Bearer auth.
 
 ```go
 ts := provider.CachedTokenSource(func(ctx context.Context) (*provider.Token, error) {

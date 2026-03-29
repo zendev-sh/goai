@@ -79,6 +79,8 @@ func WithMaxSteps(n int) Option
 
 **Default:** `1` (no tool loop - the model generates once and returns, even if it requests tool calls).
 
+Values below 1 are silently clamped to 1.
+
 Set to 2 or higher to enable automatic tool execution. For example, `WithMaxSteps(2)` allows: step 1 = model calls tool, step 2 = model uses tool result to generate final answer.
 
 ### WithToolChoice
@@ -312,7 +314,7 @@ Sets the maximum number of concurrent API calls when `EmbedMany` auto-chunks a l
 func WithMaxParallelCalls(n int) Option
 ```
 
-**Default:** `0` (applied at runtime in `embed.go:112-115` as `4`).
+**Default:** `0` (applied at runtime in `embed.go:121-123` as `4`).
 
 ### WithEmbeddingProviderOptions
 

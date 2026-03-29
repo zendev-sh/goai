@@ -223,13 +223,26 @@ func (m *chatModel) readIDRegion() (string, string) {
 }
 
 func (m *chatModel) Capabilities() provider.ModelCapabilities {
+	id := m.ModelID()
 	return provider.ModelCapabilities{
-		Temperature:      true,
-		ToolCall:         modelSupportsTools(m.ModelID()),
-		Reasoning:        true,
-		InputModalities:  provider.ModalitySet{Text: true, Image: true},
+		Temperature: true,
+		ToolCall:    modelSupportsTools(id),
+		Reasoning:   bedrockSupportsThinking(id),
+		InputModalities: provider.ModalitySet{
+			Text:  true,
+			Image: true,
+			PDF:   true,
+		},
 		OutputModalities: provider.ModalitySet{Text: true},
 	}
+}
+
+// bedrockSupportsThinking returns true for Bedrock model IDs that support extended thinking.
+// Bedrock model IDs include the Anthropic model name (e.g., "anthropic.claude-sonnet-4-20250514-v1:0").
+func bedrockSupportsThinking(modelID string) bool {
+	return strings.Contains(modelID, "claude-3-7-sonnet") ||
+		strings.Contains(modelID, "claude-sonnet-4") ||
+		strings.Contains(modelID, "claude-opus-4")
 }
 
 // modelSupportsTools returns whether a Bedrock model supports tool_use.

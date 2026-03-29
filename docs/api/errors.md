@@ -59,7 +59,15 @@ GoAI detects context overflow from error messages across all supported providers
 - Amazon Bedrock ("input is too long for requested model")
 - OpenAI ("exceeds the context window")
 - Google Gemini ("input token count exceeds the maximum")
-- And many others (xAI, Groq, OpenRouter, DeepSeek, etc.)
+- xAI / Grok ("maximum prompt length is N")
+- Groq ("reduce the length of the messages")
+- OpenRouter / DeepSeek ("maximum context length is N tokens")
+- GitHub Copilot ("exceeds the limit of N")
+- llama.cpp / LM Studio ("exceeds the available context size", "greater than the context length")
+- MiniMax ("context window exceeds limit")
+- Kimi / Moonshot ("exceeded model token limit")
+- Cerebras / Mistral (400/413 status with no body)
+- Generic fallback ("context_length_exceeded", "context length exceeded")
 
 ---
 

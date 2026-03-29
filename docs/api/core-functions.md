@@ -288,7 +288,7 @@ func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []stri
 | `values` | `[]string`                | The texts to embed.                                                                                |
 | `opts`   | `...Option`               | Options (`WithMaxParallelCalls`, `WithTimeout`, `WithMaxRetries`, `WithEmbeddingProviderOptions`). |
 
-**Returns:** `*EmbedManyResult` containing one embedding vector per input value and aggregated usage.
+**Returns:** `*EmbedManyResult` containing one embedding vector per input value and aggregated usage. When `EmbedMany` auto-chunks a large batch, `ProviderMetadata` in the result is taken from the first chunk only.
 
 **Example:**
 

@@ -93,13 +93,14 @@ type TextStream struct {
 	startTime  time.Time
 
 	// Accumulated state (written by consume goroutine, read after doneCh closes).
-	text         strings.Builder
-	toolCalls    []provider.ToolCall
-	sources      []provider.Source
-	finishReason provider.FinishReason
-	usage        provider.Usage
-	response     provider.ResponseMetadata
-	streamErr    error
+	text             strings.Builder
+	toolCalls        []provider.ToolCall
+	sources          []provider.Source
+	finishReason     provider.FinishReason
+	usage            provider.Usage
+	response         provider.ResponseMetadata
+	providerMetadata map[string]map[string]any
+	streamErr        error
 }
 
 func newTextStream(ctx context.Context, source <-chan provider.StreamChunk) *TextStream {
@@ -207,6 +208,25 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 			if sources, ok := chunk.Metadata["sources"].([]provider.Source); ok {
 				ts.sources = append(ts.sources, sources...)
 			}
+			// Extract provider metadata embedded in the finish chunk.
+			// openaicompat encodes it as Metadata["providerMetadata"] = map[string]map[string]any.
+			// The type assertion safely returns false for any other type (no panic).
+			if pm, ok := chunk.Metadata["providerMetadata"].(map[string]map[string]any); ok {
+				ts.providerMetadata = pm
+			}
+			// Copy remaining flat metadata keys into Response.ProviderMetadata.
+			// Providers use this for per-response data: Anthropic ("iterations",
+			// "contextManagement", "container"), Bedrock ("cacheWriteInputTokens").
+			// Skip "providerMetadata" (handled above) and "sources" (handled separately).
+			for k, v := range chunk.Metadata {
+				if k == "providerMetadata" || k == "sources" {
+					continue
+				}
+				if ts.response.ProviderMetadata == nil {
+					ts.response.ProviderMetadata = map[string]any{}
+				}
+				ts.response.ProviderMetadata[k] = v
+			}
 		case provider.ChunkError:
 			if ts.streamErr == nil {
 				ts.streamErr = chunk.Error
@@ -238,20 +258,22 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 func (ts *TextStream) buildResult() *TextResult {
 	text := ts.text.String()
 	return &TextResult{
-		Text:         text,
-		ToolCalls:    ts.toolCalls,
-		FinishReason: ts.finishReason,
-		TotalUsage:   ts.usage,
-		Response:     ts.response,
-		Sources:      ts.sources,
+		Text:             text,
+		ToolCalls:        ts.toolCalls,
+		FinishReason:     ts.finishReason,
+		TotalUsage:       ts.usage,
+		Response:         ts.response,
+		Sources:          ts.sources,
+		ProviderMetadata: ts.providerMetadata,
 		Steps: []StepResult{{
-			Number:       1,
-			Text:         text,
-			ToolCalls:    ts.toolCalls,
-			FinishReason: ts.finishReason,
-			Usage:        ts.usage,
-			Response:     ts.response,
-			Sources:      ts.sources,
+			Number:           1,
+			Text:             text,
+			ToolCalls:        ts.toolCalls,
+			FinishReason:     ts.finishReason,
+			Usage:            ts.usage,
+			Response:         ts.response,
+			Sources:          ts.sources,
+			ProviderMetadata: ts.providerMetadata,
 		}},
 	}
 }

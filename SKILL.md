@@ -392,13 +392,14 @@ goai.WithImageProviderOptions(opts map[string]any) // provider-specific params
 
 ```go
 type TextResult struct {
-    Text         string                  // accumulated generated text
-    ToolCalls    []provider.ToolCall     // tool calls from final step
-    Steps        []StepResult            // per-step results
-    TotalUsage   provider.Usage          // aggregated token usage
-    FinishReason provider.FinishReason   // "stop", "tool-calls", "length", etc.
-    Response     provider.ResponseMetadata // provider metadata (ID, Model)
-    Sources      []provider.Source       // citations/references
+    Text             string                         // accumulated generated text
+    ToolCalls        []provider.ToolCall            // tool calls from final step
+    Steps            []StepResult                   // per-step results
+    TotalUsage       provider.Usage                 // aggregated token usage
+    FinishReason     provider.FinishReason          // "stop", "tool-calls", "length", etc.
+    Response         provider.ResponseMetadata      // provider metadata (ID, Model)
+    ProviderMetadata map[string]map[string]any      // provider-specific response data
+    Sources          []provider.Source              // citations/references
 }
 ```
 
@@ -406,10 +407,11 @@ type TextResult struct {
 
 ```go
 type ObjectResult[T any] struct {
-    Object       T                       // the parsed typed object
-    Usage        provider.Usage
-    FinishReason provider.FinishReason
-    Response     provider.ResponseMetadata
+    Object           T                              // the parsed typed object
+    Usage            provider.Usage
+    FinishReason     provider.FinishReason
+    Response         provider.ResponseMetadata
+    ProviderMetadata map[string]map[string]any      // provider-specific response data
 }
 ```
 

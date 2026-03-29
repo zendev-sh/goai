@@ -130,6 +130,44 @@ td := openai.Tools.ImageGeneration(
 )
 ```
 
+**Additional WebSearch options:**
+
+| Option                                         | Type                 | Description                                         |
+| ---------------------------------------------- | -------------------- | --------------------------------------------------- |
+| `WithSearchContextSize(size string)`           | `string`             | `"low"`, `"medium"` (default), `"high"` — controls context breadth and cost |
+| `WithUserLocation(loc WebSearchLocation)`      | `WebSearchLocation`  | Location hint for geographically relevant results (`Country`, `City`, `Timezone`) |
+| `WithSearchFilters(filters WebSearchFilters)`  | `WebSearchFilters`   | Domain allow-list for search results                |
+| `WithExternalWebAccess(enabled bool)`          | `bool`               | `true` = live content (default), `false` = cached   |
+
+**Additional CodeInterpreter options:**
+
+| Option                                               | Type                         | Description                                       |
+| ---------------------------------------------------- | ---------------------------- | ------------------------------------------------- |
+| `WithContainerID(id string)`                         | `string`                     | Use an existing container by ID                   |
+| `WithContainerFiles(container *CodeInterpreterContainer)` | `*CodeInterpreterContainer` | Auto-provisioned container with uploaded file IDs |
+
+**Additional FileSearch options:**
+
+| Option                                           | Type                 | Description                                              |
+| ------------------------------------------------ | -------------------- | -------------------------------------------------------- |
+| `WithRanking(ranking FileSearchRanking)`         | `FileSearchRanking`  | Ranking options: `Ranker` (string) and `ScoreThreshold` (0–1) |
+| `WithFileSearchFilters(filters FileSearchFilter)` | `FileSearchFilter`  | Metadata filter; use `*FileSearchComparisonFilter` or `*FileSearchCompoundFilter` |
+
+**Additional ImageGeneration options:**
+
+| Option                                           | Type                    | Description                                                |
+| ------------------------------------------------ | ----------------------- | ---------------------------------------------------------- |
+| `WithBackground(bg string)`                     | `string`                | Background type for the generated image                    |
+| `WithInputFidelity(fidelity string)`             | `string`                | `"low"` or `"high"` input processing fidelity              |
+| `WithInputImageMask(mask ImageGenerationMask)`   | `ImageGenerationMask`   | Inpainting mask (`FileID` or `ImageURL`)                   |
+| `WithImageModel(model string)`                   | `string`                | Image model to use (default: `"gpt-image-1"`)             |
+| `WithModeration(mod string)`                     | `string`                | Moderation level (default: `"auto"`)                       |
+| `WithOutputCompression(level int)`               | `int`                   | Output compression 0–100                                   |
+| `WithOutputFormat(format string)`                | `string`                | `"png"`, `"jpeg"`, `"webp"`                                |
+| `WithPartialImages(n int)`                       | `int`                   | Partial images in streaming (0–3)                          |
+| `WithImageQuality(quality string)`               | `string`                | `"auto"`, `"low"`, `"medium"`, `"high"`                    |
+| `WithImageSize(size string)`                     | `string`                | `"auto"`, `"1024x1024"`, `"1024x1536"`, `"1536x1024"`     |
+
 ### Google (3 tools)
 
 Import: `github.com/zendev-sh/goai/provider/google`

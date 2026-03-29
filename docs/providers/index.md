@@ -45,6 +45,7 @@ All use the shared `internal/openaicompat` codec.
 | [OpenRouter](openrouter.md) | `openrouter.ai`     | `OPENROUTER_API_KEY`  |
 | [Perplexity](perplexity.md) | `api.perplexity.ai` | `PERPLEXITY_API_KEY`  |
 | [Cerebras](cerebras.md)     | `api.cerebras.ai`   | `CEREBRAS_API_KEY`    |
+| [RunPod](runpod.md)         | `api.runpod.ai`     | `RUNPOD_API_KEY`      |
 
 ## Local / Custom
 

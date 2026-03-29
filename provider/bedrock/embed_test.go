@@ -576,7 +576,7 @@ func TestEmbedding_CohereInvalidFormat(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid embeddings format")
 	}
-	if !strings.Contains(err.Error(), "unrecognised embeddings format") {
+	if !strings.Contains(err.Error(), "bedrock: unrecognised embeddings format") {
 		t.Errorf("error = %v", err)
 	}
 }
