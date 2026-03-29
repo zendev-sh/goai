@@ -142,11 +142,23 @@ func TestWithOnToolCall_Success(t *testing.T) {
 	if len(captured) != 1 {
 		t.Fatalf("OnToolCall called %d times, want 1", len(captured))
 	}
+	if captured[0].ToolCallID != "tc1" {
+		t.Errorf("ToolCallID = %q, want tc1", captured[0].ToolCallID)
+	}
 	if captured[0].ToolName != "read" {
 		t.Errorf("ToolName = %q, want read", captured[0].ToolName)
 	}
-	if captured[0].InputSize != len(`{"path":"a.txt"}`) {
-		t.Errorf("InputSize = %d", captured[0].InputSize)
+	if captured[0].Step != 1 {
+		t.Errorf("Step = %d, want 1", captured[0].Step)
+	}
+	if string(captured[0].Input) != `{"path":"a.txt"}` {
+		t.Errorf("Input = %s, want {\"path\":\"a.txt\"}", captured[0].Input)
+	}
+	if captured[0].Output != "file contents" {
+		t.Errorf("Output = %q, want \"file contents\"", captured[0].Output)
+	}
+	if captured[0].OutputObject != nil {
+		t.Errorf("OutputObject should be nil for non-JSON output, got %v", captured[0].OutputObject)
 	}
 	if captured[0].Duration < 0 {
 		t.Error("Duration should be >= 0")
@@ -195,6 +207,52 @@ func TestWithOnToolCall_Error(t *testing.T) {
 	}
 	if captured.Error.Error() != "tool failed" {
 		t.Errorf("Error = %q, want 'tool failed'", captured.Error)
+	}
+}
+
+func TestWithOnToolCall_JSONOutput(t *testing.T) {
+	var captured ToolCallInfo
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "info", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "info",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return `{"temperature":22,"city":"Tokyo"}`, nil
+			},
+		}),
+		WithOnToolCall(func(info ToolCallInfo) {
+			captured = info
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if captured.OutputObject == nil {
+		t.Fatal("OutputObject should be non-nil for JSON output")
+	}
+	m, ok := captured.OutputObject.(map[string]any)
+	if !ok {
+		t.Fatalf("OutputObject type = %T, want map[string]any", captured.OutputObject)
+	}
+	if m["city"] != "Tokyo" {
+		t.Errorf("OutputObject[city] = %v, want Tokyo", m["city"])
 	}
 }
 
@@ -280,5 +338,36 @@ func TestHooks_MultipleSteps(t *testing.T) {
 	}
 	if toolCount != 1 {
 		t.Errorf("OnToolCall called %d times, want 1", toolCount)
+	}
+}
+
+func TestWithOnRequest_SystemMessageInMessages(t *testing.T) {
+	// requestMessages prepends the system message to RequestInfo.Messages
+	// so hooks always see the full conversation including the system prompt.
+	var captured RequestInfo
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{Text: "ok", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithSystem("you are a helper"),
+		WithPrompt("hello"),
+		WithOnRequest(func(info RequestInfo) { captured = info }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(captured.Messages) < 2 {
+		t.Fatalf("Messages len = %d, want >= 2 (system + user)", len(captured.Messages))
+	}
+	if captured.Messages[0].Role != provider.RoleSystem {
+		t.Errorf("Messages[0].Role = %q, want system", captured.Messages[0].Role)
+	}
+	if captured.Messages[1].Role != provider.RoleUser {
+		t.Errorf("Messages[1].Role = %q, want user", captured.Messages[1].Role)
 	}
 }

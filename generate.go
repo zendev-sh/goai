@@ -343,6 +343,7 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 			MessageCount: len(params.Messages),
 			ToolCount:    len(params.Tools),
 			Timestamp:    time.Now(),
+			Messages:     requestMessages(params.System, params.Messages),
 		})
 	}
 
@@ -403,6 +404,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 				MessageCount: len(params.Messages),
 				ToolCount:    len(params.Tools),
 				Timestamp:    time.Now(),
+				Messages:     requestMessages(params.System, params.Messages),
 			})
 		}
 
@@ -451,7 +453,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		}
 
 		// Execute tools and build continuation messages.
-		toolMessages := executeTools(ctx, result.ToolCalls, toolMap, o.OnToolCall)
+		toolMessages := executeTools(ctx, result.ToolCalls, toolMap, step, o.OnToolCall)
 
 		// Append assistant message with tool calls + tool result messages.
 		params.Messages = appendToolRoundTrip(params.Messages, result, toolMessages)
@@ -459,6 +461,17 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 
 	// MaxSteps reached.
 	return buildTextResult(steps, totalUsage), nil
+}
+
+// requestMessages returns msgs with a system message prepended when system is non-empty.
+// Used to populate RequestInfo.Messages so hooks always see the full conversation.
+func requestMessages(system string, msgs []provider.Message) []provider.Message {
+	if system == "" {
+		return msgs
+	}
+	out := make([]provider.Message, 0, len(msgs)+1)
+	out = append(out, SystemMessage(system))
+	return append(out, msgs...)
 }
 
 // buildToolMap creates a name→Tool lookup from the options.
@@ -479,7 +492,7 @@ func buildToolMap(tools []Tool) map[string]Tool {
 }
 
 // executeTools runs each tool call and returns the tool result messages.
-func executeTools(ctx context.Context, calls []provider.ToolCall, toolMap map[string]Tool, onToolCall func(ToolCallInfo)) []provider.Message {
+func executeTools(ctx context.Context, calls []provider.ToolCall, toolMap map[string]Tool, step int, onToolCall func(ToolCallInfo)) []provider.Message {
 	var msgs []provider.Message
 	for _, tc := range calls {
 		if ctx.Err() != nil {
@@ -488,7 +501,7 @@ func executeTools(ctx context.Context, calls []provider.ToolCall, toolMap map[st
 		tool, ok := toolMap[tc.Name]
 		if !ok {
 			if onToolCall != nil {
-				onToolCall(ToolCallInfo{ToolName: tc.Name, InputSize: len(tc.Input), Error: ErrUnknownTool})
+				onToolCall(ToolCallInfo{ToolCallID: tc.ID, ToolName: tc.Name, Step: step, Input: tc.Input, Error: ErrUnknownTool})
 			}
 			msgs = append(msgs, ToolMessage(tc.ID, tc.Name, "error: unknown tool"))
 			continue
@@ -496,7 +509,12 @@ func executeTools(ctx context.Context, calls []provider.ToolCall, toolMap map[st
 		start := time.Now()
 		output, err := tool.Execute(ctx, tc.Input)
 		if onToolCall != nil {
-			onToolCall(ToolCallInfo{ToolName: tc.Name, InputSize: len(tc.Input), Duration: time.Since(start), Error: err})
+			info := ToolCallInfo{ToolCallID: tc.ID, ToolName: tc.Name, Step: step, Input: tc.Input, Output: output, StartTime: start, Duration: time.Since(start), Error: err}
+			var parsed any
+			if err == nil && json.Unmarshal([]byte(output), &parsed) == nil {
+				info.OutputObject = parsed
+			}
+			onToolCall(info)
 		}
 		if err != nil {
 			msgs = append(msgs, ToolMessage(tc.ID, tc.Name, "error: "+err.Error()))
