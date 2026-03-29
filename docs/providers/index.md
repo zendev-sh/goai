@@ -18,7 +18,7 @@ Dedicated implementations with extended API support.
 | [OpenAI](openai.md)       | ✅ `gpt-4o`, `o3`          | ✅ `text-embedding-3-*` | ✅ `gpt-image-1` | 4 tools        | `OPENAI_API_KEY`                      |
 | [Anthropic](anthropic.md) | ✅ `claude-*`              | —                       | —                | 10 tools       | `ANTHROPIC_API_KEY`                   |
 | [Google](google.md)       | ✅ `gemini-*`              | ✅ `text-embedding-004` | ✅ `imagen-*`    | 3 tools        | `GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY` |
-| [Bedrock](bedrock.md)     | ✅ `anthropic.*`, `meta.*` | —                       | —                | —              | `AWS_ACCESS_KEY_ID`                   |
+| [Bedrock](bedrock.md)     | ✅ `anthropic.*`, `meta.*` | ✅ `titan-embed-*`, `cohere.embed-*` | —                | —              | `AWS_ACCESS_KEY_ID`                   |
 | [Azure](azure.md)         | ✅ `gpt-4o`, `claude-*`    | —                       | ✅               | —              | `AZURE_OPENAI_API_KEY`                |
 | [Vertex AI](vertex.md)    | ✅ `gemini-*`              | ✅                      | ✅               | —              | ADC (Application Default Credentials) |
 

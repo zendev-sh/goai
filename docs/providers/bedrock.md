@@ -205,7 +205,7 @@ model := bedrock.Embedding("amazon.titan-embed-text-v2:0")
 result, err := goai.Embed(context.Background(), model, "hello world")
 fmt.Println(result.Embedding) // []float64
 
-// Batch — EmbedMany auto-chunks Cohere (96/call) and serialises the rest
+// Batch — EmbedMany auto-chunks Cohere (96/call) and parallelises the rest
 model = bedrock.Embedding("cohere.embed-english-v3")
 results, err := goai.EmbedMany(context.Background(), model, []string{"foo", "bar", "baz"})
 ```
