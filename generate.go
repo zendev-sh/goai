@@ -453,6 +453,9 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		}
 
 		// Execute tools and build continuation messages.
+		// Clear tool_choice after the first tool step so the model can freely
+		// produce a text response on subsequent steps.
+		params.ToolChoice = ""
 		toolMessages := executeTools(ctx, result.ToolCalls, toolMap, step, o.OnToolCall)
 
 		// Append assistant message with tool calls + tool result messages.
