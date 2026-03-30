@@ -121,6 +121,7 @@ export default defineConfig({
             { text: 'MCP Client', link: '/concepts/mcp' },
             { text: 'Error Handling', link: '/concepts/error-handling' },
             { text: 'Prompt Caching', link: '/concepts/prompt-caching' },
+            { text: 'Observability', link: '/concepts/observability' },
           ],
         },
         {
