@@ -192,26 +192,6 @@ func BuildRequest(params provider.GenerateParams, modelID string, streaming bool
 	return body
 }
 
-// providerOptionsBaseKnown holds option keys that are always consumed by the
-// provider layer and must never be forwarded to the wire format.
-// Keys that are conditionally consumed (parallelToolCalls, user, logprobs, etc.)
-// are tracked in a local copy inside applyProviderOptions.
-var providerOptionsBaseKnown = map[string]bool{
-	"structuredOutputs": true,
-	"strictJsonSchema":  true,
-	"useResponsesAPI":   true, // consumed by openai.shouldUseResponsesAPI
-}
-
-// providerOptionsProtected holds wire-format keys that must not be overwritten
-// by arbitrary provider option pass-through.
-var providerOptionsProtected = map[string]bool{
-	"model": true, "stream": true, "messages": true,
-	"max_tokens": true, "max_completion_tokens": true,
-	"temperature": true, "top_p": true, "stop": true,
-	"seed": true, "frequency_penalty": true, "presence_penalty": true,
-	"tools": true, "tool_choice": true, "response_format": true,
-}
-
 // applyProviderOptions maps known provider options to their wire-format keys,
 // then passes through any unknown keys directly.
 func applyProviderOptions(body map[string]any, opts map[string]any) {
@@ -219,11 +199,10 @@ func applyProviderOptions(body map[string]any, opts map[string]any) {
 		return
 	}
 
-	// Start with a local copy of the base known set so we can add keys that
-	// are conditionally consumed below without mutating the package-level var.
-	knownKeys := make(map[string]bool, len(providerOptionsBaseKnown)+8)
-	for k, v := range providerOptionsBaseKnown {
-		knownKeys[k] = v
+	knownKeys := map[string]bool{
+		"structuredOutputs": true,
+		"strictJsonSchema":  true,
+		"useResponsesAPI":   true,
 	}
 
 	if v, ok := opts["parallelToolCalls"]; ok {
@@ -268,8 +247,15 @@ func applyProviderOptions(body map[string]any, opts map[string]any) {
 	}
 
 	// Pass through any remaining unknown keys.
+	protectedKeys := map[string]bool{
+		"model": true, "stream": true, "messages": true,
+		"max_tokens": true, "max_completion_tokens": true,
+		"temperature": true, "top_p": true, "stop": true,
+		"seed": true, "frequency_penalty": true, "presence_penalty": true,
+		"tools": true, "tool_choice": true, "response_format": true,
+	}
 	for k, v := range opts {
-		if !knownKeys[k] && !providerOptionsProtected[k] {
+		if !knownKeys[k] && !protectedKeys[k] {
 			body[k] = v
 		}
 	}

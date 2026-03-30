@@ -1834,6 +1834,43 @@ func TestStreamText_Error_OnResponseFired(t *testing.T) {
 	}
 }
 
+// TestStreamText_OnResponse_StatusCodeOnStreamError verifies that when a
+// ChunkError carrying an *APIError arrives during streaming, the OnResponse
+// hook receives the correct StatusCode extracted via errors.As.
+func TestStreamText_OnResponse_StatusCodeOnStreamError(t *testing.T) {
+	apiErr := &APIError{StatusCode: 429, Message: "rate limited", IsRetryable: false}
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "partial"},
+				provider.StreamChunk{Type: provider.ChunkError, Error: apiErr},
+			), nil
+		},
+	}
+
+	var capturedResponse ResponseInfo
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("hi"),
+		WithMaxRetries(0),
+		WithOnResponse(func(info ResponseInfo) {
+			capturedResponse = info
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Consume the stream so the deferred OnResponse fires.
+	stream.Result()
+
+	if capturedResponse.StatusCode != 429 {
+		t.Errorf("ResponseInfo.StatusCode = %d, want 429", capturedResponse.StatusCode)
+	}
+	if capturedResponse.Error == nil {
+		t.Error("ResponseInfo.Error is nil, want non-nil")
+	}
+}
+
 // TestStreamText_ProviderMetadata verifies that nested providerMetadata
 // (OpenAI Chat Completions convention) flows from ChunkFinish.Metadata through
 // consume() into TextResult.ProviderMetadata and StepResult.ProviderMetadata.

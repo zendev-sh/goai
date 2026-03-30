@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -420,5 +421,28 @@ func TestWithRetry_ZeroRetries(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("calls = %d, want 1 (no retries)", calls)
+	}
+}
+
+// TestWithRetry_ExhaustionWraps verifies that when all retries are consumed the
+// error is wrapped with a "retries exhausted" message but the original *APIError
+// remains unwrappable via errors.As.
+func TestWithRetry_ExhaustionWraps(t *testing.T) {
+	inner := &APIError{StatusCode: http.StatusTooManyRequests, IsRetryable: true, Message: "rate limited"}
+	_, err := withRetry(t.Context(), 2, func() (string, error) {
+		return "", inner
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "retries exhausted") {
+		t.Errorf("err = %q, want it to contain 'retries exhausted'", err.Error())
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Error("errors.As could not unwrap *APIError from exhaustion error")
+	}
+	if apiErr.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("apiErr.StatusCode = %d, want %d", apiErr.StatusCode, http.StatusTooManyRequests)
 	}
 }

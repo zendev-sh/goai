@@ -613,3 +613,19 @@ func TestRepairJSON_AtExactMaxDepth(t *testing.T) {
 		t.Errorf("repairJSON at maxJSONDepth=%d produced invalid JSON: %v", maxJSONDepth, err)
 	}
 }
+
+func TestRepairJSON_ExceedsMaxDepth_Arrays(t *testing.T) {
+	// Build deeply-nested arrays: [[[...  600 levels deep, no closing brackets.
+	// This exercises the '[' case of the goto closeAll depth-limit guard (line 83-85),
+	// which is distinct from the '{' case covered by TestRepairJSON_ExceedsMaxDepth.
+	const depth = 600
+	input := strings.Repeat("[", depth) // intentionally truncated - no closing brackets
+
+	got := repairJSON(input)
+
+	// The result must be parseable JSON and must not panic.
+	var v any
+	if err := json.Unmarshal([]byte(got), &v); err != nil {
+		t.Errorf("repairJSON with %d nested '[' produced invalid JSON: %v\nresult (first 200 bytes): %.200s", depth, err, got)
+	}
+}
