@@ -1,27 +1,72 @@
 ---
 title: Observability
-description: "Trace LLM calls with Langfuse in GoAI. Zero-dependency tracing with automatic trace hierarchy, tool spans, and token usage tracking."
+description: "Trace LLM calls, tool executions, and agent runs in GoAI. Plug-in observability providers via lifecycle hooks. Ships with Langfuse support."
 ---
 
 # Observability
 
-GoAI provides built-in observability via the `observability/langfuse` package. Every LLM call, tool execution, and agent run is traced automatically.
+GoAI's observability is built on four lifecycle hooks: `OnRequest`, `OnResponse`, `OnToolCall`, and `OnStepFinish`. Any observability provider can plug into these hooks to trace LLM calls, tool executions, and multi-step agent runs.
+
+## How It Works
+
+Observability providers return `[]goai.Option` containing hook closures. Append them to your call:
 
 ```go
-import "github.com/zendev-sh/goai/observability/langfuse"
-
-lf := langfuse.New(langfuse.Config{TraceName: "my-agent"})
-
 result, err := goai.GenerateText(ctx, model,
-    append(lf.Run(),
+    append(provider.Run(),
         goai.WithPrompt("Hello"),
     )...,
 )
 ```
 
-## Setup
+Each hook fires at a specific point in the request lifecycle:
 
-Set environment variables for Langfuse credentials:
+| Hook | When | Data |
+|------|------|------|
+| `OnRequest` | Before each LLM call | Model, full message history, tool count |
+| `OnResponse` | After each LLM call | Latency, token usage, finish reason, errors |
+| `OnToolCall` | After each tool execution | Tool name, input/output, duration, errors |
+| `OnStepFinish` | After each step completes | Step number, finish reason, tool calls |
+
+This design means observability never touches the core SDK. Providers are optional imports with zero impact on non-instrumented code.
+
+## Available Providers
+
+| Provider | Package | Status |
+|----------|---------|--------|
+| [Langfuse](#langfuse) | `observability/langfuse` | Shipped |
+| OpenTelemetry | `observability/otel` | Planned |
+
+### Custom Provider
+
+Any observability backend can be integrated by implementing the hooks pattern:
+
+```go
+func MyTracer() []goai.Option {
+    return []goai.Option{
+        goai.WithOnRequest(func(info goai.RequestInfo) {
+            // start span
+        }),
+        goai.WithOnResponse(func(info goai.ResponseInfo) {
+            // record latency, usage, errors
+        }),
+        goai.WithOnToolCall(func(info goai.ToolCallInfo) {
+            // record tool execution
+        }),
+        goai.WithOnStepFinish(func(step goai.StepResult) {
+            // close span, flush
+        }),
+    }
+}
+```
+
+---
+
+## Langfuse
+
+[Langfuse](https://langfuse.com) is an open-source LLM observability platform. The `observability/langfuse` package provides zero-dependency tracing with automatic trace hierarchy, tool spans, and token usage tracking.
+
+### Setup
 
 ```bash
 export LANGFUSE_PUBLIC_KEY=pk-lf-...
@@ -29,20 +74,17 @@ export LANGFUSE_SECRET_KEY=sk-lf-...
 export LANGFUSE_HOST=https://cloud.langfuse.com  # or your self-hosted URL
 ```
 
-Or pass them directly:
-
 ```go
-lf := langfuse.New(langfuse.Config{
-    PublicKey: "pk-lf-...",
-    SecretKey: "sk-lf-...",
-    Host:      "https://cloud.langfuse.com",
-    TraceName: "my-agent",
-})
+import "github.com/zendev-sh/goai/observability/langfuse"
+
+lf := langfuse.New(langfuse.Config{TraceName: "my-agent"})
 ```
 
-## Trace Hierarchy
+Credentials can also be passed directly via `Config.PublicKey`, `Config.SecretKey`, `Config.Host`.
 
-Each run creates a structured trace:
+### Trace Hierarchy
+
+Each run creates a structured trace in Langfuse:
 
 ```
 Trace
@@ -54,15 +96,11 @@ Trace
 
 Generations include model name, token usage (input/output/reasoning/cache), and finish reason. Tool spans include the tool name, input arguments, output, and duration.
 
-## Usage Patterns
+### Usage Patterns
 
-### One-off calls with `Run()`
-
-`Run()` returns a fresh set of options for a single call:
+**One-off calls** with `Run()`:
 
 ```go
-lf := langfuse.New(langfuse.Config{TraceName: "assistant"})
-
 result, err := goai.GenerateText(ctx, model,
     append(lf.Run(),
         goai.WithSystem("You are a helpful assistant."),
@@ -71,9 +109,7 @@ result, err := goai.GenerateText(ctx, model,
 )
 ```
 
-### Reusable factory with `With()`
-
-`With()` bakes in base options and returns a factory. Call it per run:
+**Reusable factory** with `With()` for running the same agent multiple times:
 
 ```go
 runAgent := lf.With(
@@ -82,7 +118,6 @@ runAgent := lf.With(
     goai.WithMaxSteps(5),
 )
 
-// Each call gets a separate trace
 for _, city := range cities {
     result, err := goai.GenerateText(ctx, model,
         append(runAgent(), goai.WithPrompt("Weather in "+city))...,
@@ -90,9 +125,7 @@ for _, city := range cities {
 }
 ```
 
-### Structured output with tools
-
-Works with `GenerateObject` and multi-step tool loops:
+**Structured output** with tools:
 
 ```go
 result, err := goai.GenerateObject[WeatherReport](ctx, model,
@@ -105,7 +138,7 @@ result, err := goai.GenerateObject[WeatherReport](ctx, model,
 )
 ```
 
-## Config Options
+### Config
 
 ```go
 langfuse.Config{
@@ -115,66 +148,35 @@ langfuse.Config{
     Host      string   // LANGFUSE_HOST or LANGFUSE_BASE_URL
 
     // Trace metadata
-    TraceName   string   // name shown in Langfuse UI (default: "agent")
+    TraceName   string   // name in Langfuse UI (default: "agent")
     UserID      string   // associate traces with a user
     SessionID   string   // group traces into a session
     Tags        []string // searchable tags
-    Metadata    any      // arbitrary metadata attached to the trace
+    Metadata    any      // arbitrary metadata on the trace
     Release     string   // app release version
     Version     string   // trace schema version
-    Environment string   // "production", "staging", etc. (falls back to LANGFUSE_ENV)
+    Environment string   // falls back to LANGFUSE_ENV
 
     // Prompt management
     PromptName    string // link to a Langfuse prompt
-    PromptVersion int    // prompt version number
+    PromptVersion int
 
     // Error handling
     OnFlushError func(error) // called on HTTP flush failure (nil = silent)
 }
 ```
 
-## Error Handling
+### Error Handling
 
-Tracing is best-effort. A Langfuse outage or flush failure never crashes your app:
+Tracing is best-effort. A Langfuse outage never crashes your app:
 
-- If `OnFlushError` is set, it receives the error
-- If `OnFlushError` is nil, flush errors are silently discarded
-- If the LLM call itself fails, a partial trace is still flushed with `level: ERROR`
+- `OnFlushError` receives flush errors if set; otherwise they are silently discarded
+- If the LLM call fails, a partial trace is flushed with `level: ERROR`
 
-```go
-lf := langfuse.New(langfuse.Config{
-    TraceName: "my-agent",
-    OnFlushError: func(err error) {
-        log.Printf("langfuse flush error: %v", err)
-    },
-})
-```
+### Concurrency
 
-## Concurrency
+The HTTP client is shared across all runs. Each `Run()` or `With()()` call creates isolated per-run state. Concurrent runs are safe with no additional synchronization needed.
 
-The HTTP client is shared across all runs. Each `Run()` or `With()()` call creates isolated per-run state with no locking needed within a run. Concurrent runs are safe:
+### Example
 
-```go
-var wg sync.WaitGroup
-for i := 0; i < 10; i++ {
-    wg.Add(1)
-    go func() {
-        defer wg.Done()
-        goai.GenerateText(ctx, model, append(lf.Run(), goai.WithPrompt("hi"))...)
-    }()
-}
-wg.Wait()
-```
-
-## What Gets Traced
-
-| Hook | Data captured |
-|------|--------------|
-| `OnRequest` | Model name, full message history (system + user + tool results) |
-| `OnResponse` | Latency, token usage (input/output/reasoning/cache), finish reason |
-| `OnToolCall` | Tool name, input args, output, duration, errors |
-| `OnStepFinish` | Step number, finish reason, triggers trace flush on final step |
-
-## Example
-
-See the [full runnable example](https://github.com/zendev-sh/goai/tree/main/examples/langfuse) for a complete multi-step agent with tool calls and structured output.
+See the [full runnable example](https://github.com/zendev-sh/goai/tree/main/examples/langfuse) for a multi-step agent with tool calls and structured output.
