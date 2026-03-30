@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1028,6 +1029,33 @@ func TestGenerateObject_OnResponseWithAPIError(t *testing.T) {
 	}
 }
 
+func TestStreamObject_Error_OnResponseFired(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return nil, &APIError{Message: "service unavailable", StatusCode: 503, IsRetryable: false}
+		},
+	}
+
+	var capturedResponse ResponseInfo
+	_, err := StreamObject[simpleObject](t.Context(), model,
+		WithPrompt("generate"),
+		WithMaxRetries(0),
+		WithOnResponse(func(info ResponseInfo) {
+			capturedResponse = info
+		}),
+	)
+	if err == nil {
+		t.Fatal("expected error from StreamObject")
+	}
+	if capturedResponse.Error == nil {
+		t.Error("OnResponse not called or ResponseInfo.Error is nil")
+	}
+	if capturedResponse.StatusCode != 503 {
+		t.Errorf("ResponseInfo.StatusCode = %d, want 503", capturedResponse.StatusCode)
+	}
+}
+
 func TestStreamObject_WithTimeout(t *testing.T) {
 	ch := make(chan provider.StreamChunk, 3)
 	ch <- provider.StreamChunk{Type: provider.ChunkText, Text: `{"name":"hi","age":5}`}
@@ -1189,6 +1217,394 @@ func TestStreamObject_ErrReturnsStreamError(t *testing.T) {
 	}
 	if stream.Err().Error() != "stream broke" {
 		t.Errorf("unexpected error: %v", stream.Err())
+	}
+}
+
+// --- GenerateObject tool loop tests ---
+
+// TestGenerateObject_ToolLoop verifies that GenerateObject runs intermediate tool
+// steps and uses the results in the final structured-output step.
+func TestGenerateObject_ToolLoop(t *testing.T) {
+	callCount := 0
+	var capturedMessages [][]provider.Message // messages at each DoGenerate call
+
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			capturedMessages = append(capturedMessages, params.Messages)
+
+			switch callCount {
+			case 1:
+				// Tool step: model requests a tool call.
+				return &provider.GenerateResult{
+					FinishReason: provider.FinishToolCalls,
+					ToolCalls: []provider.ToolCall{
+						{ID: "call_1", Name: "get_age", Input: json.RawMessage(`{"name":"Alice"}`)},
+					},
+					Usage: provider.Usage{InputTokens: 10, OutputTokens: 5},
+				}, nil
+			case 2:
+				// Final step: structured output after tool results are in context.
+				return &provider.GenerateResult{
+					Text:         `{"name":"Alice","age":30}`,
+					FinishReason: provider.FinishStop,
+					Usage:        provider.Usage{InputTokens: 20, OutputTokens: 8},
+				}, nil
+			default:
+				t.Fatalf("unexpected call count %d", callCount)
+				return nil, nil
+			}
+		},
+	}
+
+	toolExecuted := false
+	result, err := GenerateObject[simpleObject](t.Context(), model,
+		WithPrompt("generate a person"),
+		WithMaxSteps(2), // 1 tool step + 1 final structured-output step
+		WithTools(Tool{
+			Name:        "get_age",
+			Description: "get age for a person",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}}}`),
+			Execute: func(_ context.Context, input json.RawMessage) (string, error) {
+				toolExecuted = true
+				return "30", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !toolExecuted {
+		t.Error("tool was not executed")
+	}
+	if callCount != 2 {
+		t.Errorf("DoGenerate called %d times, want 2", callCount)
+	}
+	if result.Object.Name != "Alice" || result.Object.Age != 30 {
+		t.Errorf("Object = %+v, want {Alice 30}", result.Object)
+	}
+
+	// Usage should be the sum of both steps.
+	if result.Usage.InputTokens != 30 || result.Usage.OutputTokens != 13 {
+		t.Errorf("Usage = %+v, want InputTokens=30 OutputTokens=13", result.Usage)
+	}
+
+	// Steps: 1 tool step + 1 final step.
+	if len(result.Steps) != 2 {
+		t.Fatalf("Steps len = %d, want 2", len(result.Steps))
+	}
+	if result.Steps[0].Number != 1 || result.Steps[0].FinishReason != provider.FinishToolCalls {
+		t.Errorf("Steps[0] = %+v", result.Steps[0])
+	}
+	if result.Steps[1].Number != 2 || result.Steps[1].FinishReason != provider.FinishStop {
+		t.Errorf("Steps[1] = %+v", result.Steps[1])
+	}
+
+	// Tool results must be present in the second call's messages.
+	if len(capturedMessages) != 2 {
+		t.Fatalf("capturedMessages len = %d, want 2", len(capturedMessages))
+	}
+	lastMsgs := capturedMessages[1]
+	var foundToolResult bool
+	for _, msg := range lastMsgs {
+		for _, part := range msg.Content {
+			if part.Type == provider.PartToolResult {
+				foundToolResult = true
+			}
+		}
+	}
+	if !foundToolResult {
+		t.Error("tool result not present in final step messages")
+	}
+
+	// ResponseFormat is set on every call — the mock returns FinishToolCalls on
+	// step 1 because real providers call tools even when ResponseFormat is present,
+	// deferring JSON output until they have enough information.
+}
+
+// TestGenerateObject_ToolLoop_MaxSteps1_NoLoop verifies that MaxSteps=1 (the
+// default) skips the tool loop entirely and goes straight to structured output.
+func TestGenerateObject_ToolLoop_MaxSteps1_NoLoop(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if params.ResponseFormat == nil {
+				t.Error("ResponseFormat must be set on the single call when MaxSteps=1")
+			}
+			return &provider.GenerateResult{
+				Text:         `{"name":"Bob","age":25}`,
+				FinishReason: provider.FinishStop,
+			}, nil
+		},
+	}
+
+	toolExecuted := false
+	result, err := GenerateObject[simpleObject](t.Context(), model,
+		WithPrompt("generate"),
+		// MaxSteps defaults to 1 — no explicit WithMaxSteps needed.
+		WithTools(Tool{
+			Name:        "unused_tool",
+			Description: "never called",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				toolExecuted = true
+				return "", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toolExecuted {
+		t.Error("tool should not have been executed with MaxSteps=1")
+	}
+	if callCount != 1 {
+		t.Errorf("DoGenerate called %d times, want 1", callCount)
+	}
+	if result.Object.Name != "Bob" {
+		t.Errorf("Object.Name = %q, want Bob", result.Object.Name)
+	}
+	if len(result.Steps) != 1 {
+		t.Errorf("Steps len = %d, want 1", len(result.Steps))
+	}
+}
+
+// TestGenerateObject_ToolLoop_StopsEarlyWhenNoToolCalls verifies that the loop
+// exits immediately when the model returns finishReason "stop" without calling
+// any tools, and that the text from that step is parsed as structured output.
+func TestGenerateObject_ToolLoop_StopsEarlyWhenNoToolCalls(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if params.ResponseFormat == nil {
+				t.Error("ResponseFormat must be set on every step")
+			}
+			if callCount > 1 {
+				t.Fatalf("unexpected call count %d — should have stopped after step 1", callCount)
+			}
+			// Model decides it doesn't need tools, returns JSON directly.
+			return &provider.GenerateResult{
+				Text:         `{"name":"Carol","age":22}`,
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 5},
+			}, nil
+		},
+	}
+
+	result, err := GenerateObject[simpleObject](t.Context(), model,
+		WithPrompt("generate"),
+		WithMaxSteps(5), // high limit — model stops on its own after 1 call
+		WithTools(Tool{
+			Name:        "some_tool",
+			Description: "some tool",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "result", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if callCount != 1 {
+		t.Errorf("DoGenerate called %d times, want 1", callCount)
+	}
+	if result.Object.Name != "Carol" {
+		t.Errorf("Object.Name = %q, want Carol", result.Object.Name)
+	}
+	if len(result.Steps) != 1 {
+		t.Errorf("Steps len = %d, want 1", len(result.Steps))
+	}
+}
+
+// TestGenerateObject_ToolLoop_MaxStepsExhausted verifies that an error is
+// returned when MaxSteps is reached with tool calls still pending.
+func TestGenerateObject_ToolLoop_MaxStepsExhausted(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			// Always requests a tool call — never produces stop.
+			return &provider.GenerateResult{
+				FinishReason: provider.FinishToolCalls,
+				ToolCalls:    []provider.ToolCall{{ID: "c", Name: "t", Input: json.RawMessage(`{}`)}},
+			}, nil
+		},
+	}
+
+	_, err := GenerateObject[simpleObject](t.Context(), model,
+		WithPrompt("generate"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:        "t",
+			Description: "t",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+			Execute:     func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err == nil {
+		t.Fatal("expected error when max steps exhausted")
+	}
+	if !strings.Contains(err.Error(), "max steps") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestGenerateObject_ToolLoop_ErrorDuringToolStep verifies that an error in an
+// intermediate step is propagated immediately.
+func TestGenerateObject_ToolLoop_ErrorDuringToolStep(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			return nil, &APIError{Message: "upstream error", StatusCode: 500}
+		},
+	}
+
+	_, err := GenerateObject[simpleObject](t.Context(), model,
+		WithPrompt("generate"),
+		WithMaxSteps(3),
+		WithMaxRetries(0),
+		WithTools(Tool{
+			Name:        "t",
+			Description: "t",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+			Execute:     func(_ context.Context, _ json.RawMessage) (string, error) { return "", nil },
+		}),
+	)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if callCount != 1 {
+		t.Errorf("DoGenerate called %d times, want 1", callCount)
+	}
+}
+
+// TestGenerateObject_ToolLoop_OnStepFinish verifies that OnStepFinish is called
+// for every step including the final structured-output step.
+func TestGenerateObject_ToolLoop_OnStepFinish(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					FinishReason: provider.FinishToolCalls,
+					ToolCalls:    []provider.ToolCall{{ID: "c1", Name: "t", Input: json.RawMessage(`{}`)}},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         `{"name":"Dave","age":40}`,
+				FinishReason: provider.FinishStop,
+			}, nil
+		},
+	}
+
+	var stepNumbers []int
+	_, err := GenerateObject[simpleObject](t.Context(), model,
+		WithPrompt("generate"),
+		WithMaxSteps(2), // 1 tool step + 1 final structured-output step
+		WithOnStepFinish(func(s StepResult) { stepNumbers = append(stepNumbers, s.Number) }),
+		WithTools(Tool{
+			Name:        "t",
+			Description: "t",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+			Execute:     func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stepNumbers) != 2 || stepNumbers[0] != 1 || stepNumbers[1] != 2 {
+		t.Errorf("stepNumbers = %v, want [1 2]", stepNumbers)
+	}
+}
+
+// TestGenerateObject_ToolLoop_SingleStepHasOneStep verifies ObjectResult.Steps
+// contains exactly one entry for the default single-step case.
+func TestGenerateObject_ToolLoop_SingleStepHasOneStep(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         `{"name":"Eve","age":28}`,
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 5, OutputTokens: 3},
+			}, nil
+		},
+	}
+
+	result, err := GenerateObject[simpleObject](t.Context(), model, WithPrompt("generate"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Steps) != 1 {
+		t.Errorf("Steps len = %d, want 1", len(result.Steps))
+	}
+	if result.Steps[0].Number != 1 {
+		t.Errorf("Steps[0].Number = %d, want 1", result.Steps[0].Number)
+	}
+	if result.Usage.InputTokens != 5 || result.Usage.OutputTokens != 3 {
+		t.Errorf("Usage = %+v, want InputTokens=5 OutputTokens=3", result.Usage)
+	}
+}
+
+// TestGenerateObject_ToolLoop_ToolChoiceRequiredResets verifies that
+// WithToolChoice("required") is cleared after the first tool step so the model
+// can produce structured output on the next step instead of looping forever.
+func TestGenerateObject_ToolLoop_ToolChoiceRequiredResets(t *testing.T) {
+	step := 0
+	var capturedToolChoices []string
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
+			step++
+			capturedToolChoices = append(capturedToolChoices, params.ToolChoice)
+			if step == 1 {
+				return &provider.GenerateResult{
+					FinishReason: provider.FinishToolCalls,
+					ToolCalls: []provider.ToolCall{
+						{ID: "c1", Name: "echo", Input: json.RawMessage(`{"msg":"hi"}`)},
+					},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         `{"name":"Bob","age":25}`,
+				FinishReason: provider.FinishStop,
+			}, nil
+		},
+	}
+
+	result, err := GenerateObject[simpleObject](t.Context(), model,
+		WithPrompt("go"),
+		WithTools(Tool{
+			Name: "echo", Description: "echo",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "hi", nil },
+		}),
+		WithToolChoice("required"),
+		WithMaxSteps(5),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Object.Name != "Bob" {
+		t.Errorf("Object.Name = %q, want Bob", result.Object.Name)
+	}
+	if len(capturedToolChoices) != 2 {
+		t.Fatalf("steps = %d, want 2", len(capturedToolChoices))
+	}
+	if capturedToolChoices[0] != "required" {
+		t.Errorf("step 1 tool_choice = %q, want required", capturedToolChoices[0])
+	}
+	if capturedToolChoices[1] != "" {
+		t.Errorf("step 2 tool_choice = %q, want empty (reset)", capturedToolChoices[1])
 	}
 }
 

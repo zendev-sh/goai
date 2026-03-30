@@ -18,7 +18,7 @@ type ObjectResult[T any] struct {
 	// Object is the parsed structured output.
 	Object T
 
-	// Usage tracks token consumption.
+	// Usage tracks total token consumption across all steps.
 	Usage provider.Usage
 
 	// FinishReason indicates why generation stopped.
@@ -29,6 +29,10 @@ type ObjectResult[T any] struct {
 
 	// ProviderMetadata contains provider-specific response data.
 	ProviderMetadata map[string]map[string]any
+
+	// Steps contains results from each generation step (for multi-step tool loops).
+	// The final step is always the structured output step.
+	Steps []StepResult
 }
 
 // ObjectStream is a streaming structured output response.
@@ -52,9 +56,9 @@ type ObjectStream[T any] struct {
 	usage            provider.Usage
 	response         provider.ResponseMetadata
 	providerMetadata map[string]map[string]any
-	finalObject      *T
-	parseErr         error
-	streamErr        error
+	finalObject  *T
+	parseErr     error
+	streamErr    error
 }
 
 func newObjectStream[T any](ctx context.Context, source <-chan provider.StreamChunk) *ObjectStream[T] {
@@ -210,6 +214,15 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 
 // GenerateObject performs a non-streaming structured output generation.
 // The schema is auto-generated from T, or can be overridden with WithExplicitSchema.
+//
+// When tools with Execute functions are provided and MaxSteps > 1, GenerateObject
+// runs a tool loop (identical to GenerateText) with ResponseFormat set on every
+// step. The model decides when to call tools vs produce the final JSON output.
+// Structured output is parsed from whichever step returns finishReason "stop".
+//
+// If MaxSteps is exhausted before a "stop" step occurs, an error is returned.
+// This differs slightly from Vercel AI SDK, which returns a partial result with
+// a nil output field — in Go, returning an error is the idiomatic equivalent.
 func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, opts ...Option) (*ObjectResult[T], error) {
 	if model == nil {
 		return nil, errors.New("goai: model must not be nil")
@@ -232,63 +245,109 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 	schemaName := cmp.Or(o.SchemaName, "response")
 
 	params := buildParams(o)
+	// ResponseFormat is set upfront and sent on every step — the model decides
+	// when to call tools vs return structured JSON. This mirrors Vercel AI SDK
+	// where output parsing happens only on the step with finishReason "stop".
 	params.ResponseFormat = &provider.ResponseFormat{
 		Name:   schemaName,
 		Schema: schema,
 	}
 
-	if o.OnRequest != nil {
-		o.OnRequest(RequestInfo{
-			Model:        model.ModelID(),
-			MessageCount: len(params.Messages),
-			ToolCount:    len(params.Tools),
-			Timestamp:    time.Now(),
+	toolMap := buildToolMap(o.Tools)
+
+	var steps []StepResult
+	var totalUsage provider.Usage
+
+	for step := 1; step <= o.MaxSteps; step++ {
+		if o.OnRequest != nil {
+			o.OnRequest(RequestInfo{
+				Model:        model.ModelID(),
+				MessageCount: len(params.Messages),
+				ToolCount:    len(params.Tools),
+				Timestamp:    time.Now(),
+				Messages:     requestMessages(params.System, params.Messages),
+			})
+		}
+
+		start := time.Now()
+		result, err := withRetry(ctx, o.MaxRetries, func() (*provider.GenerateResult, error) {
+			return model.DoGenerate(ctx, params)
 		})
-	}
 
-	start := time.Now()
-	result, err := withRetry(ctx, o.MaxRetries, func() (*provider.GenerateResult, error) {
-		return model.DoGenerate(ctx, params)
-	})
-
-	if o.OnResponse != nil {
-		info := ResponseInfo{Latency: time.Since(start), Error: err}
-		if err == nil {
-			info.Usage = result.Usage
-			info.FinishReason = result.FinishReason
+		if o.OnResponse != nil {
+			info := ResponseInfo{Latency: time.Since(start), Error: err}
+			if err == nil {
+				info.Usage = result.Usage
+				info.FinishReason = result.FinishReason
+			}
+			var apiErr *APIError
+			if errors.As(err, &apiErr) {
+				info.StatusCode = apiErr.StatusCode
+			}
+			o.OnResponse(info)
 		}
-		var apiErr *APIError
-		if errors.As(err, &apiErr) {
-			info.StatusCode = apiErr.StatusCode
+
+		if err != nil {
+			return nil, err
 		}
-		o.OnResponse(info)
+
+		stepResult := StepResult{
+			Number:           step,
+			Text:             result.Text,
+			ToolCalls:        result.ToolCalls,
+			FinishReason:     result.FinishReason,
+			Usage:            result.Usage,
+			Response:         result.Response,
+			ProviderMetadata: result.ProviderMetadata,
+			Sources:          result.Sources,
+		}
+		steps = append(steps, stepResult)
+		totalUsage = addUsage(totalUsage, result.Usage)
+
+		if o.OnStepFinish != nil {
+			o.OnStepFinish(stepResult)
+		}
+
+		// Parse structured output only when the model finished with "stop"
+		// (not tool calls). This is identical to Vercel's behaviour.
+		if result.FinishReason != provider.FinishToolCalls || len(result.ToolCalls) == 0 || len(toolMap) == 0 {
+			text := result.Text
+			if text == "" {
+				return nil, fmt.Errorf("goai: empty response from model")
+			}
+			var obj T
+			if err := json.Unmarshal([]byte(text), &obj); err != nil {
+				return nil, fmt.Errorf("parsing structured output: %w (raw: %s)", err, truncate(text, 200))
+			}
+			return &ObjectResult[T]{
+				Object:           obj,
+				Usage:            totalUsage,
+				FinishReason:     result.FinishReason,
+				Response:         result.Response,
+				ProviderMetadata: result.ProviderMetadata,
+				Steps:            steps,
+			}, nil
+		}
+
+		// Model requested tool calls — execute them and continue.
+		// Clear tool_choice after the first tool step so the model can freely
+		// produce structured output on subsequent steps.
+		params.ToolChoice = ""
+		toolMessages := executeTools(ctx, result.ToolCalls, toolMap, step, o.OnToolCall)
+		params.Messages = appendToolRoundTrip(params.Messages, result, toolMessages)
 	}
 
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse the JSON response into T.
-	var obj T
-	text := result.Text
-	if text == "" {
-		return nil, fmt.Errorf("goai: empty response from model")
-	}
-	if err := json.Unmarshal([]byte(text), &obj); err != nil {
-		return nil, fmt.Errorf("parsing structured output: %w (raw: %s)", err, truncate(text, 200))
-	}
-
-	return &ObjectResult[T]{
-		Object:           obj,
-		Usage:            result.Usage,
-		FinishReason:     result.FinishReason,
-		Response:         result.Response,
-		ProviderMetadata: result.ProviderMetadata,
-	}, nil
+	// MaxSteps exhausted with tool calls still pending — no structured output produced.
+	return nil, fmt.Errorf("goai: max steps (%d) reached without producing structured output", o.MaxSteps)
 }
 
 // StreamObject performs a streaming structured output generation.
 // Returns an ObjectStream that emits progressively populated partial objects.
+//
+// Unlike GenerateObject, StreamObject is intentionally single-step: it initiates
+// one streaming request and returns immediately. Tool loops are not supported
+// because the caller consumes the stream asynchronously; use GenerateObject when
+// you need tools and multi-step behaviour.
 func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts ...Option) (*ObjectStream[T], error) {
 	if model == nil {
 		return nil, errors.New("goai: model must not be nil")
@@ -321,6 +380,7 @@ func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts
 			MessageCount: len(params.Messages),
 			ToolCount:    len(params.Tools),
 			Timestamp:    time.Now(),
+			Messages:     requestMessages(params.System, params.Messages),
 		})
 	}
 

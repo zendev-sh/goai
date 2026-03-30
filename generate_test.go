@@ -1758,7 +1758,7 @@ func TestExecuteTools_ContextCancelled(t *testing.T) {
 		{ID: "tc2", Name: "slow", Input: json.RawMessage(`{}`)},
 	}
 
-	msgs := executeTools(ctx, calls, toolMap, nil)
+	msgs := executeTools(ctx, calls, toolMap, 1, nil)
 	// With a cancelled context, executeTools should return early (0 or fewer results).
 	if len(msgs) >= 2 {
 		t.Errorf("expected fewer than 2 messages (ctx cancelled), got %d", len(msgs))
@@ -1794,6 +1794,33 @@ func TestConsume_ContextCancelledResultPath(t *testing.T) {
 	result := stream.Result()
 	// Result should have at most the text sent before cancel.
 	_ = result
+}
+
+func TestStreamText_Error_OnResponseFired(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return nil, &APIError{Message: "too many requests", StatusCode: 429, IsRetryable: false}
+		},
+	}
+
+	var capturedResponse ResponseInfo
+	_, err := StreamText(t.Context(), model,
+		WithPrompt("hi"),
+		WithMaxRetries(0),
+		WithOnResponse(func(info ResponseInfo) {
+			capturedResponse = info
+		}),
+	)
+	if err == nil {
+		t.Fatal("expected error from StreamText")
+	}
+	if capturedResponse.Error == nil {
+		t.Error("OnResponse not called or ResponseInfo.Error is nil")
+	}
+	if capturedResponse.StatusCode != 429 {
+		t.Errorf("ResponseInfo.StatusCode = %d, want 429", capturedResponse.StatusCode)
+	}
 }
 
 // TestStreamText_ProviderMetadata verifies that nested providerMetadata
@@ -2029,5 +2056,57 @@ func TestStreamText_FlatMetadata_CacheTokens(t *testing.T) {
 	}
 	if result.Response.ProviderMetadata["cacheWriteInputTokens"] != 25 {
 		t.Errorf("cacheWriteInputTokens = %v, want 25", result.Response.ProviderMetadata["cacheWriteInputTokens"])
+	}
+}
+
+// TestGenerateText_ToolLoop_ToolChoiceRequiredResets verifies that
+// WithToolChoice("required") is cleared after the first tool step so the model
+// can produce a text response instead of looping on tool calls indefinitely.
+func TestGenerateText_ToolLoop_ToolChoiceRequiredResets(t *testing.T) {
+	step := 0
+	var capturedToolChoices []string
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
+			step++
+			capturedToolChoices = append(capturedToolChoices, params.ToolChoice)
+			if step == 1 {
+				return &provider.GenerateResult{
+					FinishReason: provider.FinishToolCalls,
+					ToolCalls: []provider.ToolCall{
+						{ID: "c1", Name: "echo", Input: json.RawMessage(`{}`)},
+					},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         "done",
+				FinishReason: provider.FinishStop,
+			}, nil
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithTools(Tool{
+			Name: "echo", Description: "echo",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		WithToolChoice("required"),
+		WithMaxSteps(5),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "done" {
+		t.Errorf("Text = %q, want done", result.Text)
+	}
+	if len(capturedToolChoices) != 2 {
+		t.Fatalf("steps = %d, want 2", len(capturedToolChoices))
+	}
+	if capturedToolChoices[0] != "required" {
+		t.Errorf("step 1 tool_choice = %q, want required", capturedToolChoices[0])
+	}
+	if capturedToolChoices[1] != "" {
+		t.Errorf("step 2 tool_choice = %q, want empty (reset)", capturedToolChoices[1])
 	}
 }
