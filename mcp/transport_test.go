@@ -1435,3 +1435,70 @@ func TestSSETransport_WithCustomHTTPClient(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	st.Close()
 }
+
+func TestStdioTransport_StartNonExistentBinary(t *testing.T) {
+	st := NewStdioTransport("/nonexistent/binary/that/does/not/exist", nil)
+	err := st.Start(t.Context())
+	if err == nil {
+		st.Close()
+		t.Fatal("expected error starting non-existent binary")
+	}
+	if !strings.Contains(err.Error(), "start process") {
+		t.Errorf("error = %q, want to contain 'start process'", err.Error())
+	}
+}
+
+// TestMergeEnv_RejectsNewlineKeys verifies that mergeEnv silently drops entries
+// whose key contains a newline character, preventing env-variable injection.
+func TestMergeEnv_RejectsNewlineKeys(t *testing.T) {
+	env := map[string]string{
+		"VALID_KEY":         "valid_value",
+		"INJECT\nED_KEY":    "bad_value",
+		"ALSO_VALID":        "also_valid_value",
+	}
+	result := mergeEnv(env)
+
+	for _, entry := range result {
+		if strings.Contains(entry, "INJECT\nED_KEY") || strings.Contains(entry, "bad_value") {
+			t.Errorf("mergeEnv included injected entry %q, want it dropped", entry)
+		}
+	}
+
+	// Ensure valid keys are still present.
+	found := map[string]bool{}
+	for _, entry := range result {
+		if strings.HasPrefix(entry, "VALID_KEY=") {
+			found["VALID_KEY"] = true
+		}
+		if strings.HasPrefix(entry, "ALSO_VALID=") {
+			found["ALSO_VALID"] = true
+		}
+	}
+	if !found["VALID_KEY"] {
+		t.Error("mergeEnv dropped VALID_KEY, want it present")
+	}
+	if !found["ALSO_VALID"] {
+		t.Error("mergeEnv dropped ALSO_VALID, want it present")
+	}
+}
+
+func TestHTTPTransport_ErrorResponseBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		w.Write([]byte("custom error message"))
+	}))
+	defer srv.Close()
+
+	ht := NewHTTPTransport(srv.URL)
+	msg := JSONRPCMessage{JSONRPC: "2.0", Method: "test", ID: "1"}
+	err := ht.Send(t.Context(), msg)
+	if err == nil {
+		t.Fatal("expected error for HTTP 500")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("error = %q, want to contain status code 500", err.Error())
+	}
+	if !strings.Contains(err.Error(), "custom error message") {
+		t.Errorf("error = %q, want to contain body text 'custom error message'", err.Error())
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // --- Test types ---
@@ -567,6 +568,38 @@ func TestTypeToSchema_UnsupportedType(t *testing.T) {
 	}
 }
 
+func TestTypeToSchema_SliceCycleDetection(t *testing.T) {
+	// Simulate a recursive slice element by pre-marking the element type as seen.
+	// This exercises the cycle-break path for reflect.Slice without needing a
+	// recursive type that the Go compiler would reject.
+	elemType := reflect.TypeOf([]string{})
+	seen := map[reflect.Type]bool{elemType: true}
+	sliceType := reflect.TypeOf([][]string{})
+	result := typeToSchema(sliceType, seen)
+	if result["type"] != "array" {
+		t.Errorf("expected type array, got %v", result["type"])
+	}
+	// items should be absent when cycle is detected
+	if _, ok := result["items"]; ok {
+		t.Error("expected no items key when slice element type is in cycle")
+	}
+}
+
+func TestTypeToSchema_MapCycleDetection(t *testing.T) {
+	// Simulate a recursive map value by pre-marking the value type as seen.
+	elemType := reflect.TypeOf(map[string]string{})
+	seen := map[reflect.Type]bool{elemType: true}
+	mapType := reflect.TypeOf(map[string]map[string]string{})
+	result := typeToSchema(mapType, seen)
+	if result["type"] != "object" {
+		t.Errorf("expected type object, got %v", result["type"])
+	}
+	// additionalProperties should be absent when cycle is detected
+	if _, ok := result["additionalProperties"]; ok {
+		t.Error("expected no additionalProperties key when map value type is in cycle")
+	}
+}
+
 // InvalidTag has a jsonschema tag part without '=' (should be skipped).
 type InvalidTag struct {
 	Name string `json:"name" jsonschema:"required,description=A name"`
@@ -579,6 +612,93 @@ func TestSchemaFrom_InvalidTagPartSkipped(t *testing.T) {
 	desc, ok := name["description"].(string)
 	if !ok || desc != "A name" {
 		t.Errorf("expected description 'A name', got %v", name["description"])
+	}
+}
+
+func TestTypeToSchema_TimeType(t *testing.T) {
+	// time.Time should produce {"type": "string", "format": "date-time"}.
+	result := typeToSchema(reflect.TypeOf(time.Time{}), make(map[reflect.Type]bool))
+	if result["type"] != "string" {
+		t.Errorf("expected type string for time.Time, got %v", result["type"])
+	}
+	if result["format"] != "date-time" {
+		t.Errorf("expected format date-time for time.Time, got %v", result["format"])
+	}
+}
+
+func TestTypeToSchema_RawMessageType(t *testing.T) {
+	// json.RawMessage should produce an empty schema (any type).
+	result := typeToSchema(reflect.TypeOf(json.RawMessage{}), make(map[reflect.Type]bool))
+	if len(result) != 0 {
+		t.Errorf("expected empty schema for json.RawMessage, got %v", result)
+	}
+}
+
+// RecursiveStruct is a struct that embeds itself via a pointer, creating a
+// direct self-referential cycle that exercises the struct cycle-detection guard
+// at typeToSchema line 95-97.
+type RecursiveStruct struct {
+	Name  string           `json:"name"`
+	Child *RecursiveStruct `json:"child"`
+}
+
+func TestTypeToSchema_StructCycleDetection(t *testing.T) {
+	// Pre-mark RecursiveStruct as already being processed to force the
+	// cycle-detection path (seen[structType] == true at typeToSchema line 95-97).
+	structType := reflect.TypeOf(RecursiveStruct{})
+	seen := map[reflect.Type]bool{structType: true}
+	result := typeToSchema(structType, seen)
+	// When the cycle is detected the function returns an empty schema {}.
+	if len(result) != 0 {
+		t.Errorf("expected empty schema when struct type is in cycle, got %v", result)
+	}
+}
+
+func TestSchemaFrom_RecursiveStruct(t *testing.T) {
+	// SchemaFrom must not infinite-loop or panic on a self-referential struct.
+	// The struct cycle-detection guard (typeToSchema line 95-97) breaks the cycle.
+	raw := SchemaFrom[RecursiveStruct]()
+	if !json.Valid(raw) {
+		t.Fatal("SchemaFrom[RecursiveStruct] returned invalid JSON")
+	}
+	schema := mustUnmarshal(t, raw)
+	assertType(t, schema, "object")
+	assertHasProperty(t, schema, "name")
+	assertHasProperty(t, schema, "child")
+}
+
+// EmbeddedCycle uses an embedded struct that refers back through a cycle
+// to exercise the seen[ft] guard in collectFields (line 136-137).
+type EmbedBase struct {
+	ID string `json:"id"`
+}
+
+type EmbeddedCycleStruct struct {
+	EmbedBase
+	Name string `json:"name"`
+}
+
+func TestTypeToSchema_EmbeddedStructCycleDetection(t *testing.T) {
+	// Pre-mark EmbedBase as seen so collectFields hits the cycle-guard continue
+	// at line 136-137 when it encounters the embedded EmbedBase field.
+	embedBaseType := reflect.TypeOf(EmbedBase{})
+	seen := map[reflect.Type]bool{embedBaseType: true}
+	result := typeToSchema(reflect.TypeOf(EmbeddedCycleStruct{}), seen)
+	// Result must still be a valid object schema; id may be absent (cycle skipped).
+	if result["type"] != "object" {
+		t.Errorf("expected type object, got %v", result["type"])
+	}
+	// name should be present (it's a regular field, not the embedded cycle).
+	props, ok := result["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("expected properties in schema")
+	}
+	if _, ok := props["name"]; !ok {
+		t.Error("expected 'name' property to be present")
+	}
+	// id must be absent because EmbedBase was already in the seen map.
+	if _, ok := props["id"]; ok {
+		t.Error("expected 'id' property to be absent (embedded type was in seen cycle)")
 	}
 }
 

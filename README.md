@@ -5,7 +5,7 @@
 <h1 align="center">GoAI</h1>
 
 <p align="center"><em>AI SDK, the Go way.</em></p>
-<p align="center">Go SDK for building AI applications. One SDK, 21+ providers, MCP support.</p>
+<p align="center">Go SDK for building AI applications. One SDK, 22+ providers, MCP support.</p>
 
 <p align="center">
   <a href="bench/RESULTS.md"><img src="https://img.shields.io/badge/streaming-1.1x_faster-brightgreen" alt="Streaming"></a>
@@ -38,7 +38,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 ## Features
 
 - **7 core functions**: `GenerateText`, `StreamText`, `GenerateObject[T]`, `StreamObject[T]`, `Embed`, `EmbedMany`, `GenerateImage`
-- **21+ providers**: OpenAI, Anthropic, Google, Bedrock, Azure, Vertex, Mistral, xAI, Groq, Cohere, DeepSeek, MiniMax, Fireworks, Together, DeepInfra, OpenRouter, Perplexity, Cerebras, Ollama, vLLM, + generic OpenAI-compatible
+- **22+ providers**: OpenAI, Anthropic, Google, Bedrock, Azure, Vertex, Mistral, xAI, Groq, Cohere, DeepSeek, MiniMax, Fireworks, Together, DeepInfra, OpenRouter, Perplexity, Cerebras, Ollama, vLLM, RunPod, + generic OpenAI-compatible
 - **Auto tool loop**: Define tools with `Execute` handlers, set `MaxSteps`, GoAI handles the loop
 - **Structured output**: `GenerateObject[T]` auto-generates JSON Schema from Go types via reflection
 - **Streaming**: Real-time text and partial object streaming via channels
@@ -325,7 +325,7 @@ result, err := goai.GenerateText(ctx, model, goai.WithPrompt("Hello"))
 | OpenAI     | `gpt-4o`, `o3`, `codex-*`      | `text-embedding-3-*` | `gpt-image-1` | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, TokenSource | Full | `provider/openai`     |
 | Anthropic  | `claude-*`                     | -                    | -             | `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, TokenSource | Full | `provider/anthropic`  |
 | Google     | `gemini-*`                     | `text-embedding-004` | `imagen-*`    | `GOOGLE_GENERATIVE_AI_API_KEY` / `GEMINI_API_KEY`, TokenSource | Full | `provider/google`     |
-| Bedrock    | `anthropic.*`, `meta.*`        | -                    | -             | AWS keys, `AWS_BEARER_TOKEN_BEDROCK`, `AWS_BEDROCK_BASE_URL` | Full | `provider/bedrock`    |
+| Bedrock    | `anthropic.*`, `meta.*`        | `titan-embed-*`, `cohere.embed-*`, `nova-2-*`, `marengo-*` | - | AWS keys, `AWS_BEARER_TOKEN_BEDROCK`, `AWS_BEDROCK_BASE_URL` | Full | `provider/bedrock`    |
 | Vertex     | `gemini-*`                     | `text-embedding-004` | `imagen-*`    | TokenSource, ADC                            | Unit | `provider/vertex`     |
 | Azure      | `gpt-4o`, `claude-*`           | -                    | via Azure     | `AZURE_OPENAI_API_KEY`, TokenSource         | Full | `provider/azure`      |
 | OpenRouter | various                        | -                    | -             | `OPENROUTER_API_KEY`, TokenSource           | Unit | `provider/openrouter` |
@@ -342,6 +342,7 @@ result, err := goai.GenerateText(ctx, model, goai.WithPrompt("Hello"))
 | Cerebras   | `llama-*`                      | -                    | -             | `CEREBRAS_API_KEY`, TokenSource             | Unit | `provider/cerebras`   |
 | Ollama     | local models                   | local models         | -             | none                                        | Unit | `provider/ollama`     |
 | vLLM       | local models                   | local models         | -             | `API_KEY`, TokenSource                      | Unit | `provider/vllm`       |
+| RunPod     | any vLLM model                 | -                    | -             | `RUNPOD_API_KEY`, TokenSource               | Unit | `provider/runpod`     |
 | Compat     | any OpenAI-compatible          | any                  | -             | configurable                                | Unit | `provider/compat`     |
 
 **E2E column**: "Full" = tested with real API calls. "Unit" = tested with mock HTTP servers (100% coverage).
@@ -389,6 +390,7 @@ Last run: 2026-03-27. 103 models tested (generate + stream).
 | Cerebras   | `llama-3.3-70b`                                                                                    |
 | Ollama     | `llama3`, `llama3.2:1b`, `nomic-embed-text`                                                        |
 | vLLM       | `meta-llama/Llama-3-8b`                                                                            |
+| RunPod     | `meta-llama/Llama-3.3-70B-Instruct`                                                                |
 
 </details>
 

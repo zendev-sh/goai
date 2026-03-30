@@ -228,6 +228,7 @@ func (m *chatModel) Capabilities() provider.ModelCapabilities {
 		Temperature: true,
 		ToolCall:    modelSupportsTools(id),
 		Reasoning:   bedrockSupportsThinking(id),
+		Attachment: true,
 		InputModalities: provider.ModalitySet{
 			Text:  true,
 			Image: true,

@@ -5,13 +5,13 @@ description: Compare GoAI SDK with LangChainGo, eino, and lingoose. Provider sup
 
 # GoAI SDK vs LangChainGo vs eino vs lingoose — Go LLM Libraries Compared (2026)
 
-GoAI SDK is a Go-native AI SDK supporting 21+ LLM providers with minimal dependencies. LangChainGo is a Go port of Python's LangChain. eino is ByteDance's Go AI framework inspired by Google ADK. lingoose is a minimal Go LLM library.
+GoAI SDK is a Go-native AI SDK supporting 22+ LLM providers with minimal dependencies. LangChainGo is a Go port of Python's LangChain. eino is ByteDance's Go AI framework inspired by Google ADK. lingoose is a minimal Go LLM library.
 
 ## Feature Comparison
 
 | Feature | **GoAI SDK** | langchaingo | eino | lingoose |
 |---|---|---|---|---|
-| Providers | **21+** | ~10 | ~8 | ~5 |
+| Providers | **22+** | ~10 | ~8 | ~5 |
 | Go generics | ✅ | ❌ | ✅ | ❌ |
 | Structured output | `GenerateObject[T]` | Manual JSON | Partial | ❌ |
 | Auto tool loop | ✅ `MaxSteps` | ❌ | ✅ | ❌ |
@@ -155,6 +155,6 @@ go get github.com/zendev-sh/goai@latest
 
 [Installation guide →](/getting-started/installation)
 
-[View all 21+ providers →](/providers/)
+[View all 22+ providers →](/providers/)
 
 [Examples →](/examples)

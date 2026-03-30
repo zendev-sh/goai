@@ -90,6 +90,11 @@ func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []stri
 		ProviderOptions: o.EmbeddingProviderOptions,
 	}
 
+	// Short-circuit for empty input - no API call needed.
+	if len(values) == 0 {
+		return &EmbedManyResult{}, nil
+	}
+
 	maxPerCall := model.MaxValuesPerCall()
 
 	// Single call when no chunking needed.
@@ -168,9 +173,14 @@ func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []stri
 		return nil, fmt.Errorf("goai: embedding count mismatch: got %d, expected %d", len(allEmbeddings), len(values))
 	}
 
+	var providerMeta map[string]map[string]any
+	if results[0].result != nil {
+		providerMeta = results[0].result.ProviderMetadata
+	}
+
 	return &EmbedManyResult{
 		Embeddings:       allEmbeddings,
 		Usage:            totalUsage,
-		ProviderMetadata: results[0].result.ProviderMetadata, // Take from first chunk
+		ProviderMetadata: providerMeta,
 	}, nil
 }

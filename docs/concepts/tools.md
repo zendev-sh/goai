@@ -113,7 +113,9 @@ import "time"
 // ...
 
 goai.WithOnToolCall(func(info goai.ToolCallInfo) {
-    fmt.Printf("Tool %s took %v\n", info.ToolName, info.Duration)
+    fmt.Printf("[step %d] tool %s took %v\n", info.Step, info.ToolName, info.Duration)
+    fmt.Printf("  input:  %s\n", info.Input)
+    fmt.Printf("  output: %s\n", info.Output)
     if info.Error != nil {
         fmt.Printf("  error: %v\n", info.Error)
     }
@@ -122,11 +124,17 @@ goai.WithOnToolCall(func(info goai.ToolCallInfo) {
 
 ### ToolCallInfo Fields
 
-| Field      | Type            | Description                        |
-| ---------- | --------------- | ---------------------------------- |
-| `ToolName` | `string`        | Name of the tool that was executed |
-| `Duration` | `time.Duration` | Time taken to execute the tool     |
-| `Error`    | `error`         | Error returned by the tool, if any |
+| Field          | Type               | Description                                                                 |
+| -------------- | ------------------ | --------------------------------------------------------------------------- |
+| `ToolCallID`   | `string`           | Provider-assigned identifier for this tool call                             |
+| `ToolName`     | `string`           | Name of the tool that was executed                                          |
+| `Step`         | `int`              | 1-based index of the generation step in which this tool was called          |
+| `Input`        | `json.RawMessage`  | Raw JSON arguments passed to the tool                                       |
+| `Output`       | `string`           | String result returned by the tool (empty if the tool errored)              |
+| `OutputObject` | `any`              | Parsed JSON value of Output when valid JSON; nil otherwise                  |
+| `StartTime`    | `time.Time`        | When the tool execution began                                               |
+| `Duration`     | `time.Duration`    | Time taken to execute the tool                                              |
+| `Error`        | `error`            | Error returned by the tool, if any                                          |
 
 ## Tools Without Execute
 

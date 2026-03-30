@@ -53,7 +53,7 @@ onMounted(() => {
           <h1 class="rh-title anim a2">GoAI</h1>
           <p class="rh-slogan anim a3">AI SDK, the Go way.</p>
           <p class="rh-tagline anim a4">
-            One unified API across 21+ providers. Streaming, structured output,
+            One unified API across 22+ providers. Streaming, structured output,
             MCP support, stdlib only.
           </p>
 
@@ -240,7 +240,7 @@ openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
     <!-- ▸ NUMBERS -->
     <section class="rh-numbers anim a10">
       <div class="rh-numbers-inner">
-        <div class="rh-num"><em>21</em><span>providers</span></div>
+        <div class="rh-num"><em>22</em><span>providers</span></div>
         <div class="rh-num"><em>100+</em><span>models tested</span></div>
         <div class="rh-num"><em>24x</em><span>faster cold start</span></div>
         <div class="rh-num"><em>0</em><span>third-party deps</span></div>

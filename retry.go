@@ -3,6 +3,7 @@ package goai
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"strconv"
@@ -80,15 +81,23 @@ func retryAfterDuration(err error) time.Duration {
 // exponential backoff otherwise.
 func withRetry[T any](ctx context.Context, maxRetries int, fn func() (T, error)) (T, error) {
 	result, err := fn()
-	for attempt := 0; err != nil && retryable(err) && attempt < maxRetries; attempt++ {
+	attempt := 0
+	for ; err != nil && retryable(err) && attempt < maxRetries; attempt++ {
 		delay := retryAfterDuration(err)
 		if delay == 0 {
 			delay = backoffDuration(attempt)
 		}
 		if sleepErr := sleep(ctx, delay); sleepErr != nil {
-			return result, sleepErr
+			var zero T
+			return zero, sleepErr
 		}
 		result, err = fn()
+	}
+	// Wrap the error only when all retries were consumed and the error is still retryable.
+	// Non-retryable errors and errors returned when maxRetries==0 are returned unwrapped
+	// so callers can compare them directly (e.g. errors.Is / identity checks).
+	if err != nil && attempt == maxRetries && maxRetries > 0 {
+		return result, fmt.Errorf("goai: %d retries exhausted: %w", maxRetries, err)
 	}
 	return result, err
 }

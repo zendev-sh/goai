@@ -592,6 +592,13 @@ func TestStreamObject_ErrorFromProvider(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from provider")
 	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T: %v", err, err)
+	}
+	if apiErr.StatusCode != 429 {
+		t.Errorf("StatusCode = %d, want 429", apiErr.StatusCode)
+	}
 }
 
 func TestStreamObject_EmptyStream(t *testing.T) {
@@ -1053,6 +1060,89 @@ func TestStreamObject_Error_OnResponseFired(t *testing.T) {
 	}
 	if capturedResponse.StatusCode != 503 {
 		t.Errorf("ResponseInfo.StatusCode = %d, want 503", capturedResponse.StatusCode)
+	}
+}
+
+// TestStreamObject_OnResponse_StatusCodeOnStreamError verifies that when a
+// ChunkError carrying an *APIError arrives during ObjectStream consumption,
+// the OnResponse hook receives the correct StatusCode via errors.As.
+func TestStreamObject_OnResponse_StatusCodeOnStreamError(t *testing.T) {
+	apiErr := &APIError{StatusCode: 429, Message: "rate limited", IsRetryable: false}
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: `{"name":"Alice"`},
+				provider.StreamChunk{Type: provider.ChunkError, Error: apiErr},
+			), nil
+		},
+	}
+
+	var capturedResponse ResponseInfo
+	stream, err := StreamObject[simpleObject](t.Context(), model,
+		WithPrompt("generate"),
+		WithMaxRetries(0),
+		WithOnResponse(func(info ResponseInfo) {
+			capturedResponse = info
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Consume the stream so the deferred OnResponse fires.
+	stream.Result() //nolint:errcheck
+
+	if capturedResponse.StatusCode != 429 {
+		t.Errorf("ResponseInfo.StatusCode = %d, want 429", capturedResponse.StatusCode)
+	}
+	if capturedResponse.Error == nil {
+		t.Error("ResponseInfo.Error is nil, want non-nil")
+	}
+}
+
+// TestStreamObject_ContextCancel_SetsErr verifies that cancelling the context
+// before a chunk arrives causes the ObjectStream (Result path) to return
+// context.Canceled, exercising the ctx.Err() check in consume().
+func TestStreamObject_ContextCancel_SetsErr(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+
+	// ch is unbuffered; we control when chunks are sent.
+	ch := make(chan provider.StreamChunk)
+
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return &provider.StreamResult{Stream: ch}, nil
+		},
+	}
+
+	stream, err := StreamObject[simpleObject](ctx, model,
+		WithPrompt("generate"),
+		WithMaxRetries(0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Cancel the context first, then send a chunk so the loop body executes
+	// the ctx.Err() check (line 204 in object.go).
+	cancel()
+	// Send a ChunkFinish so the range loop advances past the blocking receive.
+	// We send in a goroutine so we don't deadlock if consume has already exited.
+	go func() {
+		select {
+		case ch <- provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop}:
+		case <-time.After(500 * time.Millisecond):
+		}
+		close(ch)
+	}()
+
+	_, err = stream.Result()
+	if err == nil {
+		t.Fatal("expected error after context cancellation")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
 	}
 }
 

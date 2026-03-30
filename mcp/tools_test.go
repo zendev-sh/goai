@@ -293,6 +293,41 @@ func TestParseTextContent_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestConvertTools_ExecuteIsError(t *testing.T) {
+	mt := newMockTransport()
+	c := NewClient("test", "1.0", WithTransport(mt))
+	if err := c.Connect(t.Context()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	mcpTools := []Tool{{Name: "failing-tool"}}
+	goaiTools := ConvertTools(c, mcpTools)
+
+	mt.sendFunc = func(_ context.Context, msg JSONRPCMessage) error {
+		if msg.Method == "tools/call" {
+			result, _ := json.Marshal(CallToolResult{
+				IsError: true,
+				Content: []ContentBlock{
+					json.RawMessage(`{"type":"text","text":"something went wrong"}`),
+				},
+			})
+			mt.inject(JSONRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: result})
+		}
+		return nil
+	}
+
+	output, err := goaiTools[0].Execute(t.Context(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.HasPrefix(output, "Error:") {
+		t.Errorf("output = %q, want prefix %q", output, "Error:")
+	}
+	if !strings.Contains(output, "something went wrong") {
+		t.Errorf("output = %q, should contain error message text", output)
+	}
+}
+
 func TestConvertTools_ExecuteInvalidInput(t *testing.T) {
 	mt := newMockTransport()
 	c := NewClient("test", "1.0", WithTransport(mt))

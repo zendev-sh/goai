@@ -186,7 +186,8 @@ func ParseHTTPErrorWithHeaders(providerID string, statusCode int, body []byte, h
 	}
 }
 
-// extractErrorMessage tries to extract a human-readable error message from an API response.
+// extractErrorMessage returns a human-readable error from the response body.
+// The raw body is truncated to 200 chars to limit information disclosure.
 // Handles both Chat Completions format ({error: {message}}) and
 // Responses API format ({message, code, type}).
 func extractErrorMessage(statusCode int, body []byte) string {

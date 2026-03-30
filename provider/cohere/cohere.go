@@ -306,7 +306,7 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 	}
 
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("cohere: parsing response: %w", err)
+		return nil, fmt.Errorf("parsing response: %w", err)
 	}
 
 	return &provider.EmbedResult{
@@ -538,7 +538,7 @@ func parseChatResponse(body []byte) (*provider.GenerateResult, error) {
 	}
 
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("cohere: parsing response: %w", err)
+		return nil, fmt.Errorf("parsing response: %w", err)
 	}
 
 	result := &provider.GenerateResult{

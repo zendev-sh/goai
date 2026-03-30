@@ -2059,3 +2059,139 @@ func TestBuildRequest_ProtectedKeysIgnoresTemperature(t *testing.T) {
 		t.Errorf("temperature = %v, want 0.5 (protectedKeys should prevent override)", body["temperature"])
 	}
 }
+
+// TestConvertMessages_MultipleToolResults verifies that a single RoleTool message
+// with two PartToolResult parts produces two separate wire messages, one per result.
+func TestConvertMessages_MultipleToolResults(t *testing.T) {
+	msgs := []provider.Message{
+		{
+			Role: provider.RoleTool,
+			Content: []provider.Part{
+				{Type: provider.PartToolResult, ToolCallID: "call_1", ToolOutput: "result one"},
+				{Type: provider.PartToolResult, ToolCallID: "call_2", ToolOutput: "result two"},
+			},
+		},
+	}
+	result := ConvertMessages(msgs, "")
+
+	if len(result) != 2 {
+		t.Fatalf("got %d wire messages, want 2 (one per ToolResult part)", len(result))
+	}
+
+	for i, wm := range result {
+		if wm["role"] != "tool" {
+			t.Errorf("result[%d] role = %v, want tool", i, wm["role"])
+		}
+	}
+
+	if result[0]["tool_call_id"] != "call_1" {
+		t.Errorf("result[0] tool_call_id = %v, want call_1", result[0]["tool_call_id"])
+	}
+	if result[0]["content"] != "result one" {
+		t.Errorf("result[0] content = %v, want \"result one\"", result[0]["content"])
+	}
+	if result[1]["tool_call_id"] != "call_2" {
+		t.Errorf("result[1] tool_call_id = %v, want call_2", result[1]["tool_call_id"])
+	}
+	if result[1]["content"] != "result two" {
+		t.Errorf("result[1] content = %v, want \"result two\"", result[1]["content"])
+	}
+}
+
+// TestConvertMessages_EmptyContent verifies behavior when a user message has an
+// empty content slice. The message is still appended to the output (no parts are
+// skipped at the message level), and the resulting wire message has no "content"
+// or "tool_calls" keys set.
+func TestConvertMessages_EmptyContent(t *testing.T) {
+	msgs := []provider.Message{
+		{Role: provider.RoleUser, Content: []provider.Part{}},
+	}
+	result := ConvertMessages(msgs, "")
+
+	// A message with no parts still produces one wire message.
+	if len(result) != 1 {
+		t.Fatalf("got %d wire messages, want 1", len(result))
+	}
+	if result[0]["role"] != "user" {
+		t.Errorf("role = %v, want user", result[0]["role"])
+	}
+	// No content parts were collected, so "content" key should be absent.
+	if _, ok := result[0]["content"]; ok {
+		t.Errorf("expected no 'content' key for empty-content message, got %v", result[0]["content"])
+	}
+	// No tool calls either.
+	if _, ok := result[0]["tool_calls"]; ok {
+		t.Errorf("expected no 'tool_calls' key for empty-content message")
+	}
+}
+
+// TestConvertMessages_ImageOnlyUser verifies that a user message containing only
+// an image part (no text) produces a content array with exactly one image_url entry.
+func TestConvertMessages_ImageOnlyUser(t *testing.T) {
+	msgs := []provider.Message{
+		{
+			Role: provider.RoleUser,
+			Content: []provider.Part{
+				{Type: provider.PartImage, URL: "https://example.com/image.png"},
+			},
+		},
+	}
+	result := ConvertMessages(msgs, "")
+
+	if len(result) != 1 {
+		t.Fatalf("got %d wire messages, want 1", len(result))
+	}
+	content, ok := result[0]["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected content array, got %T", result[0]["content"])
+	}
+	if len(content) != 1 {
+		t.Fatalf("got %d content parts, want 1", len(content))
+	}
+	if content[0]["type"] != "image_url" {
+		t.Errorf("content[0] type = %v, want image_url", content[0]["type"])
+	}
+	imgURL, ok := content[0]["image_url"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected image_url map, got %T", content[0]["image_url"])
+	}
+	if imgURL["url"] != "https://example.com/image.png" {
+		t.Errorf("image url = %v, want https://example.com/image.png", imgURL["url"])
+	}
+}
+
+// TestParseResponse_NullContent verifies that a response with "content": null
+// is handled gracefully - extractTextContent returns empty string so result.Text
+// should be empty rather than an error.
+func TestParseResponse_NullContent(t *testing.T) {
+	body := []byte(`{
+		"id": "chatcmpl-null",
+		"model": "gpt-4o",
+		"choices": [{
+			"index": 0,
+			"message": {"role": "assistant", "content": null},
+			"finish_reason": "stop"
+		}],
+		"usage": {"prompt_tokens": 5, "completion_tokens": 0, "total_tokens": 5}
+	}`)
+
+	result, err := ParseResponse(body)
+	if err != nil {
+		t.Fatalf("ParseResponse error: %v", err)
+	}
+	if result.Text != "" {
+		t.Errorf("Text = %q, want empty string for null content", result.Text)
+	}
+	if result.FinishReason != provider.FinishStop {
+		t.Errorf("FinishReason = %q, want stop", result.FinishReason)
+	}
+}
+
+// TestExtractTextContent_NullJSON directly tests that extractTextContent returns
+// an empty string when given the JSON literal "null".
+func TestExtractTextContent_NullJSON(t *testing.T) {
+	got := extractTextContent(json.RawMessage("null"))
+	if got != "" {
+		t.Errorf("extractTextContent(null) = %q, want empty string", got)
+	}
+}

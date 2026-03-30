@@ -2,7 +2,7 @@ import { defineConfig } from 'vitepress'
 
 export default defineConfig({
   title: 'GoAI SDK',
-  description: 'Go SDK for AI Applications. One API, 20+ LLM Providers.',
+  description: 'Go SDK for AI Applications. One API, 22+ LLM Providers.',
   base: process.env.VITEPRESS_BASE || '/',
 
   sitemap: {
@@ -27,7 +27,7 @@ export default defineConfig({
 
     const title = context.pageData.frontmatter.title || context.pageData.title || 'GoAI SDK'
     const ogTitle = context.pageData.relativePath === 'index.md' ? 'GoAI SDK — Go SDK for AI' : `${title} | GoAI SDK`
-    const description = context.pageData.frontmatter.description || context.pageData.description || 'Go SDK for AI Applications. One API, 20+ LLM Providers.'
+    const description = context.pageData.frontmatter.description || context.pageData.description || 'Go SDK for AI Applications. One API, 22+ LLM Providers.'
     head.push(['meta', { property: 'og:title', content: ogTitle }])
     head.push(['meta', { property: 'og:description', content: description }])
     head.push(['meta', { name: 'description', content: description }])
@@ -47,7 +47,7 @@ export default defineConfig({
         "@type": "SoftwareApplication",
         "name": "GoAI SDK",
         "alternateName": ["goai", "goai.sh"],
-        "description": "Go SDK for building AI applications. One SDK, 20+ providers. Supports OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure, Groq, Mistral, Ollama and more.",
+        "description": "Go SDK for building AI applications. One SDK, 22+ providers. Supports OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure, Groq, Mistral, Ollama and more.",
         "url": "https://goai.sh",
         "downloadUrl": "https://github.com/zendev-sh/goai",
         "applicationCategory": "DeveloperApplication",
@@ -121,6 +121,7 @@ export default defineConfig({
             { text: 'MCP Client', link: '/concepts/mcp' },
             { text: 'Error Handling', link: '/concepts/error-handling' },
             { text: 'Prompt Caching', link: '/concepts/prompt-caching' },
+            { text: 'Observability', link: '/concepts/observability' },
           ],
         },
         {

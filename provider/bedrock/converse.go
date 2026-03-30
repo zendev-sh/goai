@@ -513,7 +513,7 @@ func parseEventStream(ctx context.Context, body io.ReadCloser, out chan<- provid
 	for {
 		frame, err := decoder.Next()
 		if err != nil {
-			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			if errors.Is(err, io.EOF) {
 				return
 			}
 			if !provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: err}) {

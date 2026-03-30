@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -143,7 +144,9 @@ func (ts *TextStream) TextStream() <-chan string {
 	return ch
 }
 
-// Result blocks until the stream completes and returns the final result.
+// Result blocks until the stream completes and returns the accumulated result.
+// Check Err() after Result() to detect stream errors - Result does not surface
+// errors directly (use Err or check result.Steps for partial data).
 // Can be called after Stream() or TextStream() to get accumulated data.
 func (ts *TextStream) Result() *TextResult {
 	ts.consumeOnce.Do(func() {
@@ -177,12 +180,17 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 	// Call OnResponse hook when consume finishes (after all chunks processed).
 	if ts.onResponse != nil {
 		defer func() {
-			ts.onResponse(ResponseInfo{
+			info := ResponseInfo{
 				Latency:      time.Since(ts.startTime),
 				Usage:        ts.usage,
 				FinishReason: ts.finishReason,
 				Error:        ts.streamErr,
-			})
+			}
+			var apiErr *APIError
+			if errors.As(ts.streamErr, &apiErr) {
+				info.StatusCode = apiErr.StatusCode
+			}
+			ts.onResponse(info)
 		}()
 	}
 
@@ -237,6 +245,7 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 			select {
 			case rawOut <- chunk:
 			case <-ts.ctx.Done():
+				ts.streamErr = ts.ctx.Err()
 				return
 			}
 		}
@@ -244,11 +253,13 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 			select {
 			case textOut <- chunk.Text:
 			case <-ts.ctx.Done():
+				ts.streamErr = ts.ctx.Err()
 				return
 			}
 		}
 		if rawOut == nil && textOut == nil {
 			if ts.ctx.Err() != nil {
+				ts.streamErr = ts.ctx.Err()
 				return
 			}
 		}
@@ -314,9 +325,9 @@ func buildParams(opts options) provider.GenerateParams {
 		FrequencyPenalty: opts.FrequencyPenalty,
 		PresencePenalty:  opts.PresencePenalty,
 		Seed:             opts.Seed,
-		StopSequences:    opts.StopSequences,
-		Headers:          opts.Headers,
-		ProviderOptions:  opts.ProviderOptions,
+		StopSequences:    slices.Clone(opts.StopSequences),
+		Headers:          maps.Clone(opts.Headers),
+		ProviderOptions:  maps.Clone(opts.ProviderOptions),
 		PromptCaching:    opts.PromptCaching,
 		ToolChoice:       opts.ToolChoice,
 	}
@@ -447,7 +458,9 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 			o.OnStepFinish(stepResult)
 		}
 
-		// If no tool calls or no executable tools, we're done.
+		// If no tools have Execute functions, skip the tool loop regardless of MaxSteps.
+		// This allows callers to provide tool definitions for the model's awareness
+		// without requiring executable tools.
 		if result.FinishReason != provider.FinishToolCalls || len(result.ToolCalls) == 0 || len(toolMap) == 0 {
 			return buildTextResult(steps, totalUsage), nil
 		}

@@ -966,7 +966,7 @@ func handleStreamError(ctx context.Context, data string, event map[string]any, o
 	if goai.IsOverflow(msg) {
 		chunk = provider.StreamChunk{Type: provider.ChunkError, Error: &goai.ContextOverflowError{Message: msg, ResponseBody: data}}
 	} else {
-		chunk = provider.StreamChunk{Type: provider.ChunkError, Error: &goai.APIError{Message: msg}}
+		chunk = provider.StreamChunk{Type: provider.ChunkError, Error: &goai.APIError{Message: msg, ResponseBody: data}}
 	}
 	provider.TrySend(ctx, out, chunk) // terminal send: function exits immediately
 }
@@ -1059,10 +1059,10 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 		if goai.IsOverflow(resp.Error.Message) {
 			return nil, &goai.ContextOverflowError{Message: resp.Error.Message, ResponseBody: string(body)}
 		}
-		return nil, &goai.APIError{Message: resp.Error.Message}
+		return nil, &goai.APIError{Message: resp.Error.Message, ResponseBody: string(body)}
 	}
 	if resp.Type == "error" {
-		return nil, &goai.APIError{Message: "unknown error"}
+		return nil, &goai.APIError{Message: "unknown error", ResponseBody: string(body)}
 	}
 
 	result := &provider.GenerateResult{

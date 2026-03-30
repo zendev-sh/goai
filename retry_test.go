@@ -2,8 +2,10 @@ package goai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -308,6 +310,29 @@ func TestGenerateText_WithRetry(t *testing.T) {
 	}
 }
 
+func TestRetryAfterDuration_WrappedError(t *testing.T) {
+	// Wrap an *APIError with fmt.Errorf so it is no longer a direct *APIError.
+	// retryAfterDuration must use errors.As internally to unwrap and find it.
+	apiErr := &APIError{
+		StatusCode:      http.StatusTooManyRequests,
+		IsRetryable:     true,
+		ResponseHeaders: map[string]string{"retry-after-ms": "750"},
+	}
+	wrapped := fmt.Errorf("wrapped: %w", apiErr)
+
+	// Sanity-check: errors.As should find the inner *APIError.
+	var extracted *APIError
+	if !errors.As(wrapped, &extracted) {
+		t.Fatal("errors.As could not unwrap *APIError from wrapped error")
+	}
+
+	got := retryAfterDuration(wrapped)
+	want := 750 * time.Millisecond
+	if got != want {
+		t.Errorf("retryAfterDuration(wrapped) = %v, want %v", got, want)
+	}
+}
+
 func TestStreamText_WithRetry(t *testing.T) {
 	calls := 0
 	model := &mockModel{
@@ -396,5 +421,28 @@ func TestWithRetry_ZeroRetries(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("calls = %d, want 1 (no retries)", calls)
+	}
+}
+
+// TestWithRetry_ExhaustionWraps verifies that when all retries are consumed the
+// error is wrapped with a "retries exhausted" message but the original *APIError
+// remains unwrappable via errors.As.
+func TestWithRetry_ExhaustionWraps(t *testing.T) {
+	inner := &APIError{StatusCode: http.StatusTooManyRequests, IsRetryable: true, Message: "rate limited"}
+	_, err := withRetry(t.Context(), 2, func() (string, error) {
+		return "", inner
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "retries exhausted") {
+		t.Errorf("err = %q, want it to contain 'retries exhausted'", err.Error())
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Error("errors.As could not unwrap *APIError from exhaustion error")
+	}
+	if apiErr.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("apiErr.StatusCode = %d, want %d", apiErr.StatusCode, http.StatusTooManyRequests)
 	}
 }

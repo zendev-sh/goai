@@ -7,3 +7,9 @@ cov.html
 hooks/
 .zenbot/
 des/
+.env
+.env.*
+*.pem
+*.key
+credentials*
+bedrock.test

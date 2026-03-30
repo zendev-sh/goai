@@ -10,8 +10,10 @@ import (
 	"strings"
 )
 
-// MustMarshalJSON marshals v to JSON. Panics if marshaling fails,
-// which is impossible for the map[string]any values providers construct.
+// MustMarshalJSON marshals v to JSON. It panics on failure, which should only
+// occur with unmarshalable types (chan, func, cyclic structs) - a programming
+// error, not a runtime condition. All call sites pass provider.GenerateParams
+// or similar well-typed structs that are always marshalable.
 func MustMarshalJSON(v any) []byte {
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -20,8 +22,10 @@ func MustMarshalJSON(v any) []byte {
 	return data
 }
 
-// MustNewRequest creates an HTTP request. Panics if creation fails,
-// which is impossible with valid HTTP method and context.
+// MustNewRequest creates an HTTP request. It panics on failure, which should
+// only occur with an invalid HTTP method or a nil context - both programming
+// errors detectable at development time, not runtime conditions. All call
+// sites pass a valid context and a constant HTTP method string.
 func MustNewRequest(ctx context.Context, method, url string, body []byte) *http.Request {
 	var bodyReader io.Reader
 	if body != nil {

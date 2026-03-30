@@ -99,6 +99,7 @@ func (os *ObjectStream[T]) Result() (*ObjectResult[T], error) {
 	}
 
 	if os.parseErr != nil {
+		// Raw model output is truncated to 200 chars to limit information disclosure.
 		return nil, fmt.Errorf("parsing structured output: %w (raw: %s)", os.parseErr, truncate(os.text.String(), 200))
 	}
 
@@ -140,12 +141,17 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 	// Call OnResponse hook when consume finishes (after all chunks processed).
 	if os.onResponse != nil {
 		defer func() {
-			os.onResponse(ResponseInfo{
+			info := ResponseInfo{
 				Latency:      time.Since(os.startTime),
 				Usage:        os.usage,
 				FinishReason: os.finishReason,
 				Error:        os.streamErr,
-			})
+			}
+			var apiErr *APIError
+			if errors.As(os.streamErr, &apiErr) {
+				info.StatusCode = apiErr.StatusCode
+			}
+			os.onResponse(info)
 		}()
 	}
 
@@ -160,6 +166,7 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 					select {
 					case partialOut <- partial:
 					case <-os.ctx.Done():
+						os.streamErr = os.ctx.Err()
 						return
 					}
 				}
@@ -195,6 +202,7 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 		}
 		if partialOut == nil {
 			if os.ctx.Err() != nil {
+				os.streamErr = os.ctx.Err()
 				return
 			}
 		}
@@ -308,6 +316,9 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 			o.OnStepFinish(stepResult)
 		}
 
+		// If no tools have Execute functions, skip the tool loop regardless of MaxSteps.
+		// This allows callers to provide tool definitions for the model's awareness
+		// without requiring executable tools.
 		// Parse structured output only when the model finished with "stop"
 		// (not tool calls). This is identical to Vercel's behaviour.
 		if result.FinishReason != provider.FinishToolCalls || len(result.ToolCalls) == 0 || len(toolMap) == 0 {
@@ -317,6 +328,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 			}
 			var obj T
 			if err := json.Unmarshal([]byte(text), &obj); err != nil {
+				// Raw model output is truncated to 200 chars to limit information disclosure.
 				return nil, fmt.Errorf("parsing structured output: %w (raw: %s)", err, truncate(text, 200))
 			}
 			return &ObjectResult[T]{

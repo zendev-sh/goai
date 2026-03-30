@@ -403,6 +403,6 @@ goai/
 │   ├── sse/                # SSE line parser (data: prefix, [DONE] sentinel)
 │   └── httpc/              # HTTP helpers (MustMarshalJSON, MustNewRequest, ParseDataURL)
 │
-├── examples/               # 23 runnable examples (including 7 MCP examples)
+├── examples/               # 24 runnable examples (including 7 MCP examples)
 └── bench/                  # Performance benchmarks (GoAI vs Vercel AI SDK)
 ```

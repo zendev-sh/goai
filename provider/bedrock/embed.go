@@ -388,5 +388,9 @@ func (m *embeddingModel) invokeModel(ctx context.Context, jsonBody []byte) ([]by
 		return nil, goai.ParseHTTPErrorWithHeaders("bedrock", resp.StatusCode, body, resp.Header)
 	}
 
-	return io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+	return body, nil
 }

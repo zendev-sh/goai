@@ -1933,6 +1933,34 @@ func TestBuildChatRequest_StopSequences(t *testing.T) {
 	}
 }
 
+func TestEmbedding_MultiValueOrder(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Return embeddings in the same positional order as the inputs.
+		_, _ = fmt.Fprint(w, `{"embeddings":{"float":[[1.0,0.0,0.0],[0.0,1.0,0.0],[0.0,0.0,1.0]]},"meta":{"billed_units":{"input_tokens":3}}}`)
+	}))
+	defer server.Close()
+
+	model := Embedding("embed-v4.0", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	result, err := model.DoEmbed(t.Context(), []string{"first", "second", "third"}, provider.EmbedParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Embeddings) != 3 {
+		t.Fatalf("embeddings count = %d, want 3", len(result.Embeddings))
+	}
+	// Index 0 → [1,0,0], Index 1 → [0,1,0], Index 2 → [0,0,1].
+	if result.Embeddings[0][0] != 1.0 || result.Embeddings[0][1] != 0.0 {
+		t.Errorf("embeddings[0] = %v, want [1,0,0]", result.Embeddings[0])
+	}
+	if result.Embeddings[1][1] != 1.0 || result.Embeddings[1][0] != 0.0 {
+		t.Errorf("embeddings[1] = %v, want [0,1,0]", result.Embeddings[1])
+	}
+	if result.Embeddings[2][2] != 1.0 || result.Embeddings[2][0] != 0.0 {
+		t.Errorf("embeddings[2] = %v, want [0,0,1]", result.Embeddings[2])
+	}
+}
+
 func TestMapFinishReason_ERROR(t *testing.T) {
 	if got := mapFinishReason("ERROR"); got != provider.FinishError {
 		t.Errorf("mapFinishReason(ERROR) = %q, want %q", got, provider.FinishError)

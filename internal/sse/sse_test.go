@@ -1,6 +1,8 @@
 package sse
 
 import (
+	"errors"
+	"io"
 	"strings"
 	"testing"
 )
@@ -118,5 +120,70 @@ func TestScanner_Err(t *testing.T) {
 
 	if err := s.Err(); err != nil {
 		t.Errorf("Err() = %v, want nil", err)
+	}
+}
+
+func TestScanner_EmptyDataPayload(t *testing.T) {
+	// "data:" with no space or value should yield an empty string token, not be skipped.
+	input := "data:\n\n"
+	s := NewScanner(strings.NewReader(input))
+
+	data, ok := s.Next()
+	if !ok {
+		t.Fatal("expected ok=true for empty data payload, got false")
+	}
+	if data != "" {
+		t.Errorf("expected empty string, got %q", data)
+	}
+}
+
+// errReader is an io.Reader that returns a fixed error on every Read call.
+type errReader struct{ err error }
+
+func (e *errReader) Read(_ []byte) (int, error) { return 0, e.err }
+
+func TestScanner_ReadError(t *testing.T) {
+	injected := errors.New("stream broken")
+	// First reader yields one valid event; second reader immediately returns the error.
+	r := io.MultiReader(
+		strings.NewReader("data: first\n\n"),
+		&errReader{err: injected},
+	)
+	s := NewScanner(r)
+
+	data, ok := s.Next()
+	if !ok || data != "first" {
+		t.Errorf("first: got %q, %v; want %q, true", data, ok, "first")
+	}
+
+	_, ok = s.Next()
+	if ok {
+		t.Error("expected ok=false after read error")
+	}
+
+	if err := s.Err(); !errors.Is(err, injected) {
+		t.Errorf("Err() = %v; want injected error %v", err, injected)
+	}
+}
+
+func TestScanner_MultiLineData(t *testing.T) {
+	// Two consecutive data: lines in one event block.
+	// The implementation does NOT concatenate; each data: line is returned independently.
+	input := "data: line1\ndata: line2\n\n"
+	s := NewScanner(strings.NewReader(input))
+
+	data, ok := s.Next()
+	if !ok || data != "line1" {
+		t.Errorf("first: got %q, %v; want %q, true", data, ok, "line1")
+	}
+
+	data, ok = s.Next()
+	if !ok || data != "line2" {
+		t.Errorf("second: got %q, %v; want %q, true", data, ok, "line2")
+	}
+
+	_, ok = s.Next()
+	if ok {
+		t.Error("expected false after all lines consumed")
 	}
 }

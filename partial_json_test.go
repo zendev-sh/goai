@@ -2,6 +2,7 @@ package goai
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -571,5 +572,60 @@ func TestTrimTrailingIncomplete_DanglingKeyAfterBrace(t *testing.T) {
 	expected := `{`
 	if got != expected {
 		t.Errorf("trimTrailingIncomplete(%q)\n  got:  %q\n  want: %q", input, got, expected)
+	}
+}
+
+func TestRepairJSON_ExceedsMaxDepth(t *testing.T) {
+	// Build a realistic deeply-nested object: {"a":{"a":{"a": ...}}}
+	// at 600 levels - well beyond maxJSONDepth (512).
+	// repairJSON must not panic, must not grow the stack beyond 512,
+	// and the output must be valid JSON.
+	const depth = 600
+	var b strings.Builder
+	for range depth {
+		b.WriteString(`{"a":`)
+	}
+	b.WriteString(`1`) // innermost value
+	input := b.String() // intentionally truncated - no closing braces
+
+	got := repairJSON(input)
+
+	// The result must be parseable JSON.
+	var v any
+	if err := json.Unmarshal([]byte(got), &v); err != nil {
+		t.Errorf("repairJSON with depth %d produced invalid JSON: %v\nresult (first 200 bytes): %.200s", depth, err, got)
+	}
+}
+
+func TestRepairJSON_AtExactMaxDepth(t *testing.T) {
+	// Exactly maxJSONDepth levels - must also produce valid JSON.
+	var b strings.Builder
+	for range maxJSONDepth {
+		b.WriteString(`{"a":`)
+	}
+	b.WriteString(`1`)
+	input := b.String()
+
+	got := repairJSON(input)
+
+	var v any
+	if err := json.Unmarshal([]byte(got), &v); err != nil {
+		t.Errorf("repairJSON at maxJSONDepth=%d produced invalid JSON: %v", maxJSONDepth, err)
+	}
+}
+
+func TestRepairJSON_ExceedsMaxDepth_Arrays(t *testing.T) {
+	// Build deeply-nested arrays: [[[...  600 levels deep, no closing brackets.
+	// This exercises the '[' case of the goto closeAll depth-limit guard (line 83-85),
+	// which is distinct from the '{' case covered by TestRepairJSON_ExceedsMaxDepth.
+	const depth = 600
+	input := strings.Repeat("[", depth) // intentionally truncated - no closing brackets
+
+	got := repairJSON(input)
+
+	// The result must be parseable JSON and must not panic.
+	var v any
+	if err := json.Unmarshal([]byte(got), &v); err != nil {
+		t.Errorf("repairJSON with %d nested '[' produced invalid JSON: %v\nresult (first 200 bytes): %.200s", depth, err, got)
 	}
 }

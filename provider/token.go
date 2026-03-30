@@ -84,7 +84,11 @@ func (c *cachedTokenSource) Token(ctx context.Context) (string, error) {
 	}
 
 	c.mu.Lock()
-	c.cached = token
+	// Only write back if cache is still empty or expired - a concurrent
+	// goroutine may have already written a fresher token (e.g. after Invalidate).
+	if c.cached == nil || (!c.cached.ExpiresAt.IsZero() && !time.Now().Before(c.cached.ExpiresAt)) {
+		c.cached = token
+	}
 	c.mu.Unlock()
 	return token.Value, nil
 }

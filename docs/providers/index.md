@@ -1,11 +1,11 @@
 ---
 title: Supported Providers
-description: "GoAI SDK supports 21+ LLM providers: OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, MiniMax, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM and more."
+description: "GoAI SDK supports 22+ LLM providers: OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, MiniMax, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM and more."
 ---
 
 # Providers
 
-GoAI SDK supports 21+ LLM providers with a single unified API. All providers auto-resolve credentials from environment variables. No explicit API key configuration needed for standard deployments.
+GoAI SDK supports 22+ LLM providers with a single unified API. All providers auto-resolve credentials from environment variables. No explicit API key configuration needed for standard deployments.
 
 All 7 core functions — `GenerateText`, `StreamText`, `GenerateObject[T]`, `StreamObject[T]`, `Embed`, `EmbedMany`, and `GenerateImage` — work identically across all providers.
 

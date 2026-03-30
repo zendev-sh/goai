@@ -233,9 +233,18 @@ func (t *StdioTransport) dispatchClose() {
 }
 
 // mergeEnv combines additional environment variables with the current process env.
+//
+// Security note: this function inherits the full parent process environment,
+// which may include sensitive values (API keys, tokens, credentials). Callers
+// should pass only the env vars the subprocess actually needs via WithStdioEnv.
+// Keys or values containing newline or null characters are silently dropped to
+// prevent env-variable injection attacks.
 func mergeEnv(env map[string]string) []string {
 	merged := os.Environ()
 	for k, v := range env {
+		if strings.ContainsAny(k, "\n\r\x00") || strings.ContainsAny(v, "\n\r\x00") {
+			continue // skip malformed entries
+		}
 		merged = append(merged, k+"="+v)
 	}
 	return merged
@@ -271,6 +280,7 @@ type HTTPTransport struct {
 
 	endpoint    string
 	cancel      context.CancelFunc
+	sseDone     chan struct{}
 	postCancels []context.CancelFunc
 
 	mu        sync.Mutex
@@ -361,7 +371,14 @@ func (t *HTTPTransport) Start(ctx context.Context) error {
 		t.mu.Unlock()
 	}
 
-	go t.readSSEBody(resp.Body)
+	sseDone := make(chan struct{})
+	t.mu.Lock()
+	t.sseDone = sseDone
+	t.mu.Unlock()
+	go func() {
+		defer close(sseDone)
+		t.readSSEBody(resp.Body)
+	}()
 	return nil
 }
 
@@ -453,7 +470,7 @@ func (t *HTTPTransport) Send(ctx context.Context, msg JSONRPCMessage) error {
 	switch {
 	case strings.HasPrefix(ct, "application/json"):
 		var respMsg JSONRPCMessage
-		if err := json.NewDecoder(resp.Body).Decode(&respMsg); err == nil && respMsg.JSONRPC != "" {
+		if err := json.NewDecoder(resp.Body).Decode(&respMsg); err == nil && respMsg.JSONRPC == "2.0" {
 			t.dispatchMessage(respMsg)
 		}
 		resp.Body.Close()
@@ -494,11 +511,15 @@ func (t *HTTPTransport) Close() error {
 	t.mu.Lock()
 	cancel := t.cancel
 	t.cancel = nil
+	sseDone := t.sseDone
 	cancels := t.postCancels
 	t.postCancels = nil
 	t.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if sseDone != nil {
+		<-sseDone // wait for primary SSE goroutine to exit
 	}
 	for _, cancel := range cancels {
 		cancel()
@@ -734,7 +755,7 @@ func (t *SSETransport) Send(ctx context.Context, msg JSONRPCMessage) error {
 	ct := resp.Header.Get("Content-Type")
 	if strings.HasPrefix(ct, "application/json") {
 		var respMsg JSONRPCMessage
-		if err := json.NewDecoder(resp.Body).Decode(&respMsg); err == nil && respMsg.JSONRPC != "" {
+		if err := json.NewDecoder(resp.Body).Decode(&respMsg); err == nil && respMsg.JSONRPC == "2.0" {
 			t.dispatchMessage(respMsg)
 		}
 	}

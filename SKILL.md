@@ -5,7 +5,7 @@
 
 ## Overview
 
-GoAI is a Go SDK for AI applications. One unified API across 21+ LLM providers. Inspired by the Vercel AI SDK, adapted to Go idioms (generics, interfaces, channels).
+GoAI is a Go SDK for AI applications. One unified API across 22+ LLM providers. Inspired by the Vercel AI SDK, adapted to Go idioms (generics, interfaces, channels).
 
 - **Package**: `github.com/zendev-sh/goai`
 - **Go version**: 1.25+
@@ -325,7 +325,7 @@ result, err := goai.GenerateText(ctx, model,
         log.Printf("Step %d: %s, tools: %d", step.Number, step.FinishReason, len(step.ToolCalls))
     }),
     goai.WithOnToolCall(func(info goai.ToolCallInfo) {
-        log.Printf("Tool %s took %v", info.ToolName, info.Duration)
+        log.Printf("Tool %s (step %d) took %v, input: %s", info.ToolName, info.Step, info.Duration, info.Input)
     }),
 )
 ```
@@ -408,10 +408,11 @@ type TextResult struct {
 ```go
 type ObjectResult[T any] struct {
     Object           T                              // the parsed typed object
-    Usage            provider.Usage
+    Usage            provider.Usage                 // total token consumption across all steps
     FinishReason     provider.FinishReason
     Response         provider.ResponseMetadata
     ProviderMetadata map[string]map[string]any      // provider-specific response data
+    Steps            []StepResult                   // results from each generation step (multi-step tool loops)
 }
 ```
 
@@ -513,7 +514,7 @@ model := openai.Chat("gpt-4o", openai.WithTokenSource(ts))
 | OpenAI        | `provider/openai`    | Yes  | Yes   | Yes   | 4              |
 | Anthropic     | `provider/anthropic` | Yes  | -     | -     | 10             |
 | Google Gemini | `provider/google`    | Yes  | Yes   | Yes   | 3              |
-| AWS Bedrock   | `provider/bedrock`   | Yes  | -     | -     | -              |
+| AWS Bedrock   | `provider/bedrock`   | Yes  | Yes   | -     | -              |
 | Azure OpenAI  | `provider/azure`     | Yes  | -     | Yes   | -              |
 | Vertex AI     | `provider/vertex`    | Yes  | Yes   | Yes   | -              |
 
@@ -537,6 +538,7 @@ Fireworks, Together, DeepInfra, OpenRouter, Perplexity, Cerebras
 | -------- | ----------------- | ---- | ----- | ----------------- |
 | Ollama   | `provider/ollama` | Yes  | Yes   | `localhost:11434/v1` |
 | vLLM     | `provider/vllm`   | Yes  | Yes   | `localhost:8000/v1`  |
+| RunPod   | `provider/runpod` | Yes  | -     | `RUNPOD_ENDPOINT_ID` |
 | Custom   | `provider/compat` | Yes  | Yes   | user-defined         |
 
 ---

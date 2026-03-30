@@ -199,12 +199,10 @@ func applyProviderOptions(body map[string]any, opts map[string]any) {
 		return
 	}
 
-	// Known mappings (camelCase → snake_case or direct).
-	// Keys listed here are consumed by the provider layer and NOT sent to the API.
 	knownKeys := map[string]bool{
 		"structuredOutputs": true,
 		"strictJsonSchema":  true,
-		"useResponsesAPI":   true, // consumed by openai.shouldUseResponsesAPI
+		"useResponsesAPI":   true,
 	}
 
 	if v, ok := opts["parallelToolCalls"]; ok {
@@ -248,7 +246,7 @@ func applyProviderOptions(body map[string]any, opts map[string]any) {
 		knownKeys["serviceTier"] = true
 	}
 
-	// Protected keys that must not be overwritten by provider options.
+	// Pass through any remaining unknown keys.
 	protectedKeys := map[string]bool{
 		"model": true, "stream": true, "messages": true,
 		"max_tokens": true, "max_completion_tokens": true,
@@ -256,8 +254,6 @@ func applyProviderOptions(body map[string]any, opts map[string]any) {
 		"seed": true, "frequency_penalty": true, "presence_penalty": true,
 		"tools": true, "tool_choice": true, "response_format": true,
 	}
-
-	// Pass through any remaining unknown keys.
 	for k, v := range opts {
 		if !knownKeys[k] && !protectedKeys[k] {
 			body[k] = v
