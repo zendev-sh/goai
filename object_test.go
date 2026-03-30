@@ -929,7 +929,6 @@ func TestTruncate_StringWithEllipsis(t *testing.T) {
 	}
 }
 
-
 // --- Verify model receives ResponseFormat in GenerateObject ---
 
 func TestGenerateObject_ResponseFormatSchema(t *testing.T) {

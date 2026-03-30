@@ -267,6 +267,9 @@ func (h *Hooks) Run() []goai.Option {
 			}
 
 			obs = append(obs, ingestionEvent{
+				// ingestionEvent.ID is the deduplication key for the ingestion envelope;
+				// spanBody.ID is the observation ID used for parent-child relationships.
+				// Langfuse requires them to be distinct.
 				ID:        newID(),
 				Type:      eventSpan,
 				Timestamp: formatTime(start),

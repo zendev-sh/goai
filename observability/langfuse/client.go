@@ -46,6 +46,8 @@ func (c *client) appendEvents(events []ingestionEvent) {
 }
 
 // flush sends all buffered events to Langfuse in a single POST and clears the queue.
+// Events are cleared before the POST; if the POST fails, those events are permanently
+// lost. This is intentional: observability is best-effort and we avoid double-sending.
 func (c *client) flush(ctx context.Context) error {
 	c.mu.Lock()
 	if len(c.events) == 0 {

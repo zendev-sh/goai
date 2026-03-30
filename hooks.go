@@ -67,6 +67,8 @@ type ToolCallInfo struct {
 
 	// OutputObject is the parsed JSON value of Output when the tool returned valid JSON.
 	// Nil if the output is not valid JSON or the tool returned an error.
+	// The dynamic type follows json.Unmarshal rules: JSON objects become map[string]any,
+	// arrays become []any, numbers become float64, booleans become bool, strings become string.
 	OutputObject any
 
 	// StartTime is when the tool execution began.
