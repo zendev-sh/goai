@@ -464,10 +464,12 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 }
 
 // requestMessages returns msgs with a system message prepended when system is non-empty.
-// Used to populate RequestInfo.Messages so hooks always see the full conversation.
+// Always allocates a new slice so hooks cannot mutate the caller's message state.
 func requestMessages(system string, msgs []provider.Message) []provider.Message {
 	if system == "" {
-		return msgs
+		out := make([]provider.Message, len(msgs))
+		copy(out, msgs)
+		return out
 	}
 	out := make([]provider.Message, 0, len(msgs)+1)
 	out = append(out, SystemMessage(system))

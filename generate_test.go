@@ -1822,3 +1822,239 @@ func TestStreamText_Error_OnResponseFired(t *testing.T) {
 		t.Errorf("ResponseInfo.StatusCode = %d, want 429", capturedResponse.StatusCode)
 	}
 }
+
+// TestStreamText_ProviderMetadata verifies that nested providerMetadata
+// (OpenAI Chat Completions convention) flows from ChunkFinish.Metadata through
+// consume() into TextResult.ProviderMetadata and StepResult.ProviderMetadata.
+// The provider-level counterpart is TestParseStream_ProviderMetadataInFinish
+// in internal/openaicompat/, which verifies the codec emits the right chunk shape.
+func TestStreamText_ProviderMetadata(t *testing.T) {
+	wantMeta := map[string]map[string]any{
+		"openai": {"logprobs": []float64{-0.1, -0.2}},
+	}
+
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "hello"},
+				provider.StreamChunk{
+					Type:         provider.ChunkFinish,
+					FinishReason: provider.FinishStop,
+					Usage:        provider.Usage{InputTokens: 5, OutputTokens: 1},
+					Metadata: map[string]any{
+						"providerMetadata": wantMeta,
+					},
+				},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model, WithPrompt("hi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range stream.TextStream() {
+	}
+	result := stream.Result()
+
+	if result.ProviderMetadata == nil {
+		t.Fatal("ProviderMetadata is nil, want non-nil")
+	}
+	openaiMeta, ok := result.ProviderMetadata["openai"]
+	if !ok {
+		t.Fatal("missing 'openai' key in ProviderMetadata")
+	}
+	if openaiMeta["logprobs"] == nil {
+		t.Error("missing 'logprobs' in openai ProviderMetadata")
+	}
+
+	// Also check StepResult propagation.
+	if len(result.Steps) == 0 {
+		t.Fatal("no steps in result")
+	}
+	if result.Steps[0].ProviderMetadata == nil {
+		t.Error("StepResult.ProviderMetadata is nil")
+	}
+}
+
+func TestStreamText_ProviderMetadata_ResponseLevel(t *testing.T) {
+	// Anthropic convention: flat metadata keys go into Response.ProviderMetadata.
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "hi"},
+				provider.StreamChunk{
+					Type:         provider.ChunkFinish,
+					FinishReason: provider.FinishStop,
+					Metadata: map[string]any{
+						"iterations": 3,
+						"container":  "abc",
+					},
+				},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model, WithPrompt("test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range stream.TextStream() {
+	}
+	result := stream.Result()
+
+	if result.Response.ProviderMetadata == nil {
+		t.Fatal("Response.ProviderMetadata is nil")
+	}
+	if result.Response.ProviderMetadata["iterations"] != 3 {
+		t.Errorf("iterations = %v, want 3", result.Response.ProviderMetadata["iterations"])
+	}
+	if result.Response.ProviderMetadata["container"] != "abc" {
+		t.Errorf("container = %v, want abc", result.Response.ProviderMetadata["container"])
+	}
+}
+
+func TestStreamText_ProviderMetadata_BothConventions(t *testing.T) {
+	// A chunk that carries both nested providerMetadata (OpenAI) and flat keys (Anthropic).
+	wantNested := map[string]map[string]any{
+		"openai": {"logprobs": true},
+	}
+
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "hi"},
+				provider.StreamChunk{
+					Type:         provider.ChunkFinish,
+					FinishReason: provider.FinishStop,
+					Metadata: map[string]any{
+						"providerMetadata": wantNested,
+						"iterations":       5,
+					},
+				},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model, WithPrompt("test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range stream.TextStream() {
+	}
+	result := stream.Result()
+
+	// Nested convention → TextResult.ProviderMetadata
+	if result.ProviderMetadata == nil {
+		t.Fatal("ProviderMetadata is nil")
+	}
+	if _, ok := result.ProviderMetadata["openai"]; !ok {
+		t.Error("missing 'openai' key in ProviderMetadata")
+	}
+
+	// Flat convention → Response.ProviderMetadata
+	if result.Response.ProviderMetadata == nil {
+		t.Fatal("Response.ProviderMetadata is nil")
+	}
+	if result.Response.ProviderMetadata["iterations"] != 5 {
+		t.Errorf("iterations = %v, want 5", result.Response.ProviderMetadata["iterations"])
+	}
+
+	// Flat loop must NOT include the "providerMetadata" key.
+	if _, ok := result.Response.ProviderMetadata["providerMetadata"]; ok {
+		t.Error("providerMetadata key should not leak into Response.ProviderMetadata")
+	}
+}
+
+func TestStreamText_ChunkStepFinish_ProviderMetadata(t *testing.T) {
+	// ChunkStepFinish and ChunkFinish share the same case in consume().
+	// Verify that metadata from ChunkStepFinish is captured and then
+	// overwritten by ChunkFinish (last-write-wins, matching non-streaming).
+	stepMeta := map[string]map[string]any{
+		"openai": {"step": "first"},
+	}
+	finishMeta := map[string]map[string]any{
+		"openai": {"step": "final"},
+	}
+
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "step1"},
+				provider.StreamChunk{
+					Type:         provider.ChunkStepFinish,
+					FinishReason: provider.FinishToolCalls,
+					Usage:        provider.Usage{InputTokens: 5, OutputTokens: 2},
+					Metadata: map[string]any{
+						"providerMetadata": stepMeta,
+					},
+				},
+				provider.StreamChunk{Type: provider.ChunkText, Text: " step2"},
+				provider.StreamChunk{
+					Type:         provider.ChunkFinish,
+					FinishReason: provider.FinishStop,
+					Usage:        provider.Usage{InputTokens: 8, OutputTokens: 4},
+					Metadata: map[string]any{
+						"providerMetadata": finishMeta,
+					},
+				},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model, WithPrompt("multi-step"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range stream.TextStream() {
+	}
+	result := stream.Result()
+
+	// Final metadata should be from ChunkFinish (last-write-wins).
+	if result.ProviderMetadata == nil {
+		t.Fatal("ProviderMetadata is nil")
+	}
+	openaiMeta := result.ProviderMetadata["openai"]
+	if openaiMeta["step"] != "final" {
+		t.Errorf("step = %v, want 'final' (last-write-wins)", openaiMeta["step"])
+	}
+}
+
+func TestStreamText_FlatMetadata_CacheTokens(t *testing.T) {
+	// Bedrock puts cacheWriteInputTokens as a flat key on ChunkFinish.Metadata.
+	// Verify it surfaces in Response.ProviderMetadata.
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "cached"},
+				provider.StreamChunk{
+					Type:         provider.ChunkFinish,
+					FinishReason: provider.FinishStop,
+					Metadata: map[string]any{
+						"cacheWriteInputTokens": 25,
+					},
+				},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model, WithPrompt("cache test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range stream.TextStream() {
+	}
+	result := stream.Result()
+
+	if result.Response.ProviderMetadata == nil {
+		t.Fatal("Response.ProviderMetadata is nil")
+	}
+	if result.Response.ProviderMetadata["cacheWriteInputTokens"] != 25 {
+		t.Errorf("cacheWriteInputTokens = %v, want 25", result.Response.ProviderMetadata["cacheWriteInputTokens"])
+	}
+}

@@ -1556,3 +1556,146 @@ func TestGenerateObject_ToolLoop_SingleStepHasOneStep(t *testing.T) {
 		t.Errorf("Usage = %+v, want InputTokens=5 OutputTokens=3", result.Usage)
 	}
 }
+
+func TestStreamObject_ProviderMetadata(t *testing.T) {
+	wantMeta := map[string]map[string]any{
+		"openai": {"logprobs": true},
+	}
+
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: `{"name":"Alice","age":30}`},
+				provider.StreamChunk{
+					Type:         provider.ChunkFinish,
+					FinishReason: provider.FinishStop,
+					Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+					Metadata: map[string]any{
+						"providerMetadata": wantMeta,
+					},
+				},
+			), nil
+		},
+	}
+
+	stream, err := StreamObject[simpleObject](t.Context(), model, WithPrompt("generate"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range stream.PartialObjectStream() {
+	}
+
+	result, err := stream.Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ProviderMetadata == nil {
+		t.Fatal("ProviderMetadata is nil, want non-nil")
+	}
+	openaiMeta, ok := result.ProviderMetadata["openai"]
+	if !ok {
+		t.Fatal("missing 'openai' key in ProviderMetadata")
+	}
+	if openaiMeta["logprobs"] != true {
+		t.Error("missing 'logprobs' in openai ProviderMetadata")
+	}
+}
+
+func TestStreamObject_ProviderMetadata_ResponseLevel(t *testing.T) {
+	// Anthropic convention: flat metadata keys go into Response.ProviderMetadata.
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: `{"name":"Eve","age":28}`},
+				provider.StreamChunk{
+					Type:         provider.ChunkFinish,
+					FinishReason: provider.FinishStop,
+					Metadata: map[string]any{
+						"iterations": 2,
+						"container":  "xyz",
+					},
+				},
+			), nil
+		},
+	}
+
+	stream, err := StreamObject[simpleObject](t.Context(), model, WithPrompt("gen"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range stream.PartialObjectStream() {
+	}
+
+	result, err := stream.Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Response.ProviderMetadata == nil {
+		t.Fatal("Response.ProviderMetadata is nil")
+	}
+	if result.Response.ProviderMetadata["iterations"] != 2 {
+		t.Errorf("iterations = %v, want 2", result.Response.ProviderMetadata["iterations"])
+	}
+	if result.Response.ProviderMetadata["container"] != "xyz" {
+		t.Errorf("container = %v, want xyz", result.Response.ProviderMetadata["container"])
+	}
+}
+
+func TestStreamObject_ProviderMetadata_BothConventions(t *testing.T) {
+	// Both nested (OpenAI) and flat (Anthropic) conventions in a single chunk.
+	wantNested := map[string]map[string]any{
+		"openai": {"logprobs": true},
+	}
+
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: `{"name":"Zoe","age":22}`},
+				provider.StreamChunk{
+					Type:         provider.ChunkFinish,
+					FinishReason: provider.FinishStop,
+					Metadata: map[string]any{
+						"providerMetadata": wantNested,
+						"iterations":       7,
+					},
+				},
+			), nil
+		},
+	}
+
+	stream, err := StreamObject[simpleObject](t.Context(), model, WithPrompt("gen"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range stream.PartialObjectStream() {
+	}
+
+	result, err := stream.Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Nested convention → ObjectResult.ProviderMetadata
+	if result.ProviderMetadata == nil {
+		t.Fatal("ProviderMetadata is nil")
+	}
+	if _, ok := result.ProviderMetadata["openai"]; !ok {
+		t.Error("missing 'openai' key in ProviderMetadata")
+	}
+
+	// Flat convention → Response.ProviderMetadata
+	if result.Response.ProviderMetadata == nil {
+		t.Fatal("Response.ProviderMetadata is nil")
+	}
+	if result.Response.ProviderMetadata["iterations"] != 7 {
+		t.Errorf("iterations = %v, want 7", result.Response.ProviderMetadata["iterations"])
+	}
+
+	// "providerMetadata" key must NOT leak into flat.
+	if _, ok := result.Response.ProviderMetadata["providerMetadata"]; ok {
+		t.Error("providerMetadata key should not leak into Response.ProviderMetadata")
+	}
+}
