@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -454,6 +456,13 @@ func TestGenerateText_Error(t *testing.T) {
 	_, err := GenerateText(t.Context(), model, WithPrompt("hi"))
 	if err == nil {
 		t.Fatal("expected error")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T: %v", err, err)
+	}
+	if apiErr.StatusCode != 400 {
+		t.Errorf("StatusCode = %d, want 400", apiErr.StatusCode)
 	}
 }
 
@@ -1793,7 +1802,9 @@ func TestConsume_ContextCancelledResultPath(t *testing.T) {
 
 	result := stream.Result()
 	// Result should have at most the text sent before cancel.
-	_ = result
+	if result.Text != "" && result.Text != "hello" {
+		t.Errorf("Result.Text = %q, want either empty or %q (partial text before cancel)", result.Text, "hello")
+	}
 }
 
 func TestStreamText_Error_OnResponseFired(t *testing.T) {
@@ -2108,5 +2119,115 @@ func TestGenerateText_ToolLoop_ToolChoiceRequiredResets(t *testing.T) {
 	}
 	if capturedToolChoices[1] != "" {
 		t.Errorf("step 2 tool_choice = %q, want empty (reset)", capturedToolChoices[1])
+	}
+}
+
+func TestGenerateText_NilModel(t *testing.T) {
+	_, err := GenerateText(t.Context(), nil, WithPrompt("hi"))
+	if err == nil {
+		t.Fatal("expected error for nil model")
+	}
+	if !strings.Contains(err.Error(), "model must not be nil") {
+		t.Errorf("error = %q, want message containing %q", err.Error(), "model must not be nil")
+	}
+}
+
+func TestStreamText_NilModel(t *testing.T) {
+	_, err := StreamText(t.Context(), nil, WithPrompt("hi"))
+	if err == nil {
+		t.Fatal("expected error for nil model")
+	}
+	if !strings.Contains(err.Error(), "model must not be nil") {
+		t.Errorf("error = %q, want message containing %q", err.Error(), "model must not be nil")
+	}
+}
+
+func TestWithMaxSteps_ClampZero(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			return &provider.GenerateResult{
+				Text:         "done",
+				FinishReason: provider.FinishStop,
+			}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model, WithPrompt("hi"), WithMaxSteps(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// WithMaxSteps(0) should clamp to 1, so model is called exactly once.
+	if callCount != 1 {
+		t.Errorf("model called %d times, want 1 (MaxSteps clamped to 1)", callCount)
+	}
+}
+
+func TestWithMaxRetries_ClampNegative(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			return nil, &APIError{Message: "service error", StatusCode: 503, IsRetryable: true}
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model, WithPrompt("hi"), WithMaxRetries(-1))
+	// WithMaxRetries(-1) clamps to 0 - no retries, just one attempt, error returned.
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if callCount != 1 {
+		t.Errorf("model called %d times, want 1 (MaxRetries clamped to 0)", callCount)
+	}
+}
+
+func TestGenerateText_ContextCancelBetweenSteps(t *testing.T) {
+	// Two-step tool loop: after step 1 tool execution, cancel the context.
+	// The second model call should return the context error.
+	ctx, cancel := context.WithCancel(t.Context())
+
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		generateFn: func(ctx context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "work", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			// On the second call, honor context cancellation.
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+				return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop}, nil
+			}
+		},
+	}
+
+	_, err := GenerateText(ctx, model,
+		WithPrompt("go"),
+		WithMaxSteps(5),
+		WithMaxRetries(0),
+		WithTools(Tool{
+			Name: "work",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				// Cancel the context inside tool execution, before step 2.
+				cancel()
+				return "result", nil
+			},
+		}),
+	)
+	if err == nil {
+		t.Fatal("expected context error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
 	}
 }

@@ -206,7 +206,7 @@ func (m *chatModel) doStreamResponses(ctx context.Context, params provider.Gener
 
 	out := make(chan provider.StreamChunk, 64)
 	go func() {
-		defer func() { _ = resp.Body.Close() }()
+		// streamResponses owns and closes resp.Body via defer.
 		// Close body on context cancellation to unblock scanner.Scan().
 		// Without this, the goroutine leaks if the server stalls mid-stream.
 		done := make(chan struct{})

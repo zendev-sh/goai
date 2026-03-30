@@ -2,6 +2,7 @@ package goai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"testing"
@@ -305,6 +306,29 @@ func TestGenerateText_WithRetry(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Errorf("calls = %d, want 2", calls)
+	}
+}
+
+func TestRetryAfterDuration_WrappedError(t *testing.T) {
+	// Wrap an *APIError with fmt.Errorf so it is no longer a direct *APIError.
+	// retryAfterDuration must use errors.As internally to unwrap and find it.
+	apiErr := &APIError{
+		StatusCode:      http.StatusTooManyRequests,
+		IsRetryable:     true,
+		ResponseHeaders: map[string]string{"retry-after-ms": "750"},
+	}
+	wrapped := fmt.Errorf("wrapped: %w", apiErr)
+
+	// Sanity-check: errors.As should find the inner *APIError.
+	var extracted *APIError
+	if !errors.As(wrapped, &extracted) {
+		t.Fatal("errors.As could not unwrap *APIError from wrapped error")
+	}
+
+	got := retryAfterDuration(wrapped)
+	want := 750 * time.Millisecond
+	if got != want {
+		t.Errorf("retryAfterDuration(wrapped) = %v, want %v", got, want)
 	}
 }
 

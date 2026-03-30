@@ -53,6 +53,9 @@ model := bedrock.Chat("us.anthropic.claude-sonnet-4-6")
 // EU cross-region inference
 model := bedrock.Chat("eu.anthropic.claude-sonnet-4-6")
 
+// AP cross-region inference
+model := bedrock.Chat("ap.anthropic.claude-sonnet-4-6")
+
 // Global cross-region inference
 model := bedrock.Chat("global.anthropic.claude-sonnet-4-6")
 ```

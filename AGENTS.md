@@ -14,7 +14,7 @@ go test ./provider/openai/  # Test single package
 
 ## Architecture
 
-GoAI is a Go SDK for AI applications - one API across 21+ LLM providers. Inspired by Vercel AI SDK, adapted to Go idioms.
+GoAI is a Go SDK for AI applications - one API across 22+ LLM providers. Inspired by Vercel AI SDK, adapted to Go idioms.
 
 ```
 goai/
@@ -38,19 +38,19 @@ goai/
 │   ├── openai/             # OpenAI (Chat Completions + Responses API)
 │   ├── anthropic/          # Anthropic (Messages API)
 │   ├── google/             # Google Gemini (REST)
-│   ├── bedrock/            # AWS Bedrock (Converse API + SigV4 + EventStream, RWMutex for fallback)
+│   ├── bedrock/            # AWS Bedrock (Converse API + SigV4 + EventStream, RWMutex for fallback; InvokeModel API for embeddings)
 │   ├── vertex/             # Vertex AI
 │   ├── azure/              # Azure OpenAI
 │   ├── cohere/             # Cohere (Chat v2 + Embed)
 │   ├── compat/             # Generic OpenAI-compatible
-│   └── <12 more>/          # OpenAI-compat via internal/openaicompat
-│   # tools.go files: anthropic/ (1), openai/ (1), google/ (1), xai/ (1), groq/ (1)
+│   └── <14 more>/          # OpenAI-compat via internal/openaicompat (incl. RunPod)
+│   # tools.go files: anthropic/ (10), openai/ (4), google/ (3), xai/ (2), groq/ (1)
 ├── internal/
 │   ├── openaicompat/       # Shared codec for 13+ providers
 │   ├── gemini/             # Schema sanitization (Vertex, Google)
 │   ├── sse/                # SSE parser
 │   └── httpc/              # HTTP helpers + ParseDataURL
-├── examples/               # 23 runnable examples (including 7 MCP examples)
+├── examples/               # 24 runnable examples (including 7 MCP examples)
 └── bench/                  # Performance benchmarks (GoAI vs Vercel AI SDK)
 ```
 

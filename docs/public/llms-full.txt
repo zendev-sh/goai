@@ -1,8 +1,8 @@
 # GoAI SDK
 
-> Go SDK for building AI applications. One unified API across 20+ LLM providers.
+> Go SDK for building AI applications. One unified API across 22+ LLM providers.
 
-GoAI SDK is an open-source Go library inspired by the Vercel AI SDK, designed idiomatically for Go with generics, interfaces, and channels. It provides a single API surface for text generation, streaming, structured output, embeddings, image generation, and tool calling across 20+ providers.
+GoAI SDK is an open-source Go library inspired by the Vercel AI SDK, designed idiomatically for Go with generics, interfaces, and channels. It provides a single API surface for text generation, streaming, structured output, embeddings, image generation, and tool calling across 22+ providers.
 
 - Website: https://goai.sh
 - GitHub: https://github.com/zendev-sh/goai
@@ -88,7 +88,7 @@ fmt.Printf("Tokens: %d in, %d out\n", result.TotalUsage.InputTokens, result.Tota
 
 ### GenerateObject[T]
 
-Type-safe structured output using Go generics. Auto-generates JSON Schema from T.
+Type-safe structured output using Go generics. Auto-generates JSON Schema from T. Supports MaxSteps/tool loop: when tools with `Execute` functions are provided and `MaxSteps > 1`, it runs a tool loop before producing the final structured object.
 
 ```go
 func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, opts ...Option) (*ObjectResult[T], error)
@@ -294,7 +294,7 @@ All providers auto-resolve credentials from environment variables.
 | OpenAI | `provider/openai` | ✅ gpt-4o, o3 | ✅ text-embedding-3-* | ✅ gpt-image-1 | 4 (web search, code interpreter, image gen, file search) | `OPENAI_API_KEY` |
 | Anthropic | `provider/anthropic` | ✅ claude-* | — | — | 10 (web search, web fetch, computer use, bash, text editor, code execution) | `ANTHROPIC_API_KEY` |
 | Google | `provider/google` | ✅ gemini-* | ✅ text-embedding-004 | ✅ imagen-* | 3 (google search, URL context, code execution) | `GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY` |
-| Bedrock | `provider/bedrock` | ✅ anthropic.*, meta.* | — | — | — | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
+| Bedrock | `provider/bedrock` | ✅ anthropic.*, meta.* | ✅ titan-embed-*, cohere.embed-*, nova-2-*, marengo-* | — | — | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
 | Azure | `provider/azure` | ✅ gpt-4o, claude-* | — | ✅ | — | `AZURE_OPENAI_API_KEY` |
 | Vertex AI | `provider/vertex` | ✅ gemini-* | ✅ | ✅ | — | ADC (Application Default Credentials) |
 
@@ -304,6 +304,7 @@ All providers auto-resolve credentials from environment variables.
 |----------|--------|--------------|
 | Cohere | `provider/cohere` | `COHERE_API_KEY` |
 | Mistral | `provider/mistral` | `MISTRAL_API_KEY` |
+| MiniMax | `provider/minimax` | `MINIMAX_API_KEY` |
 | xAI (Grok) | `provider/xai` | `XAI_API_KEY` |
 | Groq | `provider/groq` | `GROQ_API_KEY` |
 | DeepSeek | `provider/deepseek` | `DEEPSEEK_API_KEY` |
@@ -316,6 +317,7 @@ Fireworks (`FIREWORKS_API_KEY`), Together (`TOGETHER_AI_API_KEY`), DeepInfra (`D
 
 - Ollama — `localhost:11434`, no auth, embed support
 - vLLM — `localhost:8000`, optional auth, embed support
+- RunPod — serverless vLLM on RunPod (`RUNPOD_API_KEY`, auto-resolves endpoint URL)
 - Compatible — any OpenAI-compatible endpoint via `provider/compat`
 
 ### Common Provider Options
@@ -448,6 +450,16 @@ All examples at https://github.com/zendev-sh/goai/tree/main/examples:
 - `examples/google-code-execution/` — Gemini code execution
 - `examples/image-generation/` — OpenAI image generation tool
 - `examples/file-search/` — OpenAI vector store file search
+
+---
+
+## Observability
+
+The `observability/langfuse` package provides first-class Langfuse tracing. Pass the Langfuse client's hook functions to `WithOnRequest`, `WithOnResponse`, and `WithOnStepFinish` to capture traces, spans, and token usage in your Langfuse dashboard.
+
+```go
+import "github.com/zendev-sh/goai/observability/langfuse"
+```
 
 ---
 

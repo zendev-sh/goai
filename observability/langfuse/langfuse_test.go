@@ -471,7 +471,7 @@ func TestWith_CallsRunPerInvocation(t *testing.T) {
 }
 
 func TestRun_WithSystemMessage(t *testing.T) {
-	// Exercises the requestMessages(system != "") code path — system message
+	// Exercises the requestMessages(system != "") code path - system message
 	// is prepended to info.Messages so it appears first in the generation input.
 	srv, getEvents := newCaptureServer(t)
 	defer srv.Close()
@@ -609,7 +609,7 @@ func TestRun_EnvVarCredentials(t *testing.T) {
 	t.Setenv("LANGFUSE_SECRET_KEY", "env-sec")
 	t.Setenv("LANGFUSE_HOST", srv.URL)
 
-	h := New(Config{}) // no credentials set — must fall back to env vars
+	h := New(Config{}) // no credentials set - must fall back to env vars
 
 	model := &mockModel{
 		id: "m",
@@ -625,7 +625,7 @@ func TestRun_EnvVarCredentials(t *testing.T) {
 
 	// If env vars were not read, no events would arrive at the server.
 	if len(getEvents()) == 0 {
-		t.Error("no events received — env var credentials were not used")
+		t.Error("no events received - env var credentials were not used")
 	}
 }
 
@@ -813,5 +813,254 @@ func TestRun_RunError_PartialTraceFlushes(t *testing.T) {
 	genBody := bodyOf(t, events, eventGeneration)
 	if genBody["level"] != levelError {
 		t.Errorf("generation level = %v, want ERROR", genBody["level"])
+	}
+}
+
+func TestRun_EventOrdering(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	h := newHooks(t, srv, Config{TraceName: "ordering-test"})
+
+	model := &mockModel{
+		id: "gpt-4o",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         "ok",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 5, OutputTokens: 3},
+			}, nil
+		},
+	}
+
+	_, err := goai.GenerateText(t.Context(), model, append(h.Run(), goai.WithPrompt("hi"))...)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	if len(events) < 3 {
+		t.Fatalf("expected at least 3 events, got %d; types: %v", len(events), eventTypes(events))
+	}
+
+	// The batch is built in deterministic order: trace-create, span-create, generation-create.
+	if events[0]["type"] != eventTrace {
+		t.Errorf("events[0].type = %q, want %q", events[0]["type"], eventTrace)
+	}
+	if events[1]["type"] != eventSpan {
+		t.Errorf("events[1].type = %q, want %q", events[1]["type"], eventSpan)
+	}
+	if events[2]["type"] != eventGeneration {
+		t.Errorf("events[2].type = %q, want %q", events[2]["type"], eventGeneration)
+	}
+}
+
+func TestRun_ToolSpanParentID(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	h := newHooks(t, srv, Config{TraceName: "tool-parent-test"})
+
+	callCount := 0
+	model := &mockModel{
+		id: "gpt-4o",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "my_tool", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+					Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         "done",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 20, OutputTokens: 8},
+			}, nil
+		},
+	}
+
+	opts := append(h.Run(),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(goai.Tool{
+			Name:    "my_tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "result", nil },
+		}),
+	)
+	_, err := goai.GenerateText(t.Context(), model, opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+
+	// Find the agent span (span-create whose name matches the trace name, i.e. no parentObservationId).
+	var agentSpanID string
+	for _, e := range events {
+		if e["type"] != eventSpan {
+			continue
+		}
+		b, ok := e["body"].(map[string]any)
+		if !ok {
+			continue
+		}
+		// The agent span has no parentObservationId.
+		if _, hasParent := b["parentObservationId"]; !hasParent {
+			agentSpanID, _ = b["id"].(string)
+			break
+		}
+	}
+	if agentSpanID == "" {
+		t.Fatal("agent span not found")
+	}
+
+	// Find the tool span.
+	var toolParentID string
+	for _, e := range events {
+		if e["type"] != eventSpan {
+			continue
+		}
+		b, ok := e["body"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if b["name"] == "my_tool" {
+			toolParentID, _ = b["parentObservationId"].(string)
+			break
+		}
+	}
+	if toolParentID == "" {
+		t.Fatal("tool span not found or missing parentObservationId")
+	}
+
+	if toolParentID != agentSpanID {
+		t.Errorf("tool span parentObservationId = %q, want agent span ID %q", toolParentID, agentSpanID)
+	}
+}
+
+func TestRun_ErrorOnStep2(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	h := newHooks(t, srv, Config{TraceName: "error-step2"})
+
+	callCount := 0
+	model := &mockModel{
+		id: "gpt-4o",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				// Step 1 succeeds with a tool call.
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "my_tool", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+					Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+				}, nil
+			}
+			// Step 2 model call fails.
+			return nil, fmt.Errorf("step 2 failed")
+		},
+	}
+
+	opts := append(h.Run(),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithMaxRetries(0),
+		goai.WithTools(goai.Tool{
+			Name:    "my_tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "tool result", nil },
+		}),
+	)
+	_, _ = goai.GenerateText(t.Context(), model, opts...)
+
+	events := getEvents()
+	if len(events) == 0 {
+		t.Fatal("expected partial trace to be flushed, got no events")
+	}
+
+	// Find the generation for step 2 - it should carry ERROR level.
+	var errorGenFound bool
+	for _, e := range events {
+		if e["type"] != eventGeneration {
+			continue
+		}
+		b, ok := e["body"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if b["level"] == levelError {
+			errorGenFound = true
+			break
+		}
+	}
+	if !errorGenFound {
+		t.Errorf("expected a generation-create event with level ERROR; types: %v", eventTypes(events))
+	}
+}
+
+func TestRun_ReasoningTokens(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	h := newHooks(t, srv, Config{})
+
+	model := &mockModel{
+		id: "o1",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         "reasoned answer",
+				FinishReason: provider.FinishStop,
+				Usage: provider.Usage{
+					InputTokens:     10,
+					OutputTokens:    20,
+					ReasoningTokens: 50,
+				},
+			}, nil
+		},
+	}
+
+	_, err := goai.GenerateText(t.Context(), model, append(h.Run(), goai.WithPrompt("think"))...)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	genBody := bodyOf(t, events, eventGeneration)
+	meta, ok := genBody["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("generation metadata not a map: %T", genBody["metadata"])
+	}
+	if meta["reasoning_tokens"] != float64(50) {
+		t.Errorf("metadata.reasoning_tokens = %v, want 50", meta["reasoning_tokens"])
+	}
+}
+
+func TestRun_BaseURLEnvVar(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	// Set LANGFUSE_BASE_URL but NOT LANGFUSE_HOST - exercises the fallback path.
+	t.Setenv("LANGFUSE_BASE_URL", srv.URL)
+	t.Setenv("LANGFUSE_PUBLIC_KEY", "env-pub")
+	t.Setenv("LANGFUSE_SECRET_KEY", "env-sec")
+
+	h := New(Config{}) // no Host set - must fall back to LANGFUSE_BASE_URL
+
+	model := &mockModel{
+		id: "m",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{Text: "ok", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	_, err := goai.GenerateText(t.Context(), model, append(h.Run(), goai.WithPrompt("hi"))...)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(getEvents()) == 0 {
+		t.Error("no events received - LANGFUSE_BASE_URL fallback did not work")
 	}
 }

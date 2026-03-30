@@ -11,7 +11,10 @@ import (
 // schemaMarshalFunc is swappable for testing the panic path.
 var schemaMarshalFunc = json.Marshal
 
-// SchemaFrom generates a JSON Schema from a Go type using reflection.
+// SchemaFrom generates a JSON Schema from the Go type T. It panics if the
+// generated schema cannot be marshaled to JSON, which indicates a bug in
+// typeToSchema rather than a runtime error. In normal usage this cannot occur.
+//
 // The schema is compatible with OpenAI strict mode:
 //   - All properties are required (pointer types become nullable)
 //   - additionalProperties: false on all objects
@@ -73,10 +76,18 @@ func typeToSchema(t reflect.Type, seen map[reflect.Type]bool) map[string]any {
 	case reflect.Float32, reflect.Float64:
 		return map[string]any{"type": "number"}
 	case reflect.Slice:
-		return map[string]any{"type": "array", "items": typeToSchema(t.Elem(), seen)}
+		elem := t.Elem()
+		if seen[elem] {
+			return map[string]any{"type": "array"}
+		}
+		return map[string]any{"type": "array", "items": typeToSchema(elem, seen)}
 	case reflect.Map:
 		if t.Key().Kind() == reflect.String {
-			return map[string]any{"type": "object", "additionalProperties": typeToSchema(t.Elem(), seen)}
+			elem := t.Elem()
+			if seen[elem] {
+				return map[string]any{"type": "object"}
+			}
+			return map[string]any{"type": "object", "additionalProperties": typeToSchema(elem, seen)}
 		}
 		return map[string]any{"type": "object"}
 	case reflect.Struct:

@@ -1435,3 +1435,36 @@ func TestSSETransport_WithCustomHTTPClient(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	st.Close()
 }
+
+func TestStdioTransport_StartNonExistentBinary(t *testing.T) {
+	st := NewStdioTransport("/nonexistent/binary/that/does/not/exist", nil)
+	err := st.Start(t.Context())
+	if err == nil {
+		st.Close()
+		t.Fatal("expected error starting non-existent binary")
+	}
+	if !strings.Contains(err.Error(), "start process") {
+		t.Errorf("error = %q, want to contain 'start process'", err.Error())
+	}
+}
+
+func TestHTTPTransport_ErrorResponseBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		w.Write([]byte("custom error message"))
+	}))
+	defer srv.Close()
+
+	ht := NewHTTPTransport(srv.URL)
+	msg := JSONRPCMessage{JSONRPC: "2.0", Method: "test", ID: "1"}
+	err := ht.Send(t.Context(), msg)
+	if err == nil {
+		t.Fatal("expected error for HTTP 500")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("error = %q, want to contain status code 500", err.Error())
+	}
+	if !strings.Contains(err.Error(), "custom error message") {
+		t.Errorf("error = %q, want to contain body text 'custom error message'", err.Error())
+	}
+}

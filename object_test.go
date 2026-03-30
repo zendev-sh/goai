@@ -592,6 +592,13 @@ func TestStreamObject_ErrorFromProvider(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from provider")
 	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T: %v", err, err)
+	}
+	if apiErr.StatusCode != 429 {
+		t.Errorf("StatusCode = %d, want 429", apiErr.StatusCode)
+	}
 }
 
 func TestStreamObject_EmptyStream(t *testing.T) {

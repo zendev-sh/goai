@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -4300,6 +4301,66 @@ func TestInferenceConfig_ThinkingEnabledWithoutMaxTokens(t *testing.T) {
 		}),
 	)
 	// No MaxOutputTokens set -- inferenceConfig won't pre-exist.
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestChat_HTTPError_ErrorType(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = fmt.Fprint(w, `{"error":{"message":"Rate limited"}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("model",
+		WithAccessKey("AKIAIOSFODNN7EXAMPLE"),
+		WithSecretKey("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
+		WithBaseURL(server.URL),
+	)
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var apiErr *goai.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *goai.APIError, got %T: %v", err, err)
+	}
+	if apiErr.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("StatusCode = %d, want %d", apiErr.StatusCode, http.StatusTooManyRequests)
+	}
+}
+
+func TestWithBearerToken_NoSigV4Headers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if amzDate := r.Header.Get("x-amz-date"); amzDate != "" {
+			t.Errorf("x-amz-date should not be set with bearer token auth, got %q", amzDate)
+		}
+		if sha := r.Header.Get("x-amz-content-sha256"); sha != "" {
+			t.Errorf("x-amz-content-sha256 should not be set with bearer token auth, got %q", sha)
+		}
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") {
+			t.Errorf("Authorization = %q, want prefix 'Bearer '", auth)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, converseResponse("ok", "end_turn", 5, 3))
+	}))
+	defer server.Close()
+
+	model := Chat("anthropic.claude-sonnet-4-20250514-v1:0",
+		WithBearerToken("my-bearer-token"),
+		WithBaseURL(server.URL),
+	)
 	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
 		Messages: []provider.Message{
 			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},

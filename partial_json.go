@@ -23,6 +23,10 @@ func parsePartialJSON[T any](incomplete string) (*T, error) {
 	return &result2, nil
 }
 
+// maxJSONDepth is the maximum nesting depth repairJSON will track.
+// Input that exceeds this depth stops accumulating new open brackets.
+const maxJSONDepth = 512
+
 // repairJSON attempts to fix incomplete JSON by closing open structures.
 func repairJSON(s string) string {
 	s = strings.TrimSpace(s)
@@ -64,6 +68,10 @@ func repairJSON(s string) string {
 			buf.WriteByte(c)
 			inString = true
 		case '{':
+			if len(stack) >= maxJSONDepth {
+				// Depth limit reached: stop processing and close open brackets.
+				goto closeAll
+			}
 			buf.WriteByte(c)
 			stack = append(stack, '{')
 		case '}':
@@ -72,6 +80,10 @@ func repairJSON(s string) string {
 				stack = stack[:len(stack)-1]
 			}
 		case '[':
+			if len(stack) >= maxJSONDepth {
+				// Depth limit reached: stop processing and close open brackets.
+				goto closeAll
+			}
 			buf.WriteByte(c)
 			stack = append(stack, '[')
 		case ']':
@@ -83,6 +95,8 @@ func repairJSON(s string) string {
 			buf.WriteByte(c)
 		}
 	}
+
+closeAll:
 
 	result := buf.String()
 

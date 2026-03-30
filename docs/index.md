@@ -1,8 +1,8 @@
 ---
 layout: home
-title: GoAI SDK — Go SDK for AI Applications. One API, 21+ LLM Providers.
+title: GoAI SDK — Go SDK for AI Applications. One API, 22+ LLM Providers.
 titleTemplate: false
-description: "Open-source Go SDK for AI applications. One unified API for OpenAI, Anthropic, Google Gemini, AWS Bedrock, and 21+ LLM providers. Stdlib only."
+description: "Open-source Go SDK for AI applications. One unified API for OpenAI, Anthropic, Google Gemini, AWS Bedrock, and 22+ LLM providers. Stdlib only."
 ---
 
 <div class="vp-doc" style="max-width: 688px; margin: 0 auto; padding: 2rem 1.5rem;">
@@ -15,7 +15,7 @@ description: "Open-source Go SDK for AI applications. One unified API for OpenAI
 
 ## What is GoAI SDK?
 
-GoAI SDK is an open-source Go library for building AI applications. It provides one unified API across 21+ LLM providers — OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM, and more.
+GoAI SDK is an open-source Go library for building AI applications. It provides one unified API across 22+ LLM providers — OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM, and more.
 
 Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomatically for Go with generics, interfaces, and channels.
 
@@ -34,7 +34,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomat
 
 ## Why GoAI?
 
-- **One API, 21+ providers** — switch providers by changing one line of code
+- **One API, 22+ providers** — switch providers by changing one line of code
 - **Stdlib only** — no external dependencies (except `golang.org/x/oauth2` for Vertex AI)
 - **Go-native design** — generics for type safety, channels for streaming, interfaces for extensibility
 - **24x faster cold start** than Vercel AI SDK (569μs vs 13.9ms)
@@ -86,7 +86,7 @@ result, _ := goai.GenerateText(ctx, model,
 
 ## Supported Providers
 
-OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Vertex AI, Cohere, Mistral, xAI (Grok), Groq, DeepSeek, Fireworks, Together AI, DeepInfra, OpenRouter, Perplexity, Cerebras, Ollama, vLLM, and any OpenAI-compatible endpoint.
+OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Vertex AI, Cohere, Mistral, xAI (Grok), Groq, DeepSeek, Fireworks, Together AI, DeepInfra, OpenRouter, Perplexity, Cerebras, Ollama, vLLM, RunPod, and any OpenAI-compatible endpoint.
 
 [View all providers →](/providers/)
 

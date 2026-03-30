@@ -332,3 +332,33 @@ func TestEmbedding_EnvVarNotOverrideExplicit(t *testing.T) {
 		t.Errorf("baseURL = %q", em.opts.baseURL)
 	}
 }
+
+func TestEmbedding_WithDimensions(t *testing.T) {
+	var gotDimensions any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+		gotDimensions = req["dimensions"]
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":  []map[string]any{{"embedding": []float64{0.1, 0.2}, "index": 0}},
+			"usage": map[string]any{"prompt_tokens": 3, "total_tokens": 3},
+		})
+	}))
+	defer srv.Close()
+
+	model := Embedding("text-embedding-3-small", WithAPIKey("test-key"), WithBaseURL(srv.URL))
+	_, err := model.DoEmbed(t.Context(), []string{"hello"}, provider.EmbedParams{
+		ProviderOptions: map[string]any{"dimensions": 256},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// JSON numbers unmarshal as float64; 256 == float64(256).
+	if gotDimensions != float64(256) {
+		t.Errorf("request body dimensions = %v (%T), want 256", gotDimensions, gotDimensions)
+	}
+}

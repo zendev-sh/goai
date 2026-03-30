@@ -20,7 +20,7 @@
 | Fast inference  | Groq, Cerebras, Fireworks, Together, DeepInfra      |
 | Specialized     | Mistral, xAI, DeepSeek, Cohere, Perplexity, MiniMax |
 | Aggregators     | OpenRouter                                          |
-| Local           | Ollama, vLLM                                        |
+| Local/Serverless| Ollama, vLLM, RunPod                                |
 | Bring your own  | `compat.Chat()` for any OpenAI-compatible endpoint  |
 
 ### SDK features
@@ -36,22 +36,35 @@
 - **Azure multi-model** - Auto-routing: OpenAI models use Responses API, Claude uses Anthropic endpoint, others use Chat Completions
 - **Array content** - Handles response content as string or `[{type:"text",text:"..."}]` (Mistral magistral models)
 - **Provider-defined tools**: 20 tools across 5 providers: Anthropic (10), OpenAI (4), Google (3), Groq (1), xAI (2). All E2E tested.
-- **E2E validated** - 99 models across 6 providers tested with real API calls
+- **E2E validated** - 103 models across 7 providers tested with real API calls
 - **Benchmarks** - Go wins 5/5 comparable categories (schema is a tie) vs Vercel AI SDK: streaming 1.1x, TTFC 1.3x, cold start 24.4x, memory 3.1x, GenerateText 1.4x
-- **Documentation** - Full docs site, 20 provider pages, 23 runnable examples, API reference
+- **Documentation** - Full docs site, 22 provider pages, 24 runnable examples, API reference
 
 ---
 
-## v0.5.1 - Current release
+## v0.5.1
 
 | Feature        | Description                                                                        |
 | -------------- | ---------------------------------------------------------------------------------- |
 | **MCP client** | 3 transports (stdio, HTTP, SSE), tools/prompts/resources, ConvertTools, 7 examples |
-| Output.array   | Stream validated array elements incrementally                                      |
-| Output.choice  | Convenience enum selection wrapper                                                 |
-| `goai/otel`    | Pre-built OpenTelemetry integration (optional import)                              |
-| xAI Responses  | Provider-defined tools (web_search, x_search) via `/v1/responses`                  |
+| xAI tools      | Provider-defined tools (web_search, x_search) via `/chat/completions`              |
 | MiniMax        | M2.7, M2.5, M2.1, M2 models                                                        |
+
+## v0.5.2 - Current release
+
+| Feature              | Description                                                          |
+| -------------------- | -------------------------------------------------------------------- |
+| **RunPod provider**  | Serverless vLLM endpoint support                                     |
+| **Bedrock embeddings** | Embedding support for all Bedrock text embedding models            |
+| **Docs / accuracy**  | Deep-review audit fixes: docs accuracy, streaming metadata, provider capabilities |
+
+### Planned
+
+| Feature          | Description                                                        |
+| ---------------- | ------------------------------------------------------------------ |
+| Output.array     | Stream validated array elements incrementally                      |
+| Output.choice    | Convenience enum selection wrapper                                 |
+| `goai/otel`      | Pre-built OpenTelemetry integration (optional import)              |
 
 ### v1.0.0 - Stable API
 

@@ -141,13 +141,15 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 
 **Parameters:** Same as `GenerateText`, plus structured output options (`WithExplicitSchema`, `WithSchemaName`).
 
-**Returns:** `*ObjectResult[T]` containing the parsed object, usage, and metadata. Returns an error on API failure or JSON parse failure.
+**Returns:** `*ObjectResult[T]` containing the parsed object, usage, and metadata. Returns an error on API failure, JSON parse failure, or if `MaxSteps` is exhausted before a stop step occurs.
 
 **Behavior:**
 
 1. Auto-generates a JSON Schema from `T` using `SchemaFrom[T]()`, unless overridden with `WithExplicitSchema`.
 2. Sets `ResponseFormat` on the provider request to enable native JSON mode.
 3. Parses the model's JSON response into the target type `T`.
+
+When tools with `Execute` functions are provided and `MaxSteps > 1`, `GenerateObject` runs a tool loop identical to `GenerateText`. `ResponseFormat` is set on every step, and the model decides when to call tools vs produce the final JSON output. Structured output is parsed from the step that returns `finishReason` `"stop"`.
 
 **Example:**
 
@@ -183,6 +185,8 @@ func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts
 **Parameters:** Same as `GenerateObject[T]`.
 
 **Returns:** `*ObjectStream[T]` for consuming partial and final results. Returns an error if the initial API call fails.
+
+> **Note:** Unlike `GenerateObject`, `StreamObject` is intentionally single-step — it does not support tool loops. Use `GenerateObject` when you need tools and multi-step behaviour.
 
 ### ObjectStream.PartialObjectStream
 

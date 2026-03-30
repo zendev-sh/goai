@@ -68,7 +68,7 @@ func main() {
 				step.Number, step.FinishReason, len(step.ToolCalls))
 		}),
 		goai.WithOnToolCall(func(info goai.ToolCallInfo) {
-			fmt.Printf("  Tool: %s (%d bytes input)\n", info.ToolName, info.InputSize)
+			fmt.Printf("  Tool: %s (%d bytes input)\n", info.ToolName, len(info.Input))
 		}),
 	)
 	if err != nil {

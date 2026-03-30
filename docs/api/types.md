@@ -71,6 +71,7 @@ type ObjectResult[T any] struct {
     FinishReason     provider.FinishReason    // Why generation stopped.
     Response         provider.ResponseMetadata // Provider metadata.
     ProviderMetadata map[string]map[string]any // Provider-specific response data.
+    Steps            []StepResult             // Results from each generation step (for multi-step tool loops).
 }
 ```
 
@@ -160,10 +161,11 @@ Passed to the `OnRequest` hook before a generation call.
 
 ```go
 type RequestInfo struct {
-    Model        string    // Model ID.
-    MessageCount int       // Number of messages in the request.
-    ToolCount    int       // Number of tools available.
-    Timestamp    time.Time // When the request was initiated.
+    Model        string             // Model ID.
+    MessageCount int                // Number of messages in the request.
+    ToolCount    int                // Number of tools available.
+    Timestamp    time.Time          // When the request was initiated.
+    Messages     []provider.Message // Full conversation history sent to the model for this call.
 }
 ```
 
@@ -187,10 +189,15 @@ Passed to the `OnToolCall` hook after a tool executes.
 
 ```go
 type ToolCallInfo struct {
-    ToolName  string        // Name of the tool called.
-    InputSize int           // Byte length of the tool input JSON.
-    Duration  time.Duration // How long execution took.
-    Error     error         // Non-nil if execution failed.
+    ToolCallID   string          // Provider-assigned identifier for this tool call.
+    ToolName     string          // Name of the tool called.
+    Step         int             // 1-based index of the generation step in which this tool was called.
+    Input        json.RawMessage // Raw JSON arguments passed to the tool.
+    Output       string          // String result returned by the tool.
+    OutputObject any             // Parsed JSON value of Output when the tool returned valid JSON; nil otherwise.
+    StartTime    time.Time       // When the tool execution began.
+    Duration     time.Duration   // How long execution took.
+    Error        error           // Non-nil if execution failed.
 }
 ```
 

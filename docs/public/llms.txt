@@ -1,8 +1,8 @@
 # GoAI SDK
 
-> Go SDK for building AI applications. One unified API across 20+ LLM providers.
+> Go SDK for building AI applications. One unified API across 22+ LLM providers.
 
-GoAI SDK is an open-source Go library inspired by the Vercel AI SDK, designed idiomatically for Go with generics, interfaces, and channels. It provides a single API surface for text generation, streaming, structured output, embeddings, image generation, and tool calling across 20+ providers including OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure, and more.
+GoAI SDK is an open-source Go library inspired by the Vercel AI SDK, designed idiomatically for Go with generics, interfaces, and channels. It provides a single API surface for text generation, streaming, structured output, embeddings, image generation, and tool calling across 22+ providers including OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure, and more.
 
 - Website: https://goai.sh
 - GitHub: https://github.com/zendev-sh/goai
@@ -21,7 +21,7 @@ Requires Go 1.25+. Stdlib only (except golang.org/x/oauth2 for Vertex AI).
 
 - `GenerateText` — non-streaming text generation
 - `StreamText` — real-time streaming via Go channels
-- `GenerateObject[T]` — type-safe structured output using Go generics
+- `GenerateObject[T]` — type-safe structured output using Go generics; supports MaxSteps/tool loop
 - `StreamObject[T]` — partial object streaming with typed results
 - `Embed` / `EmbedMany` — text embeddings with auto-chunking
 - `GenerateImage` — image generation (OpenAI, Google, Azure)
@@ -51,12 +51,13 @@ Requires Go 1.25+. Stdlib only (except golang.org/x/oauth2 for Vertex AI).
 - OpenAI (`OPENAI_API_KEY`) — Chat, Embed, Image, 4 provider tools
 - Anthropic (`ANTHROPIC_API_KEY`) — Chat, 10 provider tools
 - Google Gemini (`GOOGLE_GENERATIVE_AI_API_KEY`) - Chat, Embed, Image, 3 provider tools (google search, URL context, code execution)
-- AWS Bedrock (`AWS_ACCESS_KEY_ID`) — Chat
+- AWS Bedrock (`AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`) — Chat, Embed
 - Azure OpenAI (`AZURE_OPENAI_API_KEY`) — Chat, Image
 - Vertex AI (ADC) — Chat, Embed, Image
 
 ### Tier 2
 - Cohere, Mistral, DeepSeek
+- MiniMax (`MINIMAX_API_KEY`) — Chat (M2.7, M2.5, M2.1, M2; thinking, tools, streaming)
 - xAI (Grok) (`XAI_API_KEY`) — Chat, 2 provider tools (web search, X search)
 - Groq (`GROQ_API_KEY`) — Chat, 1 provider tool (browser search)
 
@@ -64,8 +65,9 @@ Requires Go 1.25+. Stdlib only (except golang.org/x/oauth2 for Vertex AI).
 - Fireworks, Together, DeepInfra, OpenRouter, Perplexity, Cerebras
 
 ### Local / Custom
-- Ollama, vLLM, any OpenAI-compatible endpoint
+- Ollama, vLLM, RunPod serverless vLLM, any OpenAI-compatible endpoint
 
 ## Optional
 
+- Observability: `observability/langfuse` package provides Langfuse tracing via `WithOnRequest`/`WithOnResponse`/`WithOnStepFinish` hooks
 - [Full documentation for LLMs](https://goai.sh/llms-full.txt)

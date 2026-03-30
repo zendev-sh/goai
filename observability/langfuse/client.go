@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -46,8 +47,9 @@ func (c *client) appendEvents(events []ingestionEvent) {
 }
 
 // flush sends all buffered events to Langfuse in a single POST and clears the queue.
-// Events are cleared before the POST; if the POST fails, those events are permanently
-// lost. This is intentional: observability is best-effort and we avoid double-sending.
+// Events are cleared before the POST to avoid double-sending on retry.
+// If the POST fails, those events are permanently lost - this is intentional:
+// observability is best-effort and must never block or retry indefinitely.
 func (c *client) flush(ctx context.Context) error {
 	c.mu.Lock()
 	if len(c.events) == 0 {
@@ -76,6 +78,7 @@ func (c *client) flush(ctx context.Context) error {
 		return fmt.Errorf("langfuse: send batch: %w", err)
 	}
 	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("langfuse: ingestion failed with status %d", resp.StatusCode)

@@ -567,6 +567,38 @@ func TestTypeToSchema_UnsupportedType(t *testing.T) {
 	}
 }
 
+func TestTypeToSchema_SliceCycleDetection(t *testing.T) {
+	// Simulate a recursive slice element by pre-marking the element type as seen.
+	// This exercises the cycle-break path for reflect.Slice without needing a
+	// recursive type that the Go compiler would reject.
+	elemType := reflect.TypeOf([]string{})
+	seen := map[reflect.Type]bool{elemType: true}
+	sliceType := reflect.TypeOf([][]string{})
+	result := typeToSchema(sliceType, seen)
+	if result["type"] != "array" {
+		t.Errorf("expected type array, got %v", result["type"])
+	}
+	// items should be absent when cycle is detected
+	if _, ok := result["items"]; ok {
+		t.Error("expected no items key when slice element type is in cycle")
+	}
+}
+
+func TestTypeToSchema_MapCycleDetection(t *testing.T) {
+	// Simulate a recursive map value by pre-marking the value type as seen.
+	elemType := reflect.TypeOf(map[string]string{})
+	seen := map[reflect.Type]bool{elemType: true}
+	mapType := reflect.TypeOf(map[string]map[string]string{})
+	result := typeToSchema(mapType, seen)
+	if result["type"] != "object" {
+		t.Errorf("expected type object, got %v", result["type"])
+	}
+	// additionalProperties should be absent when cycle is detected
+	if _, ok := result["additionalProperties"]; ok {
+		t.Error("expected no additionalProperties key when map value type is in cycle")
+	}
+}
+
 // InvalidTag has a jsonschema tag part without '=' (should be skipped).
 type InvalidTag struct {
 	Name string `json:"name" jsonschema:"required,description=A name"`

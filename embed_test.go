@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -331,6 +332,9 @@ func TestEmbedMany_MaxParallelCalls(t *testing.T) {
 	if peak > 2 {
 		t.Errorf("peak concurrency = %d, want <= 2", peak)
 	}
+	if peak < 2 {
+		t.Errorf("expected parallelism, peak=%d", peak)
+	}
 	if model.callCount.Load() != 6 {
 		t.Errorf("expected 6 calls, got %d", model.callCount.Load())
 	}
@@ -523,6 +527,9 @@ func TestEmbedMany_EmptyValues(t *testing.T) {
 	if len(result.Embeddings) != 0 {
 		t.Errorf("expected 0 embeddings, got %d", len(result.Embeddings))
 	}
+	if model.callCount.Load() != 0 {
+		t.Errorf("expected DoEmbed not to be called for empty input, got %d calls", model.callCount.Load())
+	}
 }
 
 func TestEmbed_NilEmbeddings(t *testing.T) {
@@ -681,5 +688,27 @@ func TestEmbed_NilProviderOptionsDefault(t *testing.T) {
 
 	if got.ProviderOptions != nil {
 		t.Errorf("expected nil ProviderOptions when not set, got %v", got.ProviderOptions)
+	}
+}
+
+func TestEmbed_NilModel(t *testing.T) {
+	_, err := Embed(t.Context(), nil, "text")
+	if err == nil {
+		t.Fatal("expected error for nil model, got nil")
+	}
+	want := "model must not be nil"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), want)
+	}
+}
+
+func TestEmbedMany_NilModel(t *testing.T) {
+	_, err := EmbedMany(t.Context(), nil, []string{"text"})
+	if err == nil {
+		t.Fatal("expected error for nil model, got nil")
+	}
+	want := "model must not be nil"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), want)
 	}
 }

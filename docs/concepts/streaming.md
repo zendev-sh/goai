@@ -125,6 +125,28 @@ if err != nil {
 fmt.Println(result.Text)
 ```
 
+## Hooks on Streaming Calls
+
+`OnRequest` and `OnResponse` hooks fire on streaming paths the same way they do for `GenerateText`:
+
+- `OnRequest` fires before the stream begins (before the HTTP request is issued).
+- `OnResponse` fires after the stream is fully consumed — when the internal goroutine drains the last chunk and the `TextStream()` or `Stream()` channel closes. If the initial `StreamText` call itself returns an error (before any chunks are read), `OnResponse` fires immediately with that error.
+
+```go
+stream, err := goai.StreamText(ctx, model,
+    goai.WithPrompt("Summarize the Go spec."),
+    goai.WithOnRequest(func(info goai.RequestInfo) {
+        log.Printf("request: model=%s messages=%d", info.Model, info.MessageCount)
+    }),
+    goai.WithOnResponse(func(info goai.ResponseInfo) {
+        log.Printf("response: latency=%v tokens=%d err=%v",
+            info.Latency, info.Usage.TotalTokens, info.Error)
+    }),
+)
+```
+
+`OnToolCall` and `OnStepFinish` also fire during streaming tool loops, with the same semantics as in `GenerateText`.
+
 ## TextResult Fields
 
 Both `StreamText` (via `Result()`) and `GenerateText` return a `*TextResult`:

@@ -688,7 +688,7 @@ func streamResponses(ctx context.Context, body io.ReadCloser, out chan<- provide
 				case "context_length_exceeded":
 					if !provider.TrySend(ctx, out, provider.StreamChunk{
 						Type:  provider.ChunkError,
-						Error: &goai.ContextOverflowError{Message: msg},
+						Error: &goai.ContextOverflowError{Message: msg, ResponseBody: data},
 					}) {
 						return
 					}
@@ -702,7 +702,7 @@ func streamResponses(ctx context.Context, body io.ReadCloser, out chan<- provide
 				case "usage_not_included":
 					if !provider.TrySend(ctx, out, provider.StreamChunk{
 						Type:  provider.ChunkError,
-						Error: &goai.APIError{Message: "Usage not included in plan.", IsRetryable: false},
+						Error: &goai.APIError{Message: "Usage not included in response. Check your plan supports usage reporting for this model.", IsRetryable: false},
 					}) {
 						return
 					}
@@ -735,7 +735,7 @@ func streamResponses(ctx context.Context, body io.ReadCloser, out chan<- provide
 					ev.Code == "context_length_exceeded" {
 					if !provider.TrySend(ctx, out, provider.StreamChunk{
 						Type:  provider.ChunkError,
-						Error: &goai.ContextOverflowError{Message: msg},
+						Error: &goai.ContextOverflowError{Message: msg, ResponseBody: data},
 					}) {
 						return
 					}
@@ -851,9 +851,9 @@ func parseResponsesResult(body []byte) (*provider.GenerateResult, error) {
 
 	if resp.Error != nil {
 		if resp.Error.Code == "context_length_exceeded" {
-			return nil, &goai.ContextOverflowError{Message: resp.Error.Message}
+			return nil, &goai.ContextOverflowError{Message: resp.Error.Message, ResponseBody: string(body)}
 		}
-		return nil, &goai.APIError{Message: resp.Error.Message}
+		return nil, &goai.APIError{Message: resp.Error.Message, ResponseBody: string(body)}
 	}
 
 	result := &provider.GenerateResult{

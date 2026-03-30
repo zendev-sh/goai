@@ -3,7 +3,10 @@ package provider_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -457,6 +460,187 @@ func TestTrySend_CancelledContext(t *testing.T) {
 	chunk := provider.StreamChunk{Type: provider.ChunkText, Text: "hello"}
 	if provider.TrySend(ctx, out, chunk) {
 		t.Fatal("TrySend returned true on cancelled context")
+	}
+}
+
+func TestCachedTokenSource_Concurrent(t *testing.T) {
+	var callCount atomic.Int32
+	ts := provider.CachedTokenSource(func(_ context.Context) (*provider.Token, error) {
+		callCount.Add(1)
+		return &provider.Token{
+			Value:     "shared-token",
+			ExpiresAt: time.Now().Add(time.Hour),
+		}, nil
+	})
+
+	const n = 10
+	var wg sync.WaitGroup
+	results := make([]string, n)
+	errs := make([]error, n)
+
+	wg.Add(n)
+	for i := range n {
+		go func(i int) {
+			defer wg.Done()
+			results[i], errs[i] = ts.Token(t.Context())
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d: unexpected error: %v", i, err)
+		}
+		if results[i] != "shared-token" {
+			t.Errorf("goroutine %d: Token = %q, want %q", i, results[i], "shared-token")
+		}
+	}
+
+	// The implementation is intentionally lock-free during fetch, so a small number
+	// of goroutines may race through the cache-miss check simultaneously. However,
+	// the vast majority must hit the cache - all 10 bypassing it would indicate
+	// the caching is broken entirely.
+	if got := callCount.Load(); got > 3 {
+		t.Errorf("callCount = %d, want ≤ 3 (lock-free allows 1-2 races, not all %d)", got, n)
+	}
+	if got := callCount.Load(); got == 0 {
+		t.Error("fetchFn was never called")
+	}
+}
+
+func TestCachedTokenSource_NearExpiry(t *testing.T) {
+	var callCount int
+	ts := provider.CachedTokenSource(func(_ context.Context) (*provider.Token, error) {
+		callCount++
+		return &provider.Token{
+			Value:     fmt.Sprintf("tok-%d", callCount),
+			ExpiresAt: time.Now().Add(50 * time.Millisecond),
+		}, nil
+	})
+
+	// First call: fetch happens.
+	tok, err := ts.Token(t.Context())
+	if err != nil {
+		t.Fatalf("first Token error: %v", err)
+	}
+	if tok != "tok-1" {
+		t.Errorf("first Token = %q, want %q", tok, "tok-1")
+	}
+	if callCount != 1 {
+		t.Errorf("callCount = %d after first call, want 1", callCount)
+	}
+
+	// Immediately after: still within TTL, cached value returned.
+	tok, err = ts.Token(t.Context())
+	if err != nil {
+		t.Fatalf("second Token error: %v", err)
+	}
+	if tok != "tok-1" {
+		t.Errorf("second Token = %q, want cached %q", tok, "tok-1")
+	}
+	if callCount != 1 {
+		t.Errorf("callCount = %d after second call, want 1 (cached)", callCount)
+	}
+
+	// Wait for expiry.
+	time.Sleep(60 * time.Millisecond)
+
+	// After expiry: should re-fetch.
+	tok, err = ts.Token(t.Context())
+	if err != nil {
+		t.Fatalf("third Token error: %v", err)
+	}
+	if tok != "tok-2" {
+		t.Errorf("third Token = %q, want %q (re-fetched)", tok, "tok-2")
+	}
+	if callCount != 2 {
+		t.Errorf("callCount = %d after third call, want 2 (expired, re-fetched)", callCount)
+	}
+}
+
+func TestCachedTokenSource_FetchErrorAfterCached(t *testing.T) {
+	// The implementation does NOT serve stale cached values on error: if the
+	// re-fetch fails, the error is returned directly. The expired token remains
+	// in the cache slot but is not returned.
+	var callCount int
+	fetchErr := errors.New("auth server unavailable")
+
+	ts := provider.CachedTokenSource(func(_ context.Context) (*provider.Token, error) {
+		callCount++
+		if callCount == 1 {
+			return &provider.Token{
+				Value:     "good-token",
+				ExpiresAt: time.Now().Add(-time.Millisecond), // expires immediately
+			}, nil
+		}
+		return nil, fetchErr
+	})
+
+	// First call: succeeds, but token is already expired.
+	tok, err := ts.Token(t.Context())
+	if err != nil {
+		t.Fatalf("first Token error: %v", err)
+	}
+	if tok != "good-token" {
+		t.Errorf("first Token = %q, want %q", tok, "good-token")
+	}
+
+	// Second call: token is expired, re-fetch fails - error returned, no stale value.
+	tok, err = ts.Token(t.Context())
+	if err == nil {
+		t.Fatal("expected error on second call, got nil")
+	}
+	if !errors.Is(err, fetchErr) {
+		t.Errorf("err = %v, want %v", err, fetchErr)
+	}
+	if tok != "" {
+		t.Errorf("Token = %q on error, want empty string", tok)
+	}
+	if callCount != 2 {
+		t.Errorf("callCount = %d, want 2", callCount)
+	}
+}
+
+func TestCachedTokenSource_InvalidateDuringFetch(t *testing.T) {
+	// Verify that calling Invalidate() while a slow fetch is in progress
+	// does not cause a panic or deadlock.
+	fetchStarted := make(chan struct{})
+	unblock := make(chan struct{})
+
+	ts := provider.CachedTokenSource(func(_ context.Context) (*provider.Token, error) {
+		close(fetchStarted)
+		<-unblock
+		return &provider.Token{
+			Value:     "slow-token",
+			ExpiresAt: time.Now().Add(time.Hour),
+		}, nil
+	})
+
+	var fetchErr error
+	var fetchTok string
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		fetchTok, fetchErr = ts.Token(t.Context())
+	}()
+
+	// Wait until fetch has started (lock released, fetch in progress).
+	<-fetchStarted
+
+	// Invalidate while fetch is in progress - must not deadlock or panic.
+	inv := ts.(provider.InvalidatingTokenSource)
+	inv.Invalidate()
+
+	// Let the fetch complete.
+	close(unblock)
+	wg.Wait()
+
+	if fetchErr != nil {
+		t.Fatalf("Token error: %v", fetchErr)
+	}
+	if fetchTok != "slow-token" {
+		t.Errorf("Token = %q, want %q", fetchTok, "slow-token")
 	}
 }
 

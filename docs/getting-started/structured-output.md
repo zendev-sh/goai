@@ -157,6 +157,56 @@ result, err := goai.GenerateObject[Recipe](ctx, model,
 )
 ```
 
+## Tool-Augmented Structured Output
+
+`GenerateObject` supports tools and multi-step loops in the same way as `GenerateText`. Pass `WithTools` and set `WithMaxSteps` to allow the model to call tools before producing the final structured response:
+
+```go
+type WeatherSummary struct {
+    Location    string  `json:"location"`
+    Temperature float64 `json:"temperature"`
+    Conditions  string  `json:"conditions"`
+}
+
+result, err := goai.GenerateObject[WeatherSummary](ctx, model,
+    goai.WithPrompt("What is the weather like in Paris right now?"),
+    goai.WithTools(weatherTool),
+    goai.WithMaxSteps(5),
+)
+```
+
+The schema is sent on every step. The model freely interleaves tool calls and eventually produces the final JSON output when it is ready. Structured output is parsed from the step that returns with finish reason `"stop"`.
+
+### ObjectResult.Steps
+
+`ObjectResult[T].Steps` contains a `StepResult` for each generation step in the loop, in order. The final entry is always the structured output step. This mirrors `GenerateResult.Steps` from `GenerateText` and is useful for inspecting tool calls, per-step token usage, and intermediate responses.
+
+```go
+result, err := goai.GenerateObject[WeatherSummary](ctx, model, ...)
+if err != nil {
+    panic(err)
+}
+fmt.Printf("Completed in %d step(s)\n", len(result.Steps))
+for _, step := range result.Steps {
+    fmt.Printf("  step %d: finish=%s tools=%d\n",
+        step.Number, step.FinishReason, len(step.ToolCalls))
+}
+```
+
+### MaxSteps Exhaustion
+
+If `MaxSteps` is reached before the model produces a structured output step (finish reason `"stop"`), `GenerateObject` returns an error:
+
+```
+goai: max steps (5) reached without producing structured output
+```
+
+Increase `MaxSteps`, simplify the task, or reduce the number of tools to avoid this.
+
+### StreamObject is Single-Step
+
+`StreamObject` does not support tool loops. It issues one streaming request and returns immediately — tool calls would require round-trips that cannot be interleaved with an in-progress stream. If you need tools alongside structured output, use `GenerateObject` with `WithMaxSteps`.
+
 ## Provider Compatibility
 
 Structured output works with any provider that supports JSON Schema response format. Tested with OpenAI, Anthropic, and Google. Other OpenAI-compatible providers generally support it for models that accept JSON Schema.
