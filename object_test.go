@@ -1556,6 +1556,58 @@ func TestGenerateObject_ToolLoop_SingleStepHasOneStep(t *testing.T) {
 	}
 }
 
+// TestGenerateObject_ToolLoop_ToolChoiceRequiredResets verifies that
+// WithToolChoice("required") is cleared after the first tool step so the model
+// can produce structured output on the next step instead of looping forever.
+func TestGenerateObject_ToolLoop_ToolChoiceRequiredResets(t *testing.T) {
+	step := 0
+	var capturedToolChoices []string
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
+			step++
+			capturedToolChoices = append(capturedToolChoices, params.ToolChoice)
+			if step == 1 {
+				return &provider.GenerateResult{
+					FinishReason: provider.FinishToolCalls,
+					ToolCalls: []provider.ToolCall{
+						{ID: "c1", Name: "echo", Input: json.RawMessage(`{"msg":"hi"}`)},
+					},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         `{"name":"Bob","age":25}`,
+				FinishReason: provider.FinishStop,
+			}, nil
+		},
+	}
+
+	result, err := GenerateObject[simpleObject](t.Context(), model,
+		WithPrompt("go"),
+		WithTools(Tool{
+			Name: "echo", Description: "echo",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "hi", nil },
+		}),
+		WithToolChoice("required"),
+		WithMaxSteps(5),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Object.Name != "Bob" {
+		t.Errorf("Object.Name = %q, want Bob", result.Object.Name)
+	}
+	if len(capturedToolChoices) != 2 {
+		t.Fatalf("steps = %d, want 2", len(capturedToolChoices))
+	}
+	if capturedToolChoices[0] != "required" {
+		t.Errorf("step 1 tool_choice = %q, want required", capturedToolChoices[0])
+	}
+	if capturedToolChoices[1] != "" {
+		t.Errorf("step 2 tool_choice = %q, want empty (reset)", capturedToolChoices[1])
+	}
+}
+
 func TestStreamObject_ProviderMetadata(t *testing.T) {
 	wantMeta := map[string]map[string]any{
 		"openai": {"logprobs": true},

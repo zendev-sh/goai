@@ -330,6 +330,9 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 		}
 
 		// Model requested tool calls — execute them and continue.
+		// Clear tool_choice after the first tool step so the model can freely
+		// produce structured output on subsequent steps.
+		params.ToolChoice = ""
 		toolMessages := executeTools(ctx, result.ToolCalls, toolMap, step, o.OnToolCall)
 		params.Messages = appendToolRoundTrip(params.Messages, result, toolMessages)
 	}
