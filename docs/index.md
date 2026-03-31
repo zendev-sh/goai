@@ -22,7 +22,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomat
 ## Core Features
 
 - **GenerateText** — non-streaming text generation across all providers
-- **StreamText** — real-time streaming via Go channels
+- **StreamText** — real-time streaming with auto tool loops via Go channels
 - **GenerateObject[T]** — type-safe structured output using Go generics
 - **StreamObject[T]** — partial object streaming with typed results
 - **Embed / EmbedMany** — text embeddings with auto-chunking
@@ -31,6 +31,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomat
 - **20 Provider-Defined Tools** — web search, code execution, computer use, file search
 - **[MCP Client](/concepts/mcp)** — connect to any MCP server (stdio, HTTP, SSE), auto-convert tools for GoAI
 - **Prompt Caching** — automatic cache control for Anthropic and OpenAI
+- **[Observability](/concepts/observability)** — built-in Langfuse integration for tracing generations, tools, and multi-step loops
 
 ## Why GoAI?
 

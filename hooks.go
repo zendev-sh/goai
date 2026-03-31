@@ -39,7 +39,8 @@ type ResponseInfo struct {
 	// FinishReason indicates why generation stopped.
 	FinishReason provider.FinishReason
 
-	// Error is non-nil if the call failed.
+	// Error is non-nil if the API call itself failed (DoGenerate/DoStream returned error).
+	// Mid-stream errors (ChunkError) are not reported here; use stream.Err().
 	Error error
 
 	// StatusCode is the HTTP status code (0 if not applicable).
@@ -47,6 +48,8 @@ type ResponseInfo struct {
 }
 
 // ToolCallInfo is passed to the OnToolCall hook after a tool executes.
+// It contains the full tool Input and Output, which may include sensitive data.
+// Consumers that log or export hook data should sanitize accordingly.
 type ToolCallInfo struct {
 	// ToolCallID is the provider-assigned identifier for this tool call.
 	ToolCallID string
@@ -99,4 +102,24 @@ func WithOnResponse(fn func(ResponseInfo)) Option {
 // WithOnToolCall sets a callback invoked after each tool execution.
 func WithOnToolCall(fn func(ToolCallInfo)) Option {
 	return func(o *options) { o.OnToolCall = fn }
+}
+
+// ToolCallStartInfo is passed to the OnToolCallStart hook before a tool executes.
+type ToolCallStartInfo struct {
+	// ToolCallID is the provider-assigned identifier for this tool call.
+	ToolCallID string
+
+	// ToolName is the name of the tool about to execute.
+	ToolName string
+
+	// Step is the 1-based index of the generation step in which this tool was called.
+	Step int
+
+	// Input is the raw JSON arguments that will be passed to the tool.
+	Input json.RawMessage
+}
+
+// WithOnToolCallStart sets a callback invoked before each tool execution.
+func WithOnToolCallStart(fn func(ToolCallStartInfo)) Option {
+	return func(o *options) { o.OnToolCallStart = fn }
 }

@@ -105,6 +105,14 @@ result, err := goai.GenerateText(ctx, model,
 
 ## Tool Call Hooks
 
+`WithOnToolCallStart` is called before each individual tool execution:
+
+```go
+goai.WithOnToolCallStart(func(info goai.ToolCallStartInfo) {
+    fmt.Printf("[step %d] starting tool %s (call %s)\n", info.Step, info.ToolName, info.ToolCallID)
+})
+```
+
 `WithOnToolCall` is called after each individual tool execution:
 
 ```go
@@ -136,6 +144,10 @@ goai.WithOnToolCall(func(info goai.ToolCallInfo) {
 | `Duration`     | `time.Duration`    | Time taken to execute the tool                                              |
 | `Error`        | `error`            | Error returned by the tool, if any                                          |
 
+> **Note:** When multiple tools execute in a single step, OnToolCall callbacks fire concurrently from separate goroutines. Order is non-deterministic.
+
+> **Security:** `ToolCallInfo` contains the full `Input` and `Output` of tool executions, which may include sensitive data. Consumers that log or export hook data should sanitize accordingly. Tool `Execute` errors are also forwarded to the model as tool result messages — do not include credentials or internal paths in error strings.
+
 ## Tools Without Execute
 
 If a tool has no `Execute` function, GoAI sends the tool definition to the model but does not participate in the auto loop. The model can still request the tool call, and it appears in `result.ToolCalls`. This is useful when you manage the tool loop yourself.
@@ -154,3 +166,32 @@ Each step in a multi-step tool loop produces a `goai.StepResult`:
 | `Response`         | `provider.ResponseMetadata` | Provider metadata for this step      |
 | `ProviderMetadata` | `map[string]map[string]any` | Provider-specific data for this step |
 | `Sources`          | `[]provider.Source`         | Citations from this step             |
+
+## Streaming Tool Loops
+
+`StreamText` supports the same auto tool loop as `GenerateText`. Pass `WithMaxSteps` and tools with `Execute` functions:
+
+```go
+stream, err := goai.StreamText(ctx, model,
+    goai.WithPrompt("What's the weather in Tokyo?"),
+    goai.WithTools(weatherTool),
+    goai.WithMaxSteps(5),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+for chunk := range stream.Stream() {
+    switch chunk.Type {
+    case provider.ChunkText:
+        fmt.Print(chunk.Text)
+    case provider.ChunkStepFinish:
+        fmt.Println("\n[step complete]")
+    }
+}
+
+result := stream.Result()
+fmt.Printf("Steps: %d\n", len(result.Steps))
+```
+
+All steps stream through a single unified channel. Step boundaries are marked by `ChunkStepFinish` chunks. The initial `DoStream` failure returns `(nil, error)`. Subsequent step errors flow through the stream as `ChunkError` chunks — check `stream.Err()` after consuming.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -985,7 +986,7 @@ func TestGenerateText_ToolLoop_UnknownTool(t *testing.T) {
 			// Check tool result is "error: unknown tool".
 			for _, msg := range params.Messages {
 				for _, p := range msg.Content {
-					if p.Type == provider.PartToolResult && p.ToolOutput == "error: unknown tool" {
+					if p.Type == provider.PartToolResult && p.ToolOutput == "error: goai: unknown tool" {
 						return &provider.GenerateResult{Text: "ok", FinishReason: provider.FinishStop}, nil
 					}
 				}
@@ -1748,7 +1749,7 @@ func TestStreamText_ErrReturnsStreamError(t *testing.T) {
 	}
 }
 
-func TestExecuteTools_ContextCancelled(t *testing.T) {
+func TestExecuteToolsParallel_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel() // Cancel immediately.
 
@@ -1767,10 +1768,11 @@ func TestExecuteTools_ContextCancelled(t *testing.T) {
 		{ID: "tc2", Name: "slow", Input: json.RawMessage(`{}`)},
 	}
 
-	msgs := executeTools(ctx, calls, toolMap, 1, nil)
-	// With a cancelled context, executeTools should return early (0 or fewer results).
-	if len(msgs) >= 2 {
-		t.Errorf("expected fewer than 2 messages (ctx cancelled), got %d", len(msgs))
+	// With parallel execution, all tools run via goroutines and complete.
+	// The cancelled context is passed to Execute, but the tool ignores it.
+	msgs := executeToolsParallel(ctx, calls, toolMap, 1, nil, nil)
+	if len(msgs) != 2 {
+		t.Errorf("expected 2 messages (parallel execution completes all), got %d", len(msgs))
 	}
 }
 
@@ -2266,5 +2268,1713 @@ func TestGenerateText_ContextCancelBetweenSteps(t *testing.T) {
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want context.Canceled", err)
+	}
+}
+
+// --- StreamText Tool Loop tests ---
+
+// TestStreamText_ToolLoop_TwoStep verifies a two-step tool loop via streaming:
+// step 1 returns a tool call, step 2 returns text. Checks unified stream chunk
+// order and Result() accumulation.
+func TestStreamText_ToolLoop_TwoStep(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test-stream",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkText, Text: "Looking up..."},
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "get_weather", ToolInput: `{"city":"NYC"}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}, Response: provider.ResponseMetadata{ID: "resp-1", Model: "test-model"}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "Sunny in NYC"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 20, OutputTokens: 8}, Response: provider.ResponseMetadata{ID: "resp-2", Model: "test-model"}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("weather?"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:        "get_weather",
+			Description: "Get weather",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
+			Execute: func(_ context.Context, input json.RawMessage) (string, error) {
+				return "Sunny", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var chunkTypes []provider.StreamChunkType
+	for chunk := range stream.Stream() {
+		chunkTypes = append(chunkTypes, chunk.Type)
+	}
+
+	// Expected order: ChunkText, ChunkToolCall, ChunkStepFinish(goai), ChunkText, ChunkStepFinish(goai), ChunkFinish
+	want := []provider.StreamChunkType{
+		provider.ChunkText, provider.ChunkToolCall, provider.ChunkStepFinish,
+		provider.ChunkText, provider.ChunkStepFinish, provider.ChunkFinish,
+	}
+	if len(chunkTypes) != len(want) {
+		t.Fatalf("chunk types = %v, want %v", chunkTypes, want)
+	}
+	for i := range want {
+		if chunkTypes[i] != want[i] {
+			t.Errorf("chunkTypes[%d] = %q, want %q", i, chunkTypes[i], want[i])
+		}
+	}
+
+	result := stream.Result()
+	if len(result.Steps) != 2 {
+		t.Fatalf("Steps = %d, want 2", len(result.Steps))
+	}
+	if result.Steps[0].Text != "Looking up..." {
+		t.Errorf("Steps[0].Text = %q, want %q", result.Steps[0].Text, "Looking up...")
+	}
+	if result.Steps[1].Text != "Sunny in NYC" {
+		t.Errorf("Steps[1].Text = %q, want %q", result.Steps[1].Text, "Sunny in NYC")
+	}
+	if result.TotalUsage.InputTokens != 30 || result.TotalUsage.OutputTokens != 13 {
+		t.Errorf("TotalUsage = %+v, want InputTokens=30, OutputTokens=13", result.TotalUsage)
+	}
+	if result.FinishReason != provider.FinishStop {
+		t.Errorf("FinishReason = %q, want stop", result.FinishReason)
+	}
+	if result.Response.ID != "resp-2" {
+		t.Errorf("Response.ID = %q, want resp-2 (last step wins)", result.Response.ID)
+	}
+	if result.Steps[0].Response.ID != "resp-1" {
+		t.Errorf("Steps[0].Response.ID = %q, want resp-1", result.Steps[0].Response.ID)
+	}
+}
+
+// TestStreamText_ToolLoop_MaxStepsReached verifies the loop stops at MaxSteps
+// when the model keeps returning tool calls.
+func TestStreamText_ToolLoop_MaxStepsReached(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: fmt.Sprintf("tc%d", n), ToolName: "loop", ToolInput: `{}`},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(2),
+		WithTools(Tool{
+			Name:    "loop",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "looping", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if err := stream.Err(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if int(callCount.Load()) != 2 {
+		t.Errorf("model called %d times, want 2 (MaxSteps)", callCount.Load())
+	}
+	if len(result.Steps) != 2 {
+		t.Fatalf("Steps = %d, want 2", len(result.Steps))
+	}
+	if result.FinishReason != provider.FinishToolCalls {
+		t.Errorf("FinishReason = %q, want tool_calls", result.FinishReason)
+	}
+}
+
+// TestStreamText_ToolLoop_ParallelExecution verifies that two tool calls in one
+// step are both executed.
+func TestStreamText_ToolLoop_ParallelExecution(t *testing.T) {
+	var callCount atomic.Int32
+	var execCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "work", ToolInput: `{"id":"a"}`},
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc2", ToolName: "work", ToolInput: `{"id":"b"}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "done"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 20, OutputTokens: 3}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "work",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				execCount.Add(1)
+				return "ok", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if execCount.Load() != 2 {
+		t.Errorf("tools executed %d times, want 2", execCount.Load())
+	}
+	if result.Text != "done" {
+		t.Errorf("Text = %q, want %q", result.Text, "done")
+	}
+}
+
+// TestStreamText_ToolLoop_ContextCancel verifies clean shutdown when context
+// is cancelled during step 1 drain. Uses a slow-producing channel so the
+// cancel fires while drainStep is blocked trying to forward chunks.
+func TestStreamText_ToolLoop_ContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+
+	// Create a stream that produces many chunks (more than out buffer of 64).
+	ch := make(chan provider.StreamChunk, 1)
+	go func() {
+		defer close(ch)
+		for range 500 {
+			select {
+			case ch <- provider.StreamChunk{Type: provider.ChunkText, Text: "x"}:
+			case <-ctx.Done():
+				return
+			}
+		}
+		ch <- provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop}
+	}()
+
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return &provider.StreamResult{Stream: ch}, nil
+		},
+	}
+
+	stream, err := StreamText(ctx, model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Start consuming via Stream but stop reading to let the out buffer fill.
+	rawCh := stream.Stream()
+	<-rawCh // Read one chunk.
+
+	// Let the out buffer fill, then cancel.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	// Drain remaining chunks.
+	for range rawCh {
+	}
+
+	if stream.Err() == nil {
+		t.Fatal("expected non-nil Err()")
+	}
+	if !errors.Is(stream.Err(), context.Canceled) {
+		t.Errorf("Err() = %v, want context.Canceled", stream.Err())
+	}
+}
+
+// TestStreamText_ToolLoop_HookOrdering verifies the sequence of hook calls
+// for a 2-step tool loop including OnToolCallStart:
+// OnRequest -> OnResponse -> OnStepFinish -> OnToolCallStart -> OnToolCall -> OnRequest -> ...
+func TestStreamText_ToolLoop_HookOrdering(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "tool", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "done"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 20, OutputTokens: 3}},
+			), nil
+		},
+	}
+
+	var mu sync.Mutex
+	var sequence []string
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		WithOnRequest(func(_ RequestInfo) {
+			mu.Lock()
+			sequence = append(sequence, "OnRequest")
+			mu.Unlock()
+		}),
+		WithOnResponse(func(_ ResponseInfo) {
+			mu.Lock()
+			sequence = append(sequence, "OnResponse")
+			mu.Unlock()
+		}),
+		WithOnStepFinish(func(_ StepResult) {
+			mu.Lock()
+			sequence = append(sequence, "OnStepFinish")
+			mu.Unlock()
+		}),
+		WithOnToolCallStart(func(_ ToolCallStartInfo) {
+			mu.Lock()
+			sequence = append(sequence, "OnToolCallStart")
+			mu.Unlock()
+		}),
+		WithOnToolCall(func(_ ToolCallInfo) {
+			mu.Lock()
+			sequence = append(sequence, "OnToolCall")
+			mu.Unlock()
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Consume fully.
+	result := stream.Result()
+	_ = result
+
+	// Expected: drain -> OnResponse -> OnStepFinish -> OnToolCallStart -> OnToolCall -> next step
+	want := []string{
+		"OnRequest", "OnResponse", "OnStepFinish", "OnToolCallStart", "OnToolCall", // step 1
+		"OnRequest", "OnResponse", "OnStepFinish", // step 2
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sequence) != len(want) {
+		t.Fatalf("sequence = %v, want %v", sequence, want)
+	}
+	for i := range want {
+		if sequence[i] != want[i] {
+			t.Errorf("sequence[%d] = %q, want %q", i, sequence[i], want[i])
+		}
+	}
+}
+
+// TestStreamText_ToolLoop_ToolError verifies that a tool returning an error
+// passes the error message to the model and the loop continues.
+func TestStreamText_ToolLoop_ToolError(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, params provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "fail", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			// Verify the error was passed as tool result.
+			for _, msg := range params.Messages {
+				for _, p := range msg.Content {
+					if p.Type == provider.PartToolResult && p.ToolOutput == "error: something went wrong" {
+						return streamFromChunks(
+							provider.StreamChunk{Type: provider.ChunkText, Text: "handled error"},
+							provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 20, OutputTokens: 3}},
+						), nil
+					}
+				}
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "no error found"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "fail",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "", fmt.Errorf("something went wrong")
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if !strings.Contains(result.Text, "handled error") {
+		t.Errorf("Text = %q, want containing 'handled error'", result.Text)
+	}
+}
+
+// TestStreamText_ToolLoop_ResultAccumulation verifies multi-step Result()
+// accumulation: Steps length, per-step text/usage, and aggregated TotalUsage.
+func TestStreamText_ToolLoop_ResultAccumulation(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkText, Text: "Step1."},
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "tool", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "Step2."},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 20, OutputTokens: 8}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if len(result.Steps) != 2 {
+		t.Fatalf("Steps = %d, want 2", len(result.Steps))
+	}
+	if result.Steps[0].Number != 1 {
+		t.Errorf("Steps[0].Number = %d, want 1", result.Steps[0].Number)
+	}
+	if result.Steps[1].Number != 2 {
+		t.Errorf("Steps[1].Number = %d, want 2", result.Steps[1].Number)
+	}
+	if result.Steps[0].Text != "Step1." {
+		t.Errorf("Steps[0].Text = %q, want %q", result.Steps[0].Text, "Step1.")
+	}
+	if result.Steps[1].Text != "Step2." {
+		t.Errorf("Steps[1].Text = %q, want %q", result.Steps[1].Text, "Step2.")
+	}
+	if result.Steps[0].Usage.InputTokens != 10 || result.Steps[0].Usage.OutputTokens != 5 {
+		t.Errorf("Steps[0].Usage = %+v", result.Steps[0].Usage)
+	}
+	if result.Steps[1].Usage.InputTokens != 20 || result.Steps[1].Usage.OutputTokens != 8 {
+		t.Errorf("Steps[1].Usage = %+v", result.Steps[1].Usage)
+	}
+	if result.TotalUsage.InputTokens != 30 || result.TotalUsage.OutputTokens != 13 {
+		t.Errorf("TotalUsage = %+v, want InputTokens=30, OutputTokens=13", result.TotalUsage)
+	}
+	if result.Text != "Step1.Step2." {
+		t.Errorf("Text = %q, want %q", result.Text, "Step1.Step2.")
+	}
+}
+
+// TestStreamText_ToolLoop_TextStreamPath verifies consuming via TextStream()
+// flows text from all steps and Result() returns correct data afterward.
+func TestStreamText_ToolLoop_TextStreamPath(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkText, Text: "A"},
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "tool", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 5, OutputTokens: 3}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "B"},
+				provider.StreamChunk{Type: provider.ChunkText, Text: "C"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var texts []string
+	for text := range stream.TextStream() {
+		texts = append(texts, text)
+	}
+
+	// Text from both steps should flow through.
+	joined := strings.Join(texts, "")
+	if joined != "ABC" {
+		t.Errorf("TextStream joined = %q, want %q", joined, "ABC")
+	}
+
+	result := stream.Result()
+	if result.Text != "ABC" {
+		t.Errorf("Result().Text = %q, want %q", result.Text, "ABC")
+	}
+	if len(result.Steps) != 2 {
+		t.Fatalf("Steps = %d, want 2", len(result.Steps))
+	}
+	if result.TotalUsage.InputTokens != 15 {
+		t.Errorf("TotalUsage.InputTokens = %d, want 15", result.TotalUsage.InputTokens)
+	}
+}
+
+// TestStreamText_ToolLoop_ToolPanic verifies that a panicking tool Execute
+// does not crash the process and an error appears in the tool result message.
+func TestStreamText_ToolLoop_ToolPanic(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, params provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "panicker", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			// Verify panic was captured in tool result message.
+			for _, msg := range params.Messages {
+				for _, p := range msg.Content {
+					if p.Type == provider.PartToolResult && strings.Contains(p.ToolOutput, "panicked") {
+						return streamFromChunks(
+							provider.StreamChunk{Type: provider.ChunkText, Text: "panic handled"},
+							provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 20, OutputTokens: 3}},
+						), nil
+					}
+				}
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "no panic found"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "panicker",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				panic("tool exploded")
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if !strings.Contains(result.Text, "panic handled") {
+		t.Errorf("Text = %q, want containing 'panic handled'", result.Text)
+	}
+}
+
+// TestStreamText_ToolLoop_UnknownTool verifies that a tool call referencing
+// an unknown tool fires OnToolCall with ErrUnknownTool.
+func TestStreamText_ToolLoop_UnknownTool(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, params provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "nonexistent", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			// Check tool result has unknown tool error.
+			for _, msg := range params.Messages {
+				for _, p := range msg.Content {
+					if p.Type == provider.PartToolResult && p.ToolOutput == "error: goai: unknown tool" {
+						return streamFromChunks(
+							provider.StreamChunk{Type: provider.ChunkText, Text: "ok"},
+							provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop},
+						), nil
+					}
+				}
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "unexpected"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop},
+			), nil
+		},
+	}
+
+	var capturedInfo ToolCallInfo
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "known",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		WithOnToolCall(func(info ToolCallInfo) {
+			capturedInfo = info
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if result.Text != "ok" {
+		t.Errorf("Text = %q, want %q", result.Text, "ok")
+	}
+	if capturedInfo.ToolName != "nonexistent" {
+		t.Errorf("ToolCallInfo.ToolName = %q, want %q", capturedInfo.ToolName, "nonexistent")
+	}
+	if !errors.Is(capturedInfo.Error, ErrUnknownTool) {
+		t.Errorf("ToolCallInfo.Error = %v, want ErrUnknownTool", capturedInfo.Error)
+	}
+}
+
+// TestStreamText_ToolLoop_ToolChoiceReset verifies that ToolChoice is cleared
+// after step 1 so the model can freely respond on subsequent steps.
+func TestStreamText_ToolLoop_ToolChoiceReset(t *testing.T) {
+	var mu sync.Mutex
+	var capturedToolChoices []string
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, params provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			mu.Lock()
+			capturedToolChoices = append(capturedToolChoices, params.ToolChoice)
+			mu.Unlock()
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "echo", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "done"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 15, OutputTokens: 3}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(5),
+		WithToolChoice("required"),
+		WithTools(Tool{
+			Name:    "echo",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	_ = result
+	mu.Lock()
+	defer mu.Unlock()
+	if len(capturedToolChoices) != 2 {
+		t.Fatalf("steps = %d, want 2", len(capturedToolChoices))
+	}
+	if capturedToolChoices[0] != "required" {
+		t.Errorf("step 1 tool_choice = %q, want required", capturedToolChoices[0])
+	}
+	if capturedToolChoices[1] != "" {
+		t.Errorf("step 2 tool_choice = %q, want empty (reset)", capturedToolChoices[1])
+	}
+}
+
+// TestStreamText_ToolLoop_Step1DoStreamFailure verifies that when DoStream
+// fails on step 1, StreamText returns (nil, error).
+func TestStreamText_ToolLoop_Step1DoStreamFailure(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return nil, &APIError{Message: "bad request", StatusCode: 400}
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if stream != nil {
+		t.Error("expected nil stream on step 1 failure")
+	}
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T: %v", err, err)
+	}
+	if apiErr.StatusCode != 400 {
+		t.Errorf("StatusCode = %d, want 400", apiErr.StatusCode)
+	}
+}
+
+// TestStreamText_ToolLoop_SingleStepDispatch verifies that MaxSteps=1 with
+// executable tools dispatches to the single-step path and tools are NOT executed.
+func TestStreamText_ToolLoop_SingleStepDispatch(t *testing.T) {
+	var execCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "tool", ToolInput: `{}`},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(1),
+		WithTools(Tool{
+			Name: "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				execCount.Add(1)
+				return "ok", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if execCount.Load() != 0 {
+		t.Errorf("tool executed %d times, want 0 (single-step, no loop)", execCount.Load())
+	}
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls = %d, want 1", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].Name != "tool" {
+		t.Errorf("ToolCalls[0].Name = %q, want %q", result.ToolCalls[0].Name, "tool")
+	}
+}
+
+// TestStreamText_ToolLoop_OnToolCallStart verifies that OnToolCallStart fires
+// before Execute with correct fields.
+func TestStreamText_ToolLoop_OnToolCallStart(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "myTool", ToolInput: `{"key":"val"}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "done"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 15, OutputTokens: 3}},
+			), nil
+		},
+	}
+
+	var startInfo ToolCallStartInfo
+	var startFiredBeforeExec atomic.Bool
+	var execFired atomic.Bool
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "myTool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				if !execFired.Load() {
+					// Check if OnToolCallStart already fired.
+					startFiredBeforeExec.Store(startInfo.ToolCallID != "")
+				}
+				execFired.Store(true)
+				return "result", nil
+			},
+		}),
+		WithOnToolCallStart(func(info ToolCallStartInfo) {
+			startInfo = info
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = stream.Result()
+	if startInfo.ToolCallID != "tc1" {
+		t.Errorf("ToolCallID = %q, want tc1", startInfo.ToolCallID)
+	}
+	if startInfo.ToolName != "myTool" {
+		t.Errorf("ToolName = %q, want myTool", startInfo.ToolName)
+	}
+	if startInfo.Step != 1 {
+		t.Errorf("Step = %d, want 1", startInfo.Step)
+	}
+	if string(startInfo.Input) != `{"key":"val"}` {
+		t.Errorf("Input = %q, want %q", string(startInfo.Input), `{"key":"val"}`)
+	}
+	if !startFiredBeforeExec.Load() {
+		t.Error("OnToolCallStart did not fire before Execute")
+	}
+}
+
+// TestStreamText_ToolLoop_ChunkStepFinishDisambiguation verifies that
+// provider-internal ChunkStepFinish (without stepSource=goai) IS forwarded
+// to the consumer and does NOT have Metadata["stepSource"]="goai".
+func TestStreamText_ToolLoop_ChunkStepFinishDisambiguation(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkText, Text: "thinking..."},
+					// Provider-internal step finish (e.g., Anthropic thinking step)
+					provider.StreamChunk{Type: provider.ChunkStepFinish, FinishReason: provider.FinishStop,
+						Metadata: map[string]any{"internal": true}},
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "tool", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "done"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 15, OutputTokens: 3}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var providerStepFinishes []provider.StreamChunk
+	var goaiStepFinishes []provider.StreamChunk
+	for chunk := range stream.Stream() {
+		if chunk.Type == provider.ChunkStepFinish {
+			if stepSource, _ := chunk.Metadata["stepSource"].(string); stepSource == "goai" {
+				goaiStepFinishes = append(goaiStepFinishes, chunk)
+			} else {
+				providerStepFinishes = append(providerStepFinishes, chunk)
+			}
+		}
+	}
+
+	// Provider step finish should be forwarded (1 from step 1 provider stream).
+	if len(providerStepFinishes) != 1 {
+		t.Errorf("provider ChunkStepFinish count = %d, want 1", len(providerStepFinishes))
+	}
+	if providerStepFinishes[0].Metadata["internal"] != true {
+		t.Error("provider ChunkStepFinish missing internal metadata")
+	}
+
+	// GoAI step finishes: 2 (one per step in the loop).
+	if len(goaiStepFinishes) != 2 {
+		t.Errorf("goai ChunkStepFinish count = %d, want 2", len(goaiStepFinishes))
+	}
+}
+
+// TestStreamText_ToolLoop_ReasoningExclusion verifies that ChunkReasoning
+// content is included in Result().Text (backward compat) but excluded from
+// Result().Steps[n].Text.
+func TestStreamText_ToolLoop_ReasoningExclusion(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkReasoning, Text: "thinking..."},
+					provider.StreamChunk{Type: provider.ChunkText, Text: "answer"},
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "tool", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "final"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 20, OutputTokens: 3}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	// Global text includes reasoning (backward compat).
+	if result.Text != "thinking...answerfinal" {
+		t.Errorf("Text = %q, want %q", result.Text, "thinking...answerfinal")
+	}
+	// Step text excludes reasoning.
+	if len(result.Steps) != 2 {
+		t.Fatalf("Steps = %d, want 2", len(result.Steps))
+	}
+	if result.Steps[0].Text != "answer" {
+		t.Errorf("Steps[0].Text = %q, want %q (reasoning excluded)", result.Steps[0].Text, "answer")
+	}
+	if result.Steps[1].Text != "final" {
+		t.Errorf("Steps[1].Text = %q, want %q", result.Steps[1].Text, "final")
+	}
+}
+
+// TestStreamText_ToolLoop_PartialStepsOnError verifies that when DoStream
+// fails on step 2, Result().Steps has step 1 data and Err() returns the error.
+func TestStreamText_ToolLoop_PartialStepsOnError(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkText, Text: "step1"},
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "tool", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return nil, &APIError{Message: "server error", StatusCode: 500}
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithMaxRetries(0),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if stream.Err() == nil {
+		t.Fatal("expected non-nil Err()")
+	}
+	var apiErr *APIError
+	if !errors.As(stream.Err(), &apiErr) {
+		t.Fatalf("expected *APIError, got %T: %v", stream.Err(), stream.Err())
+	}
+	if apiErr.StatusCode != 500 {
+		t.Errorf("StatusCode = %d, want 500", apiErr.StatusCode)
+	}
+	// Step 1 data should still be present.
+	if len(result.Steps) < 1 {
+		t.Fatal("expected at least 1 step in partial result")
+	}
+	if result.Steps[0].Text != "step1" {
+		t.Errorf("Steps[0].Text = %q, want %q", result.Steps[0].Text, "step1")
+	}
+}
+
+// TestStreamText_ToolLoop_NoExecuteNoLoop verifies that tools without Execute
+// functions + MaxSteps=3 dispatches to the single-step path.
+func TestStreamText_ToolLoop_NoExecuteNoLoop(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			callCount.Add(1)
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "read", ToolInput: `{}`},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:        "read",
+			Description: "Read a file",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+			// No Execute: definition only.
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if callCount.Load() != 1 {
+		t.Errorf("model called %d times, want 1 (no loop without Execute)", callCount.Load())
+	}
+	if len(result.ToolCalls) != 1 {
+		t.Errorf("ToolCalls = %d, want 1", len(result.ToolCalls))
+	}
+}
+
+// TestStreamText_SingleStep_ReasoningExclusion verifies that in the single-step
+// path (MaxSteps=1, no tool loop), ChunkReasoning is included in Result().Text
+// but excluded from Steps[0].Text and OnStepFinish's StepResult.Text.
+func TestStreamText_SingleStep_ReasoningExclusion(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkReasoning, Text: "thinking..."},
+				provider.StreamChunk{Type: provider.ChunkText, Text: "answer"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+			), nil
+		},
+	}
+
+	var hookStepText string
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithOnStepFinish(func(step StepResult) {
+			hookStepText = step.Text
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	// Global text includes reasoning (backward compat).
+	if result.Text != "thinking...answer" {
+		t.Errorf("Text = %q, want %q", result.Text, "thinking...answer")
+	}
+	// Step text excludes reasoning.
+	if len(result.Steps) != 1 {
+		t.Fatalf("Steps = %d, want 1", len(result.Steps))
+	}
+	if result.Steps[0].Text != "answer" {
+		t.Errorf("Steps[0].Text = %q, want %q (reasoning excluded)", result.Steps[0].Text, "answer")
+	}
+	// OnStepFinish hook also excludes reasoning.
+	if hookStepText != "answer" {
+		t.Errorf("OnStepFinish Text = %q, want %q (reasoning excluded)", hookStepText, "answer")
+	}
+}
+
+// TestStreamText_ToolLoop_OnToolCallStartPanic verifies that a panicking
+// OnToolCallStart hook is safely recovered: the process does not crash, the
+// tool result message contains the panic error, OnToolCall does NOT fire
+// (because Execute never ran), and the model can respond on step 2.
+func TestStreamText_ToolLoop_OnToolCallStartPanic(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, params provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "boom", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			// Step 2: verify the tool result contains the panic error.
+			for _, msg := range params.Messages {
+				for _, p := range msg.Content {
+					if p.Type == provider.PartToolResult && strings.Contains(p.ToolOutput, "OnToolCallStart hook") && strings.Contains(p.ToolOutput, "panicked") {
+						return streamFromChunks(
+							provider.StreamChunk{Type: provider.ChunkText, Text: "recovered from hook panic"},
+							provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 20, OutputTokens: 5}},
+						), nil
+					}
+				}
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "no panic found"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop},
+			), nil
+		},
+	}
+
+	var onToolCallFired atomic.Bool
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "boom",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "should not run", nil
+			},
+		}),
+		WithOnToolCallStart(func(_ ToolCallStartInfo) {
+			panic("hook exploded")
+		}),
+		WithOnToolCall(func(_ ToolCallInfo) {
+			onToolCallFired.Store(true)
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if err := stream.Err(); err != nil {
+		t.Fatalf("unexpected stream error: %v", err)
+	}
+	if !strings.Contains(result.Text, "recovered from hook panic") {
+		t.Errorf("Text = %q, want containing 'recovered from hook panic'", result.Text)
+	}
+	if onToolCallFired.Load() {
+		t.Error("OnToolCall should NOT fire when OnToolCallStart panics (Execute never ran)")
+	}
+}
+
+// TestStreamText_ToolLoop_Step2Retry verifies that withRetry works on step 2+
+// DoStream calls: step 1 succeeds with a tool call, step 2 fails once with a
+// retryable 500 error then succeeds on retry.
+func TestStreamText_ToolLoop_Step2Retry(t *testing.T) {
+	var doStreamCalls atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := doStreamCalls.Add(1)
+			switch n {
+			case 1:
+				// Step 1: tool call.
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "myTool", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			case 2:
+				// Step 2, attempt 1: retryable error.
+				return nil, &APIError{StatusCode: 500, Message: "server error", IsRetryable: true}
+			default:
+				// Step 2, attempt 2 (retry): success.
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkText, Text: "step2 ok"},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 20, OutputTokens: 3}},
+				), nil
+			}
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithMaxRetries(1),
+		WithTools(Tool{
+			Name: "myTool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "tool result", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if err := stream.Err(); err != nil {
+		t.Fatalf("unexpected stream error: %v", err)
+	}
+	if result.Text != "step2 ok" {
+		t.Errorf("Text = %q, want %q", result.Text, "step2 ok")
+	}
+	if got := doStreamCalls.Load(); got != 3 {
+		t.Errorf("DoStream call count = %d, want 3 (step1 + step2 fail + step2 retry)", got)
+	}
+	if len(result.Steps) != 2 {
+		t.Fatalf("Steps = %d, want 2", len(result.Steps))
+	}
+	if result.FinishReason != provider.FinishStop {
+		t.Errorf("FinishReason = %q, want stop", result.FinishReason)
+	}
+}
+
+// TestStreamText_ToolLoop_UnknownToolOnToolCallStartPanic verifies that when
+// an unknown tool's OnToolCallStart hook panics, it is silently recovered and
+// OnToolCall still fires with ErrUnknownTool (independent recover wrapping for
+// unknown tools).
+func TestStreamText_ToolLoop_UnknownToolOnToolCallStartPanic(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, params provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "nonexistent_tool", ToolInput: `{"x":1}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			// Step 2: the model sees the error and responds.
+			for _, msg := range params.Messages {
+				for _, p := range msg.Content {
+					if p.Type == provider.PartToolResult {
+						return streamFromChunks(
+							provider.StreamChunk{Type: provider.ChunkText, Text: "handled"},
+							provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop},
+						), nil
+					}
+				}
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "unexpected"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop},
+			), nil
+		},
+	}
+
+	var onToolCallFired atomic.Bool
+	var capturedInfo ToolCallInfo
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "other_tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		WithOnToolCallStart(func(_ ToolCallStartInfo) {
+			panic("start hook boom")
+		}),
+		WithOnToolCall(func(info ToolCallInfo) {
+			onToolCallFired.Store(true)
+			capturedInfo = info
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if err := stream.Err(); err != nil {
+		t.Fatalf("unexpected stream error: %v", err)
+	}
+	if result.Text != "handled" {
+		t.Errorf("Text = %q, want %q", result.Text, "handled")
+	}
+	if !onToolCallFired.Load() {
+		t.Fatal("OnToolCall did not fire for unknown tool (expected it to fire even after OnToolCallStart panic)")
+	}
+	if !errors.Is(capturedInfo.Error, ErrUnknownTool) {
+		t.Errorf("ToolCallInfo.Error = %v, want ErrUnknownTool", capturedInfo.Error)
+	}
+}
+
+// TestGenerateText_ToolLoop_OnToolCallStart verifies that OnToolCallStart fires
+// correctly in GenerateText (non-streaming) tool loop with correct fields and
+// fires before Execute.
+func TestGenerateText_ToolLoop_OnToolCallStart(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "myTool", Input: json.RawMessage(`{"key":"val"}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	var startInfo ToolCallStartInfo
+	var startFiredBeforeExec atomic.Bool
+	var execFired atomic.Bool
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "myTool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				if !execFired.Load() {
+					// Check if OnToolCallStart already fired.
+					startFiredBeforeExec.Store(startInfo.ToolCallID != "")
+				}
+				execFired.Store(true)
+				return "result", nil
+			},
+		}),
+		WithOnToolCallStart(func(info ToolCallStartInfo) {
+			startInfo = info
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Text != "done" {
+		t.Errorf("Text = %q, want %q", result.Text, "done")
+	}
+	if startInfo.ToolCallID != "tc1" {
+		t.Errorf("ToolCallID = %q, want tc1", startInfo.ToolCallID)
+	}
+	if startInfo.ToolName != "myTool" {
+		t.Errorf("ToolName = %q, want myTool", startInfo.ToolName)
+	}
+	if startInfo.Step != 1 {
+		t.Errorf("Step = %d, want 1", startInfo.Step)
+	}
+	if string(startInfo.Input) != `{"key":"val"}` {
+		t.Errorf("Input = %q, want %q", string(startInfo.Input), `{"key":"val"}`)
+	}
+	if !startFiredBeforeExec.Load() {
+		t.Error("OnToolCallStart did not fire before Execute")
+	}
+}
+
+// TestStreamText_ToolLoop_ChunkToolCallDeltaForwarded verifies that
+// ChunkToolCallStreamStart and ChunkToolCallDelta chunks are forwarded to the
+// consumer, and that drainStep only accumulates the final ChunkToolCall (not deltas).
+func TestStreamText_ToolLoop_ChunkToolCallDeltaForwarded(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCallStreamStart, ToolCallID: "tc1", ToolName: "myTool"},
+					provider.StreamChunk{Type: provider.ChunkToolCallDelta, ToolCallID: "tc1", ToolInput: `{"key":`},
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "myTool", ToolInput: `{"key":"val"}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "done"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 15, OutputTokens: 3}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "myTool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "result", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var chunkTypes []provider.StreamChunkType
+	for chunk := range stream.Stream() {
+		chunkTypes = append(chunkTypes, chunk.Type)
+	}
+
+	// Expected: StreamStart, Delta, ToolCall, StepFinish(goai), Text, StepFinish(goai), Finish
+	want := []provider.StreamChunkType{
+		provider.ChunkToolCallStreamStart,
+		provider.ChunkToolCallDelta,
+		provider.ChunkToolCall,
+		provider.ChunkStepFinish,
+		provider.ChunkText,
+		provider.ChunkStepFinish,
+		provider.ChunkFinish,
+	}
+	if len(chunkTypes) != len(want) {
+		t.Fatalf("chunk types = %v, want %v", chunkTypes, want)
+	}
+	for i := range want {
+		if chunkTypes[i] != want[i] {
+			t.Errorf("chunkTypes[%d] = %q, want %q", i, chunkTypes[i], want[i])
+		}
+	}
+
+	result := stream.Result()
+	if len(result.Steps) != 2 {
+		t.Fatalf("Steps = %d, want 2", len(result.Steps))
+	}
+	// drainStep should only accumulate the ChunkToolCall, not the delta.
+	if len(result.Steps[0].ToolCalls) != 1 {
+		t.Fatalf("Steps[0].ToolCalls = %d, want 1", len(result.Steps[0].ToolCalls))
+	}
+	if result.Steps[0].ToolCalls[0].ID != "tc1" {
+		t.Errorf("ToolCalls[0].ID = %q, want tc1", result.Steps[0].ToolCalls[0].ID)
+	}
+	if result.Steps[1].Text != "done" {
+		t.Errorf("Steps[1].Text = %q, want done", result.Steps[1].Text)
+	}
+}
+
+// TestStreamText_ToolLoop_DrainStepMetadata verifies that drainStep correctly
+// extracts sources, providerMetadata, and response providerMetadata from
+// ChunkStepFinish and ChunkFinish metadata during multi-step streaming.
+func TestStreamText_ToolLoop_DrainStepMetadata(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test-meta",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkText, Text: "call"},
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "tool", ToolInput: `{}`},
+					provider.StreamChunk{
+						Type:         provider.ChunkStepFinish,
+						FinishReason: provider.FinishToolCalls,
+						Usage:        provider.Usage{InputTokens: 5, OutputTokens: 3},
+						Metadata: map[string]any{
+							"sources":          []provider.Source{{URL: "http://example.com"}},
+							"providerMetadata": map[string]map[string]any{"openai": {"logprobs": true}},
+							"cacheTokens":      42,
+						},
+					},
+					provider.StreamChunk{
+						Type:         provider.ChunkFinish,
+						FinishReason: provider.FinishToolCalls,
+						Usage:        provider.Usage{InputTokens: 5, OutputTokens: 3},
+						Response:     provider.ResponseMetadata{ID: "r1", Model: "m"},
+						Metadata: map[string]any{
+							"sources":          []provider.Source{{URL: "http://example.com"}},
+							"providerMetadata": map[string]map[string]any{"openai": {"logprobs": true}},
+							"cacheTokens":      42,
+						},
+					},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "done"},
+				provider.StreamChunk{
+					Type:         provider.ChunkFinish,
+					FinishReason: provider.FinishStop,
+					Usage:        provider.Usage{InputTokens: 10, OutputTokens: 4},
+					Response:     provider.ResponseMetadata{ID: "r2", Model: "m"},
+					Metadata: map[string]any{
+						"sources":          []provider.Source{{URL: "http://example2.com"}},
+						"providerMetadata": map[string]map[string]any{"openai": {"logprobs": false}},
+					},
+				},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if stream.Err() != nil {
+		t.Fatalf("unexpected error: %v", stream.Err())
+	}
+	if len(result.Steps) != 2 {
+		t.Fatalf("Steps = %d, want 2", len(result.Steps))
+	}
+
+	// Step 1: sources from ChunkFinish metadata (last value wins).
+	if len(result.Steps[0].Sources) == 0 {
+		t.Fatal("Steps[0].Sources is empty, want at least one source")
+	}
+	if result.Steps[0].Sources[0].URL != "http://example.com" {
+		t.Errorf("Steps[0].Sources[0].URL = %q, want http://example.com", result.Steps[0].Sources[0].URL)
+	}
+
+	// Step 1: providerMetadata from ChunkFinish metadata.
+	if result.Steps[0].ProviderMetadata == nil {
+		t.Fatal("Steps[0].ProviderMetadata is nil")
+	}
+	if val, ok := result.Steps[0].ProviderMetadata["openai"]["logprobs"].(bool); !ok || !val {
+		t.Errorf("Steps[0].ProviderMetadata[openai][logprobs] = %v, want true", result.Steps[0].ProviderMetadata["openai"]["logprobs"])
+	}
+
+	// Step 1: Response.ProviderMetadata has cacheTokens from flat metadata.
+	if result.Steps[0].Response.ProviderMetadata == nil {
+		t.Fatal("Steps[0].Response.ProviderMetadata is nil")
+	}
+	if ct, ok := result.Steps[0].Response.ProviderMetadata["cacheTokens"].(int); !ok || ct != 42 {
+		t.Errorf("Steps[0].Response.ProviderMetadata[cacheTokens] = %v, want 42", result.Steps[0].Response.ProviderMetadata["cacheTokens"])
+	}
+
+	// Final response has ID from step 2.
+	if result.Response.ID != "r2" {
+		t.Errorf("Response.ID = %q, want r2", result.Response.ID)
+	}
+
+	// Step 2: providerMetadata from ChunkFinish metadata (via drainStep, then
+	// GoAI ChunkStepFinish forwarded to consume).
+	if result.Steps[1].ProviderMetadata == nil {
+		t.Fatal("Steps[1].ProviderMetadata is nil")
+	}
+	if val, ok := result.Steps[1].ProviderMetadata["openai"]["logprobs"].(bool); !ok || val {
+		t.Errorf("Steps[1].ProviderMetadata[openai][logprobs] = %v, want false", result.Steps[1].ProviderMetadata["openai"]["logprobs"])
+	}
+}
+
+// TestStreamText_ToolLoop_EmptyStepGuard verifies that the empty step guard
+// (line 570) prevents phantom steps when a provider stream emits only a
+// ChunkError then closes (no text, no tool calls, no finish reason).
+func TestStreamText_ToolLoop_EmptyStepGuard(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test-guard",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				// Step 1: only emits ChunkError then closes (no ChunkFinish with finishReason).
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkError, Error: fmt.Errorf("transient failure")},
+				), nil
+			}
+			// Should never be reached due to empty step guard breaking the loop.
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "should not appear"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Consume the stream.
+	var gotError bool
+	for chunk := range stream.Stream() {
+		if chunk.Type == provider.ChunkError {
+			gotError = true
+		}
+	}
+	if !gotError {
+		t.Error("expected ChunkError in stream")
+	}
+
+	result := stream.Result()
+	// The stream should have the error forwarded but no phantom step.
+	if len(result.Steps) != 0 {
+		t.Errorf("Steps = %d, want 0 (empty step guard should prevent phantom step)", len(result.Steps))
+	}
+	if result.FinishReason != "" {
+		t.Errorf("FinishReason = %q, want empty", result.FinishReason)
+	}
+}
+
+// TestStreamText_ToolLoop_Step2DoStreamErrorWithOnResponse verifies that when
+// step 2 DoStream fails, the OnResponse hook fires with Error and StatusCode,
+// and the stream carries the error.
+func TestStreamText_ToolLoop_Step2DoStreamErrorWithOnResponse(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test-hook-err",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkText, Text: "step1"},
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "tool", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return nil, &APIError{StatusCode: 429, Message: "rate limited"}
+		},
+	}
+
+	var mu sync.Mutex
+	var capturedResp []ResponseInfo
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithMaxRetries(0),
+		WithOnResponse(func(info ResponseInfo) {
+			mu.Lock()
+			capturedResp = append(capturedResp, info)
+			mu.Unlock()
+		}),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Consume stream.
+	for range stream.Stream() {
+	}
+
+	if stream.Err() == nil {
+		t.Fatal("expected non-nil Err()")
+	}
+	var apiErr *APIError
+	if !errors.As(stream.Err(), &apiErr) {
+		t.Fatalf("expected *APIError, got %T: %v", stream.Err(), stream.Err())
+	}
+	if apiErr.StatusCode != 429 {
+		t.Errorf("StatusCode = %d, want 429", apiErr.StatusCode)
+	}
+
+	// OnResponse should have fired at least twice: once for step 1 success, once for step 2 error.
+	mu.Lock()
+	defer mu.Unlock()
+	if len(capturedResp) < 2 {
+		t.Fatalf("OnResponse fired %d times, want >= 2", len(capturedResp))
+	}
+	// Find the error response.
+	var foundErr bool
+	for _, r := range capturedResp {
+		if r.Error != nil && r.StatusCode == 429 {
+			foundErr = true
+			break
+		}
+	}
+	if !foundErr {
+		t.Error("OnResponse never fired with Error and StatusCode=429")
+	}
+
+	// Step 1 data should still be present.
+	result := stream.Result()
+	if len(result.Steps) < 1 {
+		t.Fatal("expected at least 1 step in partial result")
+	}
+	if result.Steps[0].Text != "step1" {
+		t.Errorf("Steps[0].Text = %q, want step1", result.Steps[0].Text)
+	}
+}
+
+// TestStreamText_ToolLoop_DrainStepChunkReasoningSource verifies that
+// ChunkReasoning with a source in its Metadata is captured by drainStep.
+func TestStreamText_ToolLoop_DrainStepChunkReasoningSource(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test-reasoning-src",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{
+						Type: provider.ChunkReasoning,
+						Text: "thinking about it",
+						Metadata: map[string]any{
+							"source": provider.Source{URL: "http://reasoning-source.com", Type: "url"},
+						},
+					},
+					provider.StreamChunk{Type: provider.ChunkText, Text: "answer"},
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "tool", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "done"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 15, OutputTokens: 3}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if stream.Err() != nil {
+		t.Fatalf("unexpected error: %v", stream.Err())
+	}
+	if len(result.Steps) != 2 {
+		t.Fatalf("Steps = %d, want 2", len(result.Steps))
+	}
+
+	// Step 1 should have the reasoning source.
+	if len(result.Steps[0].Sources) == 0 {
+		t.Fatal("Steps[0].Sources is empty, want reasoning source")
+	}
+	foundReasoningSrc := false
+	for _, s := range result.Steps[0].Sources {
+		if s.URL == "http://reasoning-source.com" {
+			foundReasoningSrc = true
+			break
+		}
+	}
+	if !foundReasoningSrc {
+		t.Errorf("Steps[0].Sources = %v, want source with URL http://reasoning-source.com", result.Steps[0].Sources)
+	}
+
+	// Reasoning text should NOT be in Step text.
+	if strings.Contains(result.Steps[0].Text, "thinking") {
+		t.Errorf("Steps[0].Text = %q, should not contain reasoning text", result.Steps[0].Text)
+	}
+	if result.Steps[0].Text != "answer" {
+		t.Errorf("Steps[0].Text = %q, want answer", result.Steps[0].Text)
 	}
 }

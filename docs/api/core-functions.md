@@ -68,7 +68,11 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 
 **Returns:** `*TextStream` for consuming the response incrementally. Returns an error if the initial API call fails.
 
-**Example:**
+**Tool Loop Support:**
+
+When `WithMaxSteps` is set > 1 and tools with `Execute` functions are provided, `StreamText` runs an automatic tool loop. All steps stream through a single unified channel. Step boundaries are marked by `ChunkStepFinish` chunks. The initial `DoStream` failure returns `(nil, error)`. Subsequent step errors flow through the stream as `ChunkError` chunks — check `stream.Err()` after consuming.
+
+**Example (basic):**
 
 ```go
 stream, err := goai.StreamText(context.Background(), model,
@@ -85,6 +89,32 @@ fmt.Println()
 
 result := stream.Result()
 fmt.Printf("Tokens: %d in, %d out\n", result.TotalUsage.InputTokens, result.TotalUsage.OutputTokens)
+```
+
+**Example (streaming with tools):**
+
+```go
+stream, err := goai.StreamText(ctx, model,
+    goai.WithPrompt("What's the weather in Tokyo?"),
+    goai.WithTools(weatherTool),
+    goai.WithMaxSteps(5),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+for chunk := range stream.Stream() {
+    switch chunk.Type {
+    case provider.ChunkText:
+        fmt.Print(chunk.Text)
+    case provider.ChunkStepFinish:
+        fmt.Println("\n[step complete]")
+    }
+}
+
+if err := stream.Err(); err != nil {
+    log.Fatal("stream error:", err)
+}
 ```
 
 ### TextStream

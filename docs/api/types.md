@@ -201,6 +201,19 @@ type ToolCallInfo struct {
 }
 ```
 
+### ToolCallStartInfo
+
+Passed to the `OnToolCallStart` hook before a tool executes.
+
+```go
+type ToolCallStartInfo struct {
+    ToolCallID string          // Provider-assigned identifier for this tool call.
+    ToolName   string          // Name of the tool called.
+    Step       int             // 1-based index of the generation step in which this tool was called.
+    Input      json.RawMessage // Raw JSON arguments passed to the tool.
+}
+```
+
 ### APIError
 
 Represents a non-overflow API error. See [Errors](errors.md).
