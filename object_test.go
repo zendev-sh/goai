@@ -1840,3 +1840,70 @@ func TestStreamObject_ProviderMetadata_BothConventions(t *testing.T) {
 		t.Error("providerMetadata key should not leak into Response.ProviderMetadata")
 	}
 }
+
+// TestGenerateObject_ToolLoop_OnToolCallStart verifies that OnToolCallStart fires
+// before tool execution in GenerateObject's tool loop with correct metadata.
+func TestGenerateObject_ToolLoop_OnToolCallStart(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					FinishReason: provider.FinishToolCalls,
+					ToolCalls: []provider.ToolCall{
+						{ID: "tc1", Name: "get_weather", Input: json.RawMessage(`{"city":"NYC"}`)},
+					},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         `{"name":"Alice","age":30}`,
+				FinishReason: provider.FinishStop,
+			}, nil
+		},
+	}
+
+	var startInfos []ToolCallStartInfo
+	toolExecuted := false
+
+	_, err := GenerateObject[simpleObject](t.Context(), model,
+		WithPrompt("weather then generate"),
+		WithMaxSteps(3),
+		WithOnToolCallStart(func(info ToolCallStartInfo) {
+			if toolExecuted {
+				t.Error("OnToolCallStart fired after tool execution")
+			}
+			startInfos = append(startInfos, info)
+		}),
+		WithTools(Tool{
+			Name:        "get_weather",
+			Description: "get weather",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				toolExecuted = true
+				return `{"temp":72}`, nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(startInfos) != 1 {
+		t.Fatalf("OnToolCallStart called %d times, want 1", len(startInfos))
+	}
+	info := startInfos[0]
+	if info.ToolCallID != "tc1" {
+		t.Errorf("ToolCallID = %q, want tc1", info.ToolCallID)
+	}
+	if info.ToolName != "get_weather" {
+		t.Errorf("ToolName = %q, want get_weather", info.ToolName)
+	}
+	if info.Step != 1 {
+		t.Errorf("Step = %d, want 1", info.Step)
+	}
+	if string(info.Input) != `{"city":"NYC"}` {
+		t.Errorf("Input = %s, want {\"city\":\"NYC\"}", info.Input)
+	}
+}

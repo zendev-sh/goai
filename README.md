@@ -39,7 +39,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 
 - **7 core functions**: `GenerateText`, `StreamText`, `GenerateObject[T]`, `StreamObject[T]`, `Embed`, `EmbedMany`, `GenerateImage`
 - **22+ providers**: OpenAI, Anthropic, Google, Bedrock, Azure, Vertex, Mistral, xAI, Groq, Cohere, DeepSeek, MiniMax, Fireworks, Together, DeepInfra, OpenRouter, Perplexity, Cerebras, Ollama, vLLM, RunPod, + generic OpenAI-compatible
-- **Auto tool loop**: Define tools with `Execute` handlers, set `MaxSteps`, GoAI handles the loop
+- **Auto tool loop**: Define tools with `Execute` handlers, set `MaxSteps` for `GenerateText` and `StreamText`
 - **Structured output**: `GenerateObject[T]` auto-generates JSON Schema from Go types via reflection
 - **Streaming**: Real-time text and partial object streaming via channels
 - **Dynamic auth**: `TokenSource` interface for OAuth, rotating keys, cloud IAM, with `CachedTokenSource` for TTL-based caching
@@ -50,6 +50,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 - **Computer use**: Anthropic computer, bash, text editor tools for autonomous desktop interaction
 - **20 provider-defined tools**: Web fetch, file search, image generation, X search, and more - [full list](#provider-defined-tools)
 - **MCP client**: Connect to any MCP server (stdio, HTTP, SSE), auto-convert tools for use with GoAI
+- **Observability**: Built-in Langfuse integration with hooks for request/response/step/tool tracing
 - **Telemetry hooks**: `OnRequest`, `OnResponse`, `OnStepFinish`, `OnToolCall` callbacks
 - **Retry/backoff**: Automatic retry with exponential backoff on 429/5xx errors
 - **Minimal dependencies**: Core uses only stdlib; Vertex adds `golang.org/x/oauth2` for ADC
@@ -125,6 +126,24 @@ if err := stream.Err(); err != nil {
 }
 fmt.Printf("\nTokens: %d in, %d out\n",
 	result.TotalUsage.InputTokens, result.TotalUsage.OutputTokens)
+```
+
+Streaming with tools:
+
+```go
+stream, err := goai.StreamText(ctx, model,
+	goai.WithPrompt("What's the weather in Tokyo?"),
+	goai.WithTools(weatherTool),
+	goai.WithMaxSteps(5),
+)
+for chunk := range stream.Stream() {
+	switch chunk.Type {
+	case provider.ChunkText:
+		fmt.Print(chunk.Text)
+	case provider.ChunkStepFinish:
+		fmt.Println("\n[step complete]")
+	}
+}
 ```
 
 ## Structured Output
@@ -291,6 +310,26 @@ os.WriteFile("sunset.png", result.Images[0].Data, 0644)
 ```
 
 Also supported: Google Imagen (`google.Image("imagen-4.0-generate-001")`) and Vertex AI (`vertex.Image(...)`).
+
+## Observability
+
+Built-in [Langfuse](https://langfuse.com) integration for tracing generations, tool calls, and multi-step loops:
+
+```go
+import "github.com/zendev-sh/goai/observability/langfuse"
+
+lf := langfuse.New(langfuse.WithBaseURL("https://cloud.langfuse.com"))
+trace := lf.Trace("my-trace")
+
+result, err := goai.GenerateText(ctx, model,
+    goai.WithPrompt("Hello"),
+    trace.Hooks()...,  // wires OnRequest, OnResponse, OnStepFinish, OnToolCall
+)
+trace.End(result.Text)
+lf.Flush(ctx)
+```
+
+See [examples/langfuse](examples/langfuse/) and [observability docs](https://goai.dev/concepts/observability) for details.
 
 ## Providers
 

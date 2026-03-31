@@ -18,17 +18,31 @@ import (
 type mockModel struct {
 	id         string
 	generateFn func(ctx context.Context, params provider.GenerateParams) (*provider.GenerateResult, error)
+	streamFn   func(ctx context.Context, params provider.GenerateParams) (*provider.StreamResult, error)
 }
 
 func (m *mockModel) ModelID() string { return m.id }
 func (m *mockModel) DoGenerate(ctx context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
 	return m.generateFn(ctx, params)
 }
-func (m *mockModel) DoStream(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+func (m *mockModel) DoStream(ctx context.Context, params provider.GenerateParams) (*provider.StreamResult, error) {
+	if m.streamFn != nil {
+		return m.streamFn(ctx, params)
+	}
 	return nil, nil
 }
 func (m *mockModel) Capabilities() provider.ModelCapabilities {
 	return provider.ModelCapabilities{}
+}
+
+// streamFromChunks creates a StreamResult from pre-built chunks.
+func streamFromChunks(chunks ...provider.StreamChunk) *provider.StreamResult {
+	ch := make(chan provider.StreamChunk, len(chunks))
+	for _, c := range chunks {
+		ch <- c
+	}
+	close(ch)
+	return &provider.StreamResult{Stream: ch}
 }
 
 // newCaptureServer starts an httptest.Server that captures all ingestion events.
@@ -1062,5 +1076,161 @@ func TestRun_BaseURLEnvVar(t *testing.T) {
 
 	if len(getEvents()) == 0 {
 		t.Error("no events received - LANGFUSE_BASE_URL fallback did not work")
+	}
+}
+
+func TestStreamText_SingleStep(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	h := newHooks(t, srv, Config{TraceName: "stream-single"})
+
+	model := &mockModel{
+		id: "gpt-4o",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "hello"},
+				provider.StreamChunk{Type: provider.ChunkText, Text: " world"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+			), nil
+		},
+	}
+
+	stream, err := goai.StreamText(t.Context(), model, append(h.Run(), goai.WithPrompt("hi"))...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drain stream.
+	for range stream.TextStream() {
+	}
+	if stream.Err() != nil {
+		t.Fatal(stream.Err())
+	}
+
+	events := getEvents()
+	if len(events) != 3 {
+		t.Fatalf("event count = %d, want 3; types: %v", len(events), eventTypes(events))
+	}
+
+	counts := map[string]int{}
+	for _, tp := range eventTypes(events) {
+		counts[tp]++
+	}
+	if counts[eventTrace] != 1 {
+		t.Errorf("trace events = %d, want 1", counts[eventTrace])
+	}
+	if counts[eventSpan] != 1 {
+		t.Errorf("span events = %d, want 1", counts[eventSpan])
+	}
+	if counts[eventGeneration] != 1 {
+		t.Errorf("generation events = %d, want 1", counts[eventGeneration])
+	}
+
+	genBody := bodyOf(t, events, eventGeneration)
+	if genBody["model"] != "gpt-4o" {
+		t.Errorf("generation model = %q, want %q", genBody["model"], "gpt-4o")
+	}
+	usage, ok := genBody["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("generation usage missing or wrong type: %T", genBody["usage"])
+	}
+	if usage["input"] != float64(10) {
+		t.Errorf("usage.input = %v, want 10", usage["input"])
+	}
+	if usage["output"] != float64(5) {
+		t.Errorf("usage.output = %v, want 5", usage["output"])
+	}
+}
+
+func TestStreamText_MultiStep_WithToolCalls(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	h := newHooks(t, srv, Config{TraceName: "stream-multi-step"})
+
+	callCount := 0
+	model := &mockModel{
+		id: "gpt-4o",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			callCount++
+			if callCount == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkText, Text: "calling tool"},
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "my_tool", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "done"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 20, OutputTokens: 8}},
+			), nil
+		},
+	}
+
+	opts := append(h.Run(),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(goai.Tool{
+			Name:    "my_tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "tool result", nil },
+		}),
+	)
+	stream, err := goai.StreamText(t.Context(), model, opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drain stream.
+	for range stream.TextStream() {
+	}
+	if stream.Err() != nil {
+		t.Fatal(stream.Err())
+	}
+
+	events := getEvents()
+	// Expect: trace-create, span-create (agent), generation-create (step-1),
+	// span-create (tool), generation-create (step-2) = 5 events.
+	if len(events) != 5 {
+		t.Fatalf("event count = %d, want 5; types: %v", len(events), eventTypes(events))
+	}
+
+	counts := map[string]int{}
+	for _, tp := range eventTypes(events) {
+		counts[tp]++
+	}
+	if counts[eventTrace] != 1 {
+		t.Errorf("trace events = %d, want 1", counts[eventTrace])
+	}
+	if counts[eventSpan] != 2 {
+		t.Errorf("span events = %d, want 2 (agent span + tool span)", counts[eventSpan])
+	}
+	if counts[eventGeneration] != 2 {
+		t.Errorf("generation events = %d, want 2", counts[eventGeneration])
+	}
+
+	// Find tool span.
+	var toolSpan map[string]any
+	for _, e := range events {
+		if e["type"] == eventSpan {
+			b, ok := e["body"].(map[string]any)
+			if !ok {
+				continue
+			}
+			if b["name"] == "my_tool" {
+				toolSpan = b
+				break
+			}
+		}
+	}
+	if toolSpan == nil {
+		t.Fatal("tool span not found")
+	}
+	if toolSpan["name"] != "my_tool" {
+		t.Errorf("tool span name = %q, want %q", toolSpan["name"], "my_tool")
+	}
+
+	// Verify trace output.
+	traceBody := bodyOf(t, events, eventTrace)
+	if traceBody["name"] != "stream-multi-step" {
+		t.Errorf("trace name = %q, want %q", traceBody["name"], "stream-multi-step")
 	}
 }

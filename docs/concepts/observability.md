@@ -5,7 +5,7 @@ description: "Trace LLM calls, tool executions, and agent runs in GoAI. Plug-in 
 
 # Observability
 
-GoAI's observability is built on four lifecycle hooks: `OnRequest`, `OnResponse`, `OnToolCall`, and `OnStepFinish`. Any observability provider can plug into these hooks to trace LLM calls, tool executions, and multi-step agent runs.
+GoAI's observability is built on five lifecycle hooks: `OnRequest`, `OnResponse`, `OnToolCallStart`, `OnToolCall`, and `OnStepFinish`. Any observability provider can plug into these hooks to trace LLM calls, tool executions, and multi-step agent runs.
 
 ## How It Works
 
@@ -25,6 +25,7 @@ Each hook fires at a specific point in the request lifecycle:
 |------|------|------|
 | `OnRequest` | Before each LLM call | Model, full message history, tool count |
 | `OnResponse` | After each LLM call | Latency, token usage, finish reason, errors |
+| `OnToolCallStart` | Before each tool execution | Tool call ID, tool name, step, input |
 | `OnToolCall` | After each tool execution | Tool name, input/output, duration, errors |
 | `OnStepFinish` | After each step completes | Step number, finish reason, tool calls |
 

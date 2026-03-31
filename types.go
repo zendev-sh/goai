@@ -28,5 +28,8 @@ type Tool struct {
 	ProviderDefinedOptions map[string]any
 
 	// Execute runs the tool with the given JSON input and returns the result text.
+	// Both the return value and error string are forwarded to the model as a tool
+	// result message. Do not include sensitive data (credentials, internal paths)
+	// in error messages as they will be sent to the LLM provider's API.
 	Execute func(ctx context.Context, input json.RawMessage) (string, error)
 }

@@ -111,6 +111,41 @@ fmt.Printf("Finish reason: %s, tokens: %d\n",
     result.FinishReason, result.TotalUsage.TotalTokens)
 ```
 
+## Streaming Tool Loops
+
+`StreamText` supports the same auto tool loop as `GenerateText`. Pass `WithMaxSteps` and tools with `Execute` functions. All steps stream through a single unified channel, with `ChunkStepFinish` marking step boundaries.
+
+```go
+stream, err := goai.StreamText(ctx, model,
+    goai.WithPrompt("What's the weather in Tokyo and London?"),
+    goai.WithTools(weatherTool),
+    goai.WithMaxSteps(5),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+for chunk := range stream.Stream() {
+    switch chunk.Type {
+    case provider.ChunkText:
+        fmt.Print(chunk.Text)
+    case provider.ChunkToolCall:
+        fmt.Printf("\n[tool call: %s]\n", chunk.ToolName)
+    case provider.ChunkStepFinish:
+        fmt.Printf("[step done, reason=%s]\n", chunk.FinishReason)
+    case provider.ChunkFinish:
+        fmt.Printf("\n[finished, tokens=%d]\n", chunk.Usage.TotalTokens)
+    }
+}
+
+if err := stream.Err(); err != nil {
+    log.Fatal("stream error:", err)
+}
+
+result := stream.Result()
+fmt.Printf("Completed in %d steps\n", len(result.Steps))
+```
+
 ## Non-Streaming Alternative
 
 `GenerateText` blocks until the full response is ready. No stream, no channels - just the result.

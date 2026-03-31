@@ -141,6 +141,8 @@ func (h *Hooks) Run() []goai.Option {
 	// end is declared before opts so WithOnStepFinish can reference it.
 	var end func(result any)
 
+	// OnToolCallStart is intentionally not registered here because
+	// OnToolCall.StartTime already provides accurate timing for tool spans.
 	opts := []goai.Option{
 		goai.WithOnRequest(func(info goai.RequestInfo) {
 			input := messagesToInput(info.Messages)

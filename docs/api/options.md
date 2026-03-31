@@ -264,6 +264,16 @@ func WithOnStepFinish(fn func(StepResult)) Option
 
 **Default:** `nil`. Only relevant when `MaxSteps > 1`.
 
+### WithOnToolCallStart
+
+Sets a callback invoked before each tool execution. Fires from the tool's goroutine in `executeToolsParallel`.
+
+```go
+func WithOnToolCallStart(fn func(ToolCallStartInfo)) Option
+```
+
+**Default:** `nil`. Only relevant when tools with `Execute` are provided and `MaxSteps > 1`.
+
 ### WithOnToolCall
 
 Sets a callback invoked after each tool execution.
@@ -273,6 +283,8 @@ func WithOnToolCall(fn func(ToolCallInfo)) Option
 ```
 
 **Default:** `nil`. Only relevant when tools with `Execute` are provided and `MaxSteps > 1`.
+
+> **Note:** When multiple tools execute in a single step, OnToolCall callbacks fire concurrently from separate goroutines. Order is non-deterministic.
 
 ---
 

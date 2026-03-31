@@ -188,8 +188,8 @@ User calls goai.GenerateText(ctx, model, opts...)
   │   │       └─ Return {Text, ToolCalls, Usage, FinishReason, Sources}
   │   ├─ OnResponse callback
   │   ├─ if FinishReason == ToolCalls:
-  │   │   ├─ executeTools(ctx, calls, toolMap, OnToolCall)
-  │   │   └─ appendToolRoundTrip(msgs, result, toolMsgs)
+  │   │   ├─ executeToolsParallel(ctx, calls, toolMap, step, OnToolCallStart, OnToolCall)
+  │   │   └─ appendToolRoundTrip(msgs, text, toolCalls, toolMsgs)
   │   └─ else: return buildTextResult(steps, totalUsage)
   │
   └─ return TextResult{Text, Steps, TotalUsage, FinishReason, Sources}
@@ -200,15 +200,30 @@ User calls goai.GenerateText(ctx, model, opts...)
 ```
 User calls goai.StreamText(ctx, model, opts...)
   │
-  ├─ withRetry → model.DoStream(ctx, params)
-  │   └─ Inside provider DoStream:
-  │       ├─ Build HTTP request (provider-specific)
-  │       ├─ Send HTTP POST (streaming)
-  │       ├─ Create channel (cap 64)
-  │       ├─ Launch goroutine: parse SSE → emit StreamChunks
-  │       └─ Return StreamResult{Stream: <-chan StreamChunk}
+  ├─ Single-step path (no executable tools or MaxSteps == 1):
+  │   ├─ withRetry → model.DoStream(ctx, params)
+  │   │   └─ Inside provider DoStream:
+  │   │       ├─ Build HTTP request (provider-specific)
+  │   │       ├─ Send HTTP POST (streaming)
+  │   │       ├─ Create channel (cap 64)
+  │   │       ├─ Launch goroutine: parse SSE → emit StreamChunks
+  │   │       └─ Return StreamResult{Stream: <-chan StreamChunk}
+  │   └─ Wrap in TextStream
   │
-  └─ Wrap in TextStream
+  ├─ Multi-step path (MaxSteps > 1 and executable tools):
+  │   └─ streamWithToolLoop(ctx, model, opts, toolMap)
+  │       ├─ Launch step loop goroutine
+  │       │   ├─ for step = 1..MaxSteps:
+  │       │   │   ├─ model.DoStream(ctx, params)
+  │       │   │   ├─ drainStep: forward chunks to unified output channel
+  │       │   │   ├─ if FinishReason == ToolCalls:
+  │       │   │   │   ├─ executeToolsParallel(ctx, calls, toolMap, step, OnToolCallStart, OnToolCall)
+  │       │   │   │   └─ appendToolRoundTrip(msgs, text, toolCalls, toolMsgs)
+  │       │   │   └─ else: break
+  │       │   └─ close unified output channel
+  │       └─ Wrap in TextStream
+  │
+  └─ TextStream API:
       ├─ .TextStream() → <-chan string  (text-only)
       ├─ .Stream()     → <-chan StreamChunk (raw chunks)
       └─ .Result()     → *TextResult (blocks until done)

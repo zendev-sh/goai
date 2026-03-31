@@ -82,6 +82,9 @@ type options struct {
 	// OnToolCall is called after each tool execution.
 	OnToolCall func(ToolCallInfo)
 
+	// OnToolCallStart is called before each tool execution.
+	OnToolCallStart func(ToolCallStartInfo)
+
 	// ExplicitSchema overrides auto-generated JSON Schema for GenerateObject/StreamObject.
 	ExplicitSchema json.RawMessage
 

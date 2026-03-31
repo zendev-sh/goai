@@ -313,7 +313,10 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 		totalUsage = addUsage(totalUsage, result.Usage)
 
 		if o.OnStepFinish != nil {
-			o.OnStepFinish(stepResult)
+			func() {
+				defer func() { _ = recover() }()
+				o.OnStepFinish(stepResult)
+			}()
 		}
 
 		// If no tools have Execute functions, skip the tool loop regardless of MaxSteps.
@@ -345,8 +348,8 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 		// Clear tool_choice after the first tool step so the model can freely
 		// produce structured output on subsequent steps.
 		params.ToolChoice = ""
-		toolMessages := executeTools(ctx, result.ToolCalls, toolMap, step, o.OnToolCall)
-		params.Messages = appendToolRoundTrip(params.Messages, result, toolMessages)
+		toolMessages := executeToolsParallel(ctx, result.ToolCalls, toolMap, step, o.OnToolCallStart, o.OnToolCall)
+		params.Messages = appendToolRoundTrip(params.Messages, result.Text, result.ToolCalls, toolMessages)
 	}
 
 	// MaxSteps exhausted with tool calls still pending — no structured output produced.
