@@ -24,6 +24,7 @@ goai/
 ├── image.go                # GenerateImage
 ├── options.go              # WithPrompt, WithTools, etc.
 ├── schema.go               # SchemaFrom[T] - JSON Schema from Go structs
+├── hooks.go                # RequestInfo, ResponseInfo, ToolCallInfo, ToolCallStartInfo, hook options
 ├── errors.go               # APIError, ContextOverflowError
 ├── retry.go                # Exponential backoff (errors.As, not type assertion)
 ├── caching.go              # Prompt cache control (copies msgs, no mutation)
