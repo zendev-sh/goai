@@ -2,6 +2,8 @@ package goai
 
 import (
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/zendev-sh/goai/provider"
@@ -207,8 +209,12 @@ func WithHeaders(h map[string]string) Option {
 }
 
 // WithProviderOptions sets provider-specific request parameters.
+// Values must be JSON-serializable (no channels, functions, or unsafe pointers).
 func WithProviderOptions(opts map[string]any) Option {
-	return func(o *options) { o.ProviderOptions = opts }
+	validateProviderOptions("WithProviderOptions", opts)
+	return func(o *options) {
+		o.ProviderOptions = opts
+	}
 }
 
 // WithPromptCaching enables provider-specific prompt caching.
@@ -237,6 +243,120 @@ func WithMaxParallelCalls(n int) Option {
 }
 
 // WithEmbeddingProviderOptions sets provider-specific parameters for embedding requests.
+// Values must be JSON-serializable (no channels, functions, or unsafe pointers).
 func WithEmbeddingProviderOptions(opts map[string]any) Option {
-	return func(o *options) { o.EmbeddingProviderOptions = opts }
+	validateProviderOptions("WithEmbeddingProviderOptions", opts)
+	return func(o *options) {
+		o.EmbeddingProviderOptions = opts
+	}
+}
+
+// validateProviderOptions panics if any value in the map is not JSON-serializable.
+// This catches programming errors (channels, functions, unsafe pointers, cycles) early,
+// before they reach MustMarshalJSON deep in provider code.
+// caller is the WithXxxProviderOptions function name, included in the panic message.
+func validateProviderOptions(caller string, opts map[string]any) {
+	for k, v := range opts {
+		if v == nil {
+			continue
+		}
+		// Fresh seen map per top-level key: prevents stale entries from one key
+		// suppressing cycle/bad-value detection for an unrelated key.
+		// Values: seenInProgress (currently on stack) or seenDone (fully processed).
+		seen := make(map[uintptr]int)
+		checkJSONSerializable(caller, k, reflect.ValueOf(v), seen, 0)
+	}
+}
+
+// seenInProgress and seenDone are the two states tracked in the seen map passed to
+// checkJSONSerializable. In-progress means the address is currently on the call stack
+// (true cycle); done means it was fully processed via a different path (diamond pattern).
+const (
+	seenInProgress = 1
+	seenDone       = 2
+)
+
+// checkJSONSerializable panics if v contains a type that json.Marshal cannot handle.
+// seen tracks map/pointer addresses using a two-state DFS to distinguish true cycles
+// (same address on the current call stack → json.Marshal would fail) from diamond patterns
+// (same address reachable via two different paths → json.Marshal handles fine).
+// depth guards against slice cycles, which cannot be detected by address (slices are not
+// tracked in seen). The limit of 1000 is a pragmatic guard against pathological input ; 
+// cyclic slices that escape address-based detection, or unreasonably deep nesting.
+func checkJSONSerializable(caller, key string, v reflect.Value, seen map[uintptr]int, depth int) {
+	if depth > 1000 {
+		// Depth > 1000 indicates either a cyclic slice/array (not address-tracked) or
+		// unreasonably deep nesting. Either way the value is not safe for provider use.
+		panic(fmt.Sprintf("goai: %s: option key %q exceeds maximum nesting depth (cyclic or too deeply nested)", caller, key))
+	}
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.UnsafePointer:
+		panic(fmt.Sprintf("goai: %s: option key %q has non-serializable value of type %s", caller, key, v.Type()))
+	case reflect.Ptr:
+		if !v.IsNil() {
+			addr := v.Pointer()
+			if seen[addr] == seenInProgress {
+				panic(fmt.Sprintf("goai: %s: option key %q has a cyclic value (json.Marshal would fail)", caller, key))
+			}
+			if seen[addr] == seenDone {
+				return // diamond pattern: already validated via another path, safe to skip
+			}
+			seen[addr] = seenInProgress
+			checkJSONSerializable(caller, key, v.Elem(), seen, depth+1)
+			seen[addr] = seenDone
+		}
+	case reflect.Interface:
+		if !v.IsNil() {
+			checkJSONSerializable(caller, key, v.Elem(), seen, depth+1)
+		}
+	case reflect.Map:
+		if v.IsNil() {
+			return
+		}
+		// Validate key type: json.Marshal requires string or integer key types.
+		// Keys of other kinds (chan, func, struct, etc.) are not JSON-serializable.
+		// TextMarshaler keys are theoretically valid but are not expected in provider options.
+		kk := v.Type().Key().Kind()
+		switch kk {
+		case reflect.String,
+			reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+			// Valid JSON map key types.
+		default:
+			panic(fmt.Sprintf("goai: %s: option key %q has a map with non-JSON-serializable key type %s", caller, key, v.Type().Key()))
+		}
+		addr := v.Pointer()
+		if seen[addr] == seenInProgress {
+			panic(fmt.Sprintf("goai: %s: option key %q has a cyclic value (json.Marshal would fail)", caller, key))
+		}
+		if seen[addr] == seenDone {
+			return // diamond pattern: already validated via another path, safe to skip
+		}
+		seen[addr] = seenInProgress
+		for _, mk := range v.MapKeys() {
+			checkJSONSerializable(caller, key, v.MapIndex(mk), seen, depth+1)
+		}
+		seen[addr] = seenDone
+	case reflect.Slice, reflect.Array:
+		for i := range v.Len() {
+			checkJSONSerializable(caller, key, v.Index(i), seen, depth+1)
+		}
+	case reflect.Struct:
+		t := v.Type()
+		for i := range t.NumField() {
+			f := t.Field(i)
+			// Skip unexported non-anonymous fields: json.Marshal ignores them.
+			// Anonymous (embedded) fields are included even if the embedding field name is
+			// unexported, because json.Marshal promotes their exported fields into the outer struct.
+			if !f.IsExported() && !f.Anonymous {
+				continue
+			}
+			// Fields with the exact json tag value "-" are skipped by json.Marshal; do not validate them.
+			// Note: json:"-," (comma suffix) means the field name IS "-" and IS marshaled ;  not skipped here.
+			if f.Tag.Get("json") == "-" {
+				continue
+			}
+			checkJSONSerializable(caller, key, v.Field(i), seen, depth+1)
+		}
+	}
 }

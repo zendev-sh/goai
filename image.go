@@ -78,8 +78,12 @@ func WithImagePrompt(prompt string) ImageOption {
 }
 
 // WithImageCount sets the number of images to generate.
+// Values below 1 are clamped to 1 (minimum one image).
 func WithImageCount(n int) ImageOption {
 	return func(o *imageOptions) {
+		if n < 1 {
+			n = 1
+		}
 		o.n = n
 	}
 }
@@ -99,15 +103,21 @@ func WithAspectRatio(ratio string) ImageOption {
 }
 
 // WithImageProviderOptions sets provider-specific options.
+// Values must be JSON-serializable (no channels, functions, or unsafe pointers).
 func WithImageProviderOptions(opts map[string]any) ImageOption {
+	validateProviderOptions("WithImageProviderOptions", opts)
 	return func(o *imageOptions) {
 		o.providerOptions = opts
 	}
 }
 
 // WithImageMaxRetries sets the maximum number of retries for transient errors.
+// Values below 0 are clamped to 0 (no retries).
 func WithImageMaxRetries(n int) ImageOption {
 	return func(o *imageOptions) {
+		if n < 0 {
+			n = 0
+		}
 		o.maxRetries = n
 	}
 }

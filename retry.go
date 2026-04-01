@@ -93,10 +93,13 @@ func withRetry[T any](ctx context.Context, maxRetries int, fn func() (T, error))
 		}
 		result, err = fn()
 	}
-	// Wrap the error only when all retries were consumed and the error is still retryable.
+	// Wrap the error only when all retries were consumed AND the error is still retryable.
+	// If the final error is non-retryable (e.g. a 400 returned on the last retry), it is
+	// returned unwrapped ;  "retries exhausted" would be misleading since the loop stopped
+	// due to non-retryability, not exhaustion of the retry budget.
 	// Non-retryable errors and errors returned when maxRetries==0 are returned unwrapped
 	// so callers can compare them directly (e.g. errors.Is / identity checks).
-	if err != nil && attempt == maxRetries && maxRetries > 0 {
+	if err != nil && attempt == maxRetries && maxRetries > 0 && retryable(err) {
 		return result, fmt.Errorf("goai: %d retries exhausted: %w", maxRetries, err)
 	}
 	return result, err

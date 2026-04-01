@@ -63,10 +63,13 @@ func Embed(ctx context.Context, model provider.EmbeddingModel, value string, opt
 		return nil, fmt.Errorf("goai: no embedding returned")
 	}
 
+	// Use Embeddings[0] for the single requested value; any extras are silently ignored.
+	// Embed's single-value contract does not require strict count equality.
+	// EmbedMany enforces strict equality (len != len(values) → error).
 	return &EmbedResult{
 		Embedding:        result.Embeddings[0],
 		Usage:            result.Usage,
-		ProviderMetadata: result.ProviderMetadata,
+		ProviderMetadata: mergeProviderMetadata([]embedChunkResult{{result: result}}),
 	}, nil
 }
 
@@ -111,7 +114,7 @@ func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []stri
 		return &EmbedManyResult{
 			Embeddings:       result.Embeddings,
 			Usage:            result.Usage,
-			ProviderMetadata: result.ProviderMetadata,
+			ProviderMetadata: mergeProviderMetadata([]embedChunkResult{{result: result}}),
 		}, nil
 	}
 
@@ -127,12 +130,7 @@ func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []stri
 		maxParallel = 4
 	}
 
-	type chunkResult struct {
-		result *provider.EmbedResult
-		err    error
-	}
-
-	results := make([]chunkResult, len(chunks))
+	results := make([]embedChunkResult, len(chunks))
 	sem := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
 
@@ -146,41 +144,76 @@ func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []stri
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
-				results[i] = chunkResult{err: ctx.Err()}
+				results[i] = embedChunkResult{err: ctx.Err()}
 				return
 			}
 
 			r, err := withRetry(ctx, o.MaxRetries, func() (*provider.EmbedResult, error) {
 				return model.DoEmbed(ctx, chunk, embedParams)
 			})
-			results[i] = chunkResult{result: r, err: err}
+			results[i] = embedChunkResult{result: r, err: err}
 		}(i, chunk)
 	}
 	wg.Wait()
 
-	// Combine results in order.
+	// Combine results in order, validating each chunk's embedding count.
+	// Per-chunk validation catches both under-delivery and compensating mismatches
+	// (over-delivery on one chunk paired with under-delivery on another), which would
+	// produce the correct aggregate count while silently corrupting the input→embedding mapping.
 	var allEmbeddings [][]float64
 	var totalUsage provider.Usage
-	for _, cr := range results {
+	for i, cr := range results {
 		if cr.err != nil {
 			return nil, cr.err
+		}
+		if len(cr.result.Embeddings) != len(chunks[i]) {
+			return nil, fmt.Errorf("goai: embedding count mismatch in chunk %d: got %d, expected %d", i, len(cr.result.Embeddings), len(chunks[i]))
 		}
 		allEmbeddings = append(allEmbeddings, cr.result.Embeddings...)
 		totalUsage = addUsage(totalUsage, cr.result.Usage)
 	}
+	// Note: no aggregate check needed here ;  per-chunk validation guarantees
+	// len(allEmbeddings) == sum(len(chunks[i])) == len(values) by induction.
 
-	if len(allEmbeddings) != len(values) {
-		return nil, fmt.Errorf("goai: embedding count mismatch: got %d, expected %d", len(allEmbeddings), len(values))
-	}
-
-	var providerMeta map[string]map[string]any
-	if results[0].result != nil {
-		providerMeta = results[0].result.ProviderMetadata
-	}
+	// At this point all cr.err == nil: the loop above returns on the first error,
+	// so mergeProviderMetadata only receives successfully-completed chunk results.
+	providerMeta := mergeProviderMetadata(results)
 
 	return &EmbedManyResult{
 		Embeddings:       allEmbeddings,
 		Usage:            totalUsage,
 		ProviderMetadata: providerMeta,
 	}, nil
+}
+
+type embedChunkResult struct {
+	result *provider.EmbedResult
+	err    error
+}
+
+// mergeProviderMetadata merges ProviderMetadata from all chunk results.
+// When multiple chunks set the same namespace key, later chunks (by slice index) win ; 
+// this is intentional last-write-wins semantics, not accumulation.
+// The returned outer map and each namespace's inner map are newly allocated.
+// Values stored within the inner maps are not deep-copied: if a value is a reference
+// type (map, slice, pointer), it shares underlying data with the original provider result.
+func mergeProviderMetadata(results []embedChunkResult) map[string]map[string]any {
+	var merged map[string]map[string]any
+	for _, cr := range results {
+		if cr.result == nil || cr.result.ProviderMetadata == nil {
+			continue
+		}
+		if merged == nil {
+			merged = make(map[string]map[string]any, len(cr.result.ProviderMetadata))
+		}
+		for ns, kv := range cr.result.ProviderMetadata {
+			if merged[ns] == nil {
+				merged[ns] = make(map[string]any, len(kv))
+			}
+			for k, v := range kv {
+				merged[ns][k] = v
+			}
+		}
+	}
+	return merged
 }
