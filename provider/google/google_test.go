@@ -2482,3 +2482,55 @@ func TestDoStream_ContextCancel_NoDoubleClose(t *testing.T) {
 	for range result.Stream {
 	}
 }
+
+// TestChat_PromptCachingIgnored verifies that passing PromptCaching=true to the Google
+// provider succeeds (warning is written to stderr, not returned as error).
+func TestChat_PromptCachingIgnored(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":2}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL(server.URL))
+
+	result, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		PromptCaching: true,
+	})
+	if err != nil {
+		t.Fatalf("DoGenerate unexpected error: %v", err)
+	}
+	if result.Text != "ok" {
+		t.Errorf("DoGenerate Text = %q, want ok", result.Text)
+	}
+
+	streamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, `data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":2}}`+"\n\n")
+	}))
+	defer streamServer.Close()
+
+	streamModel := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL(streamServer.URL))
+
+	streamResult, err := streamModel.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		PromptCaching: true,
+	})
+	if err != nil {
+		t.Fatalf("DoStream unexpected error: %v", err)
+	}
+	var texts []string
+	for chunk := range streamResult.Stream {
+		if chunk.Type == provider.ChunkText {
+			texts = append(texts, chunk.Text)
+		}
+	}
+	if len(texts) != 1 || texts[0] != "ok" {
+		t.Errorf("DoStream texts = %v, want [ok]", texts)
+	}
+}

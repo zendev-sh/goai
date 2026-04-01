@@ -548,6 +548,38 @@ func TestChat_Responses_Incomplete(t *testing.T) {
 	}
 }
 
+func TestChat_DoStream_PromptCachingWarning(t *testing.T) {
+	// Lines 145-147 in openai.go: DoStream logs a warning when PromptCaching is set
+	// because OpenAI does not support it. The call must still succeed.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"index\":0}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"index\":0,\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2}}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	model := Chat("gpt-4o", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		PromptCaching:   true,
+		ProviderOptions: chatCompletionsOpts,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var text string
+	for chunk := range result.Stream {
+		text += chunk.Text
+	}
+	if text == "" {
+		t.Error("expected non-empty text from stream")
+	}
+}
+
 func TestChat_Responses_Reasoning(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

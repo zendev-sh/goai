@@ -1966,3 +1966,25 @@ func TestStreamObject_OnResponsePanicRecovery(t *testing.T) {
 		t.Errorf("Object.Name = %q, want Carol", result.Object.Name)
 	}
 }
+
+func TestGenerateObject_EmptyPrompt(t *testing.T) {
+	model := &mockModel{id: "test"}
+	_, err := GenerateObject[simpleObject](t.Context(), model)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "prompt or messages must not be empty") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestStreamObject_EmptyPrompt(t *testing.T) {
+	model := &mockModel{id: "test"}
+	_, err := StreamObject[simpleObject](t.Context(), model)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "prompt or messages must not be empty") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}

@@ -1995,3 +1995,56 @@ func TestEmbedding_ResponseModelPopulated(t *testing.T) {
 		t.Errorf("Response.Model = %q, want %q", result.Response.Model, "embed-v4.0")
 	}
 }
+
+// TestChat_PromptCachingIgnored verifies that passing PromptCaching=true to the Cohere
+// provider succeeds (warning is written to stderr, not returned as error).
+func TestChat_PromptCachingIgnored(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"123","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"finish_reason":"COMPLETE","usage":{"tokens":{"input_tokens":5,"output_tokens":2}}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("command-r-plus", WithAPIKey("test-key"), WithBaseURL(server.URL))
+
+	result, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		PromptCaching: true,
+	})
+	if err != nil {
+		t.Fatalf("DoGenerate unexpected error: %v", err)
+	}
+	if result.Text != "ok" {
+		t.Errorf("DoGenerate Text = %q, want ok", result.Text)
+	}
+
+	streamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"content-delta\",\"delta\":{\"message\":{\"content\":{\"text\":\"ok\"}}}}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"message-end\",\"finish_reason\":\"COMPLETE\",\"usage\":{\"tokens\":{\"input_tokens\":5,\"output_tokens\":2}}}\n\n")
+	}))
+	defer streamServer.Close()
+
+	streamModel := Chat("command-r-plus", WithAPIKey("test-key"), WithBaseURL(streamServer.URL))
+
+	streamResult, err := streamModel.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		PromptCaching: true,
+	})
+	if err != nil {
+		t.Fatalf("DoStream unexpected error: %v", err)
+	}
+	var texts []string
+	for chunk := range streamResult.Stream {
+		if chunk.Type == provider.ChunkText {
+			texts = append(texts, chunk.Text)
+		}
+	}
+	if len(texts) != 1 || texts[0] != "ok" {
+		t.Errorf("DoStream texts = %v, want [ok]", texts)
+	}
+}

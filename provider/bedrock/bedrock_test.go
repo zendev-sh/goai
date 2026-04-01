@@ -4480,6 +4480,46 @@ func TestDoStream_InputTokensNetOfCacheRead(t *testing.T) {
 	}
 }
 
+func TestDoStream_InputTokensNetOfCacheRead_NoUnderflow(t *testing.T) {
+	// Streaming path: provider returns inputTokens=50, cacheReadInputTokens=200.
+	// 50-200=-150 would underflow; the clamp at converse.go:702-703 must set InputTokens=0.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
+		_, _ = w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"hi"}}`)))
+		_, _ = w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
+		_, _ = w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{
+			"inputTokens":50,
+			"outputTokens":10,
+			"totalTokens":60,
+			"cacheReadInputTokens":200,
+			"cacheWriteInputTokens":0
+		}}`)))
+	}))
+	defer server.Close()
+
+	model := Chat("m", WithAccessKey("AK"), WithSecretKey("SK"), WithBaseURL(server.URL))
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var finishUsage provider.Usage
+	for chunk := range result.Stream {
+		if chunk.Type == provider.ChunkFinish {
+			finishUsage = chunk.Usage
+		}
+	}
+	if finishUsage.InputTokens != 0 {
+		t.Errorf("streaming InputTokens = %d, want 0 (clamped from negative)", finishUsage.InputTokens)
+	}
+	if finishUsage.CacheReadTokens != 200 {
+		t.Errorf("streaming CacheReadTokens = %d, want 200", finishUsage.CacheReadTokens)
+	}
+}
+
 // --- Issue 3: DoStream ResponseFormat tool-to-text conversion ---
 
 func TestDoStream_ResponseFormat_ToolToText(t *testing.T) {

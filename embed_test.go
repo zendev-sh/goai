@@ -794,6 +794,62 @@ func TestEmbedMany_ChunkingPreservesOrder(t *testing.T) {
 	}
 }
 
+func TestEmbedMany_ContextCancelDuringSemaphore(t *testing.T) {
+	// Covers embed.go:172-174: the select case <-ctx.Done() while waiting for the semaphore.
+	// We use maxPerCall=1 to produce many chunks and MaxParallelCalls=1 so all but one goroutine
+	// block on the semaphore. The first chunk holds the semaphore while we cancel the context,
+	// forcing the blocked goroutines to take the ctx.Done() path.
+	started := make(chan struct{})
+	unblock := make(chan struct{})
+
+	model := &mockEmbeddingModel{
+		modelID:    "test-embed",
+		maxPerCall: 1,
+		embedFn: func(ctx context.Context, values []string) (*provider.EmbedResult, error) {
+			// Signal that this goroutine entered DoEmbed, then block until told to proceed.
+			select {
+			case started <- struct{}{}:
+			default:
+			}
+			select {
+			case <-unblock:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			embeddings := make([][]float64, len(values))
+			for i := range values {
+				embeddings[i] = []float64{1.0}
+			}
+			return &provider.EmbedResult{Embeddings: embeddings}, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// 5 values, maxPerCall=1 => 5 chunks; MaxParallelCalls=1 means only 1 runs at a time.
+	// The first goroutine acquires the semaphore and blocks inside embedFn.
+	// The remaining 4 goroutines block on the semaphore select (the path we want to cover).
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := EmbedMany(ctx, model, []string{"a", "b", "c", "d", "e"}, WithMaxParallelCalls(1))
+		errCh <- err
+	}()
+
+	// Wait for the first goroutine to enter embedFn, then cancel the context.
+	<-started
+	cancel()
+	// Unblock the first goroutine so it exits cleanly.
+	close(unblock)
+
+	err := <-errCh
+	if err == nil {
+		t.Fatal("expected context error, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %v, want context.Canceled", err)
+	}
+}
+
 func TestEmbedMany_EmptyValues(t *testing.T) {
 	model := &mockEmbeddingModel{
 		modelID:    "test-embed",

@@ -802,3 +802,57 @@ func TestResolveURL_InvalidProject(t *testing.T) {
 		t.Errorf("unexpected error: %s", err)
 	}
 }
+
+// TestChat_PromptCachingIgnored verifies that passing PromptCaching=true to the Vertex
+// provider succeeds (warning is written to stderr, not returned as error).
+func TestChat_PromptCachingIgnored(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"chatcmpl-test","model":"test-model","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("gemini-2.5-pro", WithTokenSource(provider.StaticToken("test-token")), WithBaseURL(server.URL))
+
+	result, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		PromptCaching: true,
+	})
+	if err != nil {
+		t.Fatalf("DoGenerate unexpected error: %v", err)
+	}
+	if result.Text != "ok" {
+		t.Errorf("DoGenerate Text = %q, want ok", result.Text)
+	}
+
+	streamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"index\":0}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"index\":0,\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2}}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer streamServer.Close()
+
+	streamModel := Chat("gemini-2.5-pro", WithTokenSource(provider.StaticToken("test-token")), WithBaseURL(streamServer.URL))
+
+	streamResult, err := streamModel.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		PromptCaching: true,
+	})
+	if err != nil {
+		t.Fatalf("DoStream unexpected error: %v", err)
+	}
+	var texts []string
+	for chunk := range streamResult.Stream {
+		if chunk.Type == provider.ChunkText {
+			texts = append(texts, chunk.Text)
+		}
+	}
+	if len(texts) != 1 || texts[0] != "ok" {
+		t.Errorf("DoStream texts = %v, want [ok]", texts)
+	}
+}

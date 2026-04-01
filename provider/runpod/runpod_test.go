@@ -309,3 +309,44 @@ func TestEndpointIDInURL(t *testing.T) {
 		t.Errorf("baseURL = %q, want %q", cm.opts.baseURL, expected)
 	}
 }
+
+func TestChat_PromptCachingIgnored(t *testing.T) {
+	// DoGenerate with JSON server
+	genServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"chatcmpl-test","model":"meta-llama/Llama-3.3-70B-Instruct","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}`)
+	}))
+	defer genServer.Close()
+
+	genModel := Chat("ep-abc123", "meta-llama/Llama-3.3-70B-Instruct", WithAPIKey("test-key"), WithBaseURL(genServer.URL+"/openai/v1"))
+	genResult, err := genModel.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages:      []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+		PromptCaching: true,
+	})
+	if err != nil {
+		t.Fatalf("DoGenerate unexpected error: %v", err)
+	}
+	if genResult.Text != "ok" {
+		t.Errorf("DoGenerate Text = %q, want ok", genResult.Text)
+	}
+
+	// DoStream with SSE server
+	streamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"index\":0}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"index\":0,\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2}}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer streamServer.Close()
+
+	streamModel := Chat("ep-abc123", "meta-llama/Llama-3.3-70B-Instruct", WithAPIKey("test-key"), WithBaseURL(streamServer.URL+"/openai/v1"))
+	streamResult, err := streamModel.DoStream(t.Context(), provider.GenerateParams{
+		Messages:      []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+		PromptCaching: true,
+	})
+	if err != nil {
+		t.Fatalf("DoStream unexpected error: %v", err)
+	}
+	for range streamResult.Stream {
+	}
+}

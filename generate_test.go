@@ -3978,3 +3978,375 @@ func TestStreamText_ToolLoop_DrainStepChunkReasoningSource(t *testing.T) {
 		t.Errorf("Steps[0].Text = %q, want answer", result.Steps[0].Text)
 	}
 }
+
+// --- Empty prompt validation tests ---
+
+func TestGenerateText_EmptyPrompt(t *testing.T) {
+	model := &mockModel{id: "test"}
+	_, err := GenerateText(t.Context(), model)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "prompt or messages must not be empty") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestStreamText_EmptyPrompt(t *testing.T) {
+	model := &mockModel{id: "test"}
+	_, err := StreamText(t.Context(), model)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "prompt or messages must not be empty") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// --- Hook panic recovery tests ---
+
+func TestStreamText_OnStepFinishPanic(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "hello"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("hi"),
+		WithOnStepFinish(func(_ StepResult) {
+			panic("hook panic")
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for range stream.Stream() {
+	}
+
+	result := stream.Result()
+	if stream.Err() != nil {
+		t.Fatalf("unexpected error: %v", stream.Err())
+	}
+	if result.Text != "hello" {
+		t.Errorf("Text = %q, want %q", result.Text, "hello")
+	}
+}
+
+func TestStreamText_OnResponsePanic(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "hello"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("hi"),
+		WithOnResponse(func(_ ResponseInfo) {
+			panic("hook panic")
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for range stream.Stream() {
+	}
+
+	result := stream.Result()
+	if stream.Err() != nil {
+		t.Fatalf("unexpected error: %v", stream.Err())
+	}
+	if result.Text != "hello" {
+		t.Errorf("Text = %q, want %q", result.Text, "hello")
+	}
+}
+
+func TestGenerateText_OnStepFinishPanic(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         "ok",
+				FinishReason: provider.FinishStop,
+			}, nil
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("hi"),
+		WithOnStepFinish(func(_ StepResult) {
+			panic("hook panic")
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "ok" {
+		t.Errorf("Text = %q, want %q", result.Text, "ok")
+	}
+}
+
+func TestGenerateText_OnResponsePanic(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         "ok",
+				FinishReason: provider.FinishStop,
+			}, nil
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("hi"),
+		WithOnResponse(func(_ ResponseInfo) {
+			panic("hook panic")
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "ok" {
+		t.Errorf("Text = %q, want %q", result.Text, "ok")
+	}
+}
+
+// --- buildToolMap empty name test ---
+
+func TestBuildToolMap_EmptyToolName(t *testing.T) {
+	called := false
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			called = true
+			return &provider.GenerateResult{
+				Text:         "done",
+				FinishReason: provider.FinishStop,
+			}, nil
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("hi"),
+		WithTools(
+			Tool{
+				Name:    "",
+				Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "bad", nil },
+			},
+			Tool{
+				Name:    "valid",
+				Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+			},
+		),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Error("model generateFn was not called")
+	}
+	if result.Text != "done" {
+		t.Errorf("Text = %q, want %q", result.Text, "done")
+	}
+}
+
+// TestStreamText_ToolLoop_OnRequestPanic verifies that a panicking OnRequest
+// hook on step 2+ is safely recovered: the process does not crash and the
+// stream still delivers the final text from step 2.
+func TestStreamText_ToolLoop_OnRequestPanic(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "mytool", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "done"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 20, OutputTokens: 4}},
+			), nil
+		},
+	}
+
+	// hookCall counts OnRequest invocations; the hook only panics on step 2+
+	// because step 1 fires OnRequest outside the goroutine without recovery.
+	var hookCall atomic.Int32
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "mytool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "result", nil
+			},
+		}),
+		WithOnRequest(func(_ RequestInfo) {
+			if hookCall.Add(1) >= 2 {
+				panic("onrequest hook exploded on step 2+")
+			}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if err := stream.Err(); err != nil {
+		t.Fatalf("unexpected stream error: %v", err)
+	}
+	if !strings.Contains(result.Text, "done") {
+		t.Errorf("Text = %q, want containing 'done'", result.Text)
+	}
+}
+
+// TestStreamText_ToolLoop_OnResponsePanicOnError verifies that a panicking
+// OnResponse hook fired after a step 2+ DoStream error is safely recovered
+// and the stream reports the underlying error via stream.Err().
+func TestStreamText_ToolLoop_OnResponsePanicOnError(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "mytool", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return nil, errors.New("step 2 failed")
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "mytool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "result", nil
+			},
+		}),
+		WithOnResponse(func(_ ResponseInfo) {
+			panic("onresponse hook exploded")
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stream.Result()
+	if stream.Err() == nil {
+		t.Error("expected non-nil stream error from step 2 DoStream failure")
+	}
+}
+
+// TestStreamText_ToolLoop_OnResponsePanicOnSuccess verifies that a panicking
+// OnResponse hook fired after a successful step 2+ drain is safely recovered
+// and the stream still delivers the final text.
+func TestStreamText_ToolLoop_OnResponsePanicOnSuccess(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "mytool", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "final"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 20, OutputTokens: 5}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "mytool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "result", nil
+			},
+		}),
+		WithOnResponse(func(_ ResponseInfo) {
+			panic("onresponse hook exploded")
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if err := stream.Err(); err != nil {
+		t.Fatalf("unexpected stream error: %v", err)
+	}
+	if !strings.Contains(result.Text, "final") {
+		t.Errorf("Text = %q, want containing 'final'", result.Text)
+	}
+}
+
+// TestStreamText_ToolLoop_OnStepFinishPanic verifies that a panicking
+// OnStepFinish hook on step 2+ is safely recovered and the stream still
+// delivers the final text.
+func TestStreamText_ToolLoop_OnStepFinishPanic(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "mytool", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "final"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 20, OutputTokens: 5}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "mytool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "result", nil
+			},
+		}),
+		WithOnStepFinish(func(_ StepResult) {
+			panic("onstepfinish hook exploded")
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := stream.Result()
+	if err := stream.Err(); err != nil {
+		t.Fatalf("unexpected stream error: %v", err)
+	}
+	if !strings.Contains(result.Text, "final") {
+		t.Errorf("Text = %q, want containing 'final'", result.Text)
+	}
+}

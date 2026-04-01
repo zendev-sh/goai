@@ -790,16 +790,23 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		})
 
 		if o.OnResponse != nil {
-			info := ResponseInfo{Latency: time.Since(start), Error: err}
-			if err == nil {
-				info.Usage = result.Usage
-				info.FinishReason = result.FinishReason
-			}
-			var apiErr *APIError
-			if errors.As(err, &apiErr) {
-				info.StatusCode = apiErr.StatusCode
-			}
-			o.OnResponse(info)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+					}
+				}()
+				info := ResponseInfo{Latency: time.Since(start), Error: err}
+				if err == nil {
+					info.Usage = result.Usage
+					info.FinishReason = result.FinishReason
+				}
+				var apiErr *APIError
+				if errors.As(err, &apiErr) {
+					info.StatusCode = apiErr.StatusCode
+				}
+				o.OnResponse(info)
+			}()
 		}
 
 		if err != nil {
