@@ -145,6 +145,7 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 	return &provider.EmbedResult{
 		Embeddings: embeddings,
 		Usage:      provider.Usage{InputTokens: totalTokens},
+		Response:   provider.ResponseMetadata{Model: m.id},
 	}, nil
 }
 

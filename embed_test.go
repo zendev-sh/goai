@@ -486,7 +486,7 @@ func TestEmbedMany_RetryExhausted(t *testing.T) {
 	// as "retries exhausted" when all retries are consumed and the final error is retryable.
 	// Uses 2 values with maxPerCall=1 (len(values) > maxPerCall) to force the chunked goroutine
 	// path. EmbedMany's wg.Wait() waits for all goroutines to complete before returning,
-	// so call counts are deterministic: 2 chunks × 2 calls each (initial + 1 retry) = 4 total.
+	// so call counts are deterministic: 2 chunks x 2 calls each (initial + 1 retry) = 4 total.
 	var callCount atomic.Int32
 	model := &mockEmbeddingModel{
 		modelID:    "test-embed",
@@ -506,14 +506,19 @@ func TestEmbedMany_RetryExhausted(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	// 2 chunks × (1 initial + 1 retry) = 4 total calls; wg.Wait() guarantees all complete.
+	// 2 chunks x (1 initial + 1 retry) = 4 total calls; wg.Wait() guarantees all complete.
 	if callCount.Load() != 4 {
-		t.Errorf("expected 4 calls (2 chunks × 2 attempts), got %d", callCount.Load())
+		t.Errorf("expected 4 calls (2 chunks x 2 attempts), got %d", callCount.Load())
+	}
+	// Error is wrapped with chunk context.
+	if !strings.Contains(err.Error(), "chunk") {
+		t.Errorf("expected chunk context in error, got: %v", err)
 	}
 	// withRetry wraps when all retries exhausted and final error is retryable.
 	if !strings.Contains(err.Error(), "retries exhausted") {
 		t.Errorf("expected 'retries exhausted' wrapper, got: %v", err)
 	}
+	// errors.As still works through the chunk wrapping.
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected *APIError in error chain, got %T", err)

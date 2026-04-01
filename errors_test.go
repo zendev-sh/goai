@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestIsOverflow(t *testing.T) {
@@ -295,6 +296,34 @@ func TestExtractErrorMessage_BodyTruncation(t *testing.T) {
 	}
 	if !strings.Contains(apiErr.Message, "...") {
 		t.Errorf("expected ... in truncated message, got %q", apiErr.Message)
+	}
+}
+
+func TestExtractErrorMessage_MultiByte(t *testing.T) {
+	// Build a body of 201 Japanese characters (each is 3 bytes in UTF-8).
+	// Byte-based truncation at 200 would split a multi-byte sequence, producing invalid UTF-8.
+	// Rune-based truncation must produce valid UTF-8 and exactly 200 runes before the "...".
+	rune200 := []rune("あ") // single 3-byte rune
+	body := make([]rune, 201)
+	for i := range body {
+		body[i] = rune200[0]
+	}
+	bodyBytes := []byte(string(body))
+
+	err := ParseHTTPError("test", 502, bodyBytes)
+
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected APIError, got %T", err)
+	}
+	// The message format is "502 Bad Gateway: <truncated_body>..."
+	// Verify it ends with "..." (was truncated).
+	if !strings.HasSuffix(apiErr.Message, "...") {
+		t.Errorf("expected message to end with '...', got %q", apiErr.Message)
+	}
+	// Verify the result is valid UTF-8 (byte truncation would produce invalid UTF-8 here).
+	if !utf8.ValidString(apiErr.Message) {
+		t.Error("message contains invalid UTF-8 after truncation")
 	}
 }
 

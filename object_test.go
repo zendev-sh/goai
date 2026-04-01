@@ -1907,3 +1907,62 @@ func TestGenerateObject_ToolLoop_OnToolCallStart(t *testing.T) {
 		t.Errorf("Input = %s, want {\"city\":\"NYC\"}", info.Input)
 	}
 }
+
+// TestGenerateObject_OnStepFinishPanicRecovery verifies that a panicking
+// OnStepFinish hook in GenerateObject is recovered and does not crash the caller.
+func TestGenerateObject_OnStepFinishPanicRecovery(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         `{"name":"Dave","age":50}`,
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 3, OutputTokens: 3},
+			}, nil
+		},
+	}
+
+	result, err := GenerateObject[simpleObject](t.Context(), model,
+		WithPrompt("generate"),
+		WithOnStepFinish(func(_ StepResult) { panic("test panic in OnStepFinish") }),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Object.Name != "Dave" {
+		t.Errorf("Object.Name = %q, want Dave", result.Object.Name)
+	}
+}
+
+// TestStreamObject_OnResponsePanicRecovery verifies that a panicking OnResponse
+// hook in ObjectStream.consume is recovered and does not crash the caller.
+func TestStreamObject_OnResponsePanicRecovery(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: `{"name":"Carol","age":40}`},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 5, OutputTokens: 5}},
+			), nil
+		},
+	}
+
+	panicHook := func(_ ResponseInfo) { panic("test panic in OnResponse") }
+
+	stream, err := StreamObject[simpleObject](t.Context(), model,
+		WithPrompt("generate"),
+		WithOnResponse(panicHook),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Panic is recovered inside consume(); result should be returned cleanly.
+	result, err := stream.Result()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Object.Name != "Carol" {
+		t.Errorf("Object.Name = %q, want Carol", result.Object.Name)
+	}
+}

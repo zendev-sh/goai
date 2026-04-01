@@ -124,6 +124,7 @@ func (m *embeddingModel) doTitanEmbed(ctx context.Context, value string, params 
 	return &provider.EmbedResult{
 		Embeddings: [][]float64{result.Embedding},
 		Usage:      provider.Usage{InputTokens: result.InputTextTokenCount, TotalTokens: result.InputTextTokenCount},
+		Response:   provider.ResponseMetadata{Model: m.id},
 	}, nil
 }
 
@@ -161,6 +162,7 @@ func (m *embeddingModel) doTitanMultimodalEmbed(ctx context.Context, value strin
 	return &provider.EmbedResult{
 		Embeddings: [][]float64{result.Embedding},
 		Usage:      provider.Usage{InputTokens: result.InputTextTokenCount, TotalTokens: result.InputTextTokenCount},
+		Response:   provider.ResponseMetadata{Model: m.id},
 	}, nil
 }
 
@@ -219,6 +221,7 @@ func (m *embeddingModel) doNovaEmbed(ctx context.Context, value string, params p
 	}
 	return &provider.EmbedResult{
 		Embeddings: [][]float64{result.Embeddings[0].Embedding},
+		Response:   provider.ResponseMetadata{Model: m.id},
 	}, nil
 }
 
@@ -257,6 +260,7 @@ func (m *embeddingModel) doMarengoEmbed(ctx context.Context, value string, param
 	}
 	return &provider.EmbedResult{
 		Embeddings: [][]float64{embedding},
+		Response:   provider.ResponseMetadata{Model: m.id},
 	}, nil
 }
 
@@ -316,7 +320,10 @@ func (m *embeddingModel) doCohereEmbed(ctx context.Context, values []string, par
 	if err != nil {
 		return nil, fmt.Errorf("parsing embeddings: %w", err)
 	}
-	return &provider.EmbedResult{Embeddings: embeddings}, nil
+	return &provider.EmbedResult{
+		Embeddings: embeddings,
+		Response:   provider.ResponseMetadata{Model: m.id},
+	}, nil
 }
 
 // parseCohereEmbeddings handles both Cohere v3 (flat array) and v4 ({"float": [...]}) formats.

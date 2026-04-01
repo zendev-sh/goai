@@ -20,6 +20,9 @@ type EmbedResult struct {
 
 	// ProviderMetadata contains provider-specific response data.
 	ProviderMetadata map[string]map[string]any
+
+	// Response contains provider-specific response metadata (ID, model, headers).
+	Response provider.ResponseMetadata
 }
 
 // EmbedManyResult is the result of multiple embedding generations.
@@ -32,6 +35,10 @@ type EmbedManyResult struct {
 
 	// ProviderMetadata contains provider-specific response data.
 	ProviderMetadata map[string]map[string]any
+
+	// Response contains provider-specific response metadata from the first chunk.
+	// When multiple chunks are used, only the first chunk's response is included.
+	Response provider.ResponseMetadata
 }
 
 // Embed generates an embedding vector for a single value.
@@ -70,6 +77,7 @@ func Embed(ctx context.Context, model provider.EmbeddingModel, value string, opt
 		Embedding:        result.Embeddings[0],
 		Usage:            result.Usage,
 		ProviderMetadata: mergeProviderMetadata([]embedChunkResult{{result: result}}),
+		Response:         result.Response,
 	}, nil
 }
 
@@ -115,6 +123,7 @@ func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []stri
 			Embeddings:       result.Embeddings,
 			Usage:            result.Usage,
 			ProviderMetadata: mergeProviderMetadata([]embedChunkResult{{result: result}}),
+			Response:         result.Response,
 		}, nil
 	}
 
@@ -131,30 +140,48 @@ func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []stri
 	}
 
 	results := make([]embedChunkResult, len(chunks))
-	sem := make(chan struct{}, maxParallel)
-	var wg sync.WaitGroup
 
-	for i, chunk := range chunks {
-		wg.Add(1)
-		go func(i int, chunk []string) {
-			defer wg.Done()
-			// Use select to avoid blocking forever if ctx is cancelled
-			// while waiting for the semaphore.
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-			case <-ctx.Done():
-				results[i] = embedChunkResult{err: ctx.Err()}
-				return
+	// Fast path: sequential execution when maxParallel==1.
+	// Avoids goroutine overhead and simplifies context cancellation handling.
+	// Note: len(chunks)==1 cannot occur here because this code is only reached
+	// when len(values) > maxPerCall > 0, guaranteeing at least 2 chunks.
+	if maxParallel == 1 {
+		for i, chunk := range chunks {
+			if err := ctx.Err(); err != nil {
+				results[i] = embedChunkResult{err: err}
+				continue
 			}
-
 			r, err := withRetry(ctx, o.MaxRetries, func() (*provider.EmbedResult, error) {
 				return model.DoEmbed(ctx, chunk, embedParams)
 			})
 			results[i] = embedChunkResult{result: r, err: err}
-		}(i, chunk)
+		}
+	} else {
+		sem := make(chan struct{}, maxParallel)
+		var wg sync.WaitGroup
+
+		for i, chunk := range chunks {
+			wg.Add(1)
+			go func(i int, chunk []string) {
+				defer wg.Done()
+				// Use select to avoid blocking forever if ctx is cancelled
+				// while waiting for the semaphore.
+				select {
+				case sem <- struct{}{}:
+					defer func() { <-sem }()
+				case <-ctx.Done():
+					results[i] = embedChunkResult{err: ctx.Err()}
+					return
+				}
+
+				r, err := withRetry(ctx, o.MaxRetries, func() (*provider.EmbedResult, error) {
+					return model.DoEmbed(ctx, chunk, embedParams)
+				})
+				results[i] = embedChunkResult{result: r, err: err}
+			}(i, chunk)
+		}
+		wg.Wait()
 	}
-	wg.Wait()
 
 	// Combine results in order, validating each chunk's embedding count.
 	// Per-chunk validation catches both under-delivery and compensating mismatches
@@ -164,7 +191,7 @@ func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []stri
 	var totalUsage provider.Usage
 	for i, cr := range results {
 		if cr.err != nil {
-			return nil, cr.err
+			return nil, fmt.Errorf("goai: chunk %d/%d: %w", i+1, len(chunks), cr.err)
 		}
 		if len(cr.result.Embeddings) != len(chunks[i]) {
 			return nil, fmt.Errorf("goai: embedding count mismatch in chunk %d: got %d, expected %d", i, len(cr.result.Embeddings), len(chunks[i]))
@@ -179,10 +206,21 @@ func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []stri
 	// so mergeProviderMetadata only receives successfully-completed chunk results.
 	providerMeta := mergeProviderMetadata(results)
 
+	// Use the first successful chunk's Response for metadata (ID, model, headers).
+	// For single-chunk paths this is always populated; for multi-chunk the first chunk is used.
+	var firstResponse provider.ResponseMetadata
+	for _, cr := range results {
+		if cr.result != nil {
+			firstResponse = cr.result.Response
+			break
+		}
+	}
+
 	return &EmbedManyResult{
 		Embeddings:       allEmbeddings,
 		Usage:            totalUsage,
 		ProviderMetadata: providerMeta,
+		Response:         firstResponse,
 	}, nil
 }
 

@@ -2582,3 +2582,125 @@ func (r *slowErrorReader) Read(p []byte) (int, error) {
 	r.pos += n
 	return n, nil
 }
+
+// TestParseSSE_ScannerError_EmitsChunkFinish verifies that when scanner.Err()
+// fires (truncated stream), a ChunkFinish is emitted after the ChunkError.
+func TestParseSSE_ScannerError_EmitsChunkFinish(t *testing.T) {
+	// The stream has a message_start (providing input tokens), a text delta,
+	// then a read error. The parser should emit: text chunk, error chunk, finish chunk.
+	input := "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_err\",\"model\":\"sonnet-test\",\"usage\":{\"input_tokens\":10}}}\n" +
+		"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n"
+
+	r := &slowErrorReader{
+		data: input,
+		err:  fmt.Errorf("simulated read error"),
+	}
+
+	out := make(chan provider.StreamChunk, 16)
+	parseSSE(t.Context(), r, out, false)
+
+	var chunks []provider.StreamChunk
+	for c := range out {
+		chunks = append(chunks, c)
+	}
+
+	// Expect at least: text, error, finish.
+	if len(chunks) < 3 {
+		t.Fatalf("expected at least 3 chunks (text, error, finish), got %d: %+v", len(chunks), chunks)
+	}
+
+	var errorIdx, finishIdx int = -1, -1
+	for i, c := range chunks {
+		if c.Type == provider.ChunkError && errorIdx == -1 {
+			errorIdx = i
+		}
+		if c.Type == provider.ChunkFinish {
+			finishIdx = i
+		}
+	}
+	if errorIdx == -1 {
+		t.Fatal("no ChunkError found")
+	}
+	if finishIdx == -1 {
+		t.Fatal("no ChunkFinish found after scanner error")
+	}
+	if finishIdx <= errorIdx {
+		t.Errorf("ChunkFinish (index %d) should come after ChunkError (index %d)", finishIdx, errorIdx)
+	}
+
+	// Verify usage is propagated (input_tokens was in the stream).
+	finish := chunks[finishIdx]
+	if finish.Usage.InputTokens != 10 {
+		t.Errorf("finish.Usage.InputTokens = %d, want 10", finish.Usage.InputTokens)
+	}
+	// Verify FinishReason is "error" on scanner error path.
+	if finish.FinishReason != "error" {
+		t.Errorf("finish.FinishReason = %q, want \"error\"", finish.FinishReason)
+	}
+	// Verify Response.Model is propagated from the message_start event.
+	if finish.Response.Model != "sonnet-test" {
+		t.Errorf("finish.Response.Model = %q, want \"sonnet-test\"", finish.Response.Model)
+	}
+}
+
+// TestParseSSE_CleanEOF_EmitsChunkFinish verifies that when the stream ends
+// without a message_stop event, a ChunkFinish is still emitted (clean-EOF path).
+func TestParseSSE_CleanEOF_EmitsChunkFinish(t *testing.T) {
+	input := "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_eof\",\"model\":\"sonnet-eof\",\"usage\":{\"input_tokens\":7}}}\n\n" +
+		"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n"
+	// Stream ends without message_stop (clean EOF).
+
+	out := make(chan provider.StreamChunk, 16)
+	parseSSE(t.Context(), strings.NewReader(input), out, false)
+
+	var chunks []provider.StreamChunk
+	for c := range out {
+		chunks = append(chunks, c)
+	}
+
+	var finish *provider.StreamChunk
+	for i := range chunks {
+		if chunks[i].Type == provider.ChunkFinish {
+			finish = &chunks[i]
+		}
+	}
+	if finish == nil {
+		t.Fatal("no ChunkFinish emitted on clean EOF")
+	}
+	if finish.Response.Model != "sonnet-eof" {
+		t.Errorf("finish.Response.Model = %q, want \"sonnet-eof\"", finish.Response.Model)
+	}
+}
+
+// TestDoStream_ContextCancel_NoDoubleClose verifies that cancelling the context
+// does not cause a panic or double-close of resp.Body.
+func TestDoStream_ContextCancel_NoDoubleClose(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		// Flush a chunk then block indefinitely to simulate a stalled server.
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n")
+		w.(http.Flusher).Flush()
+		// Block until client disconnects.
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"), WithBaseURL(server.URL))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	result, err := model.DoStream(ctx, provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Cancel context while stream is in progress.
+	cancel()
+
+	// Drain the channel; this should not panic or deadlock.
+	for range result.Stream {
+	}
+}

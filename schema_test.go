@@ -702,6 +702,33 @@ func TestTypeToSchema_EmbeddedStructCycleDetection(t *testing.T) {
 	}
 }
 
+// RecursiveSlice is a slice of itself; SchemaFrom must not stack-overflow.
+type RecursiveSlice []RecursiveSlice
+
+func TestSchemaFrom_RecursiveSlice(t *testing.T) {
+	// Must not panic or stack-overflow. Returns a valid array schema.
+	raw := SchemaFrom[RecursiveSlice]()
+	if !json.Valid(raw) {
+		t.Fatal("SchemaFrom[RecursiveSlice] returned invalid JSON")
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if schema["type"] != "array" {
+		t.Errorf("expected type array, got %v", schema["type"])
+	}
+}
+
+func TestSchemaFrom_CacheReturnsSameValue(t *testing.T) {
+	// Two calls must return equal results (and the second hits the cache).
+	first := SchemaFrom[Person]()
+	second := SchemaFrom[Person]()
+	if string(first) != string(second) {
+		t.Errorf("cached schema differs: first=%s second=%s", first, second)
+	}
+}
+
 func TestSchemaFrom_MarshalFailurePanics(t *testing.T) {
 	// Inject a failing marshal function to cover the panic path.
 	orig := schemaMarshalFunc

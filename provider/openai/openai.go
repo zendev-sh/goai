@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/internal/httpc"
@@ -131,6 +132,9 @@ func (m *chatModel) Capabilities() provider.ModelCapabilities {
 }
 
 func (m *chatModel) DoGenerate(ctx context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
+	if params.PromptCaching {
+		fmt.Fprintf(os.Stderr, "goai: openai: WithPromptCaching is not supported and will be ignored\n")
+	}
 	if m.shouldUseResponsesAPI(params) {
 		return m.doGenerateResponses(ctx, params)
 	}
@@ -138,6 +142,9 @@ func (m *chatModel) DoGenerate(ctx context.Context, params provider.GeneratePara
 }
 
 func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams) (*provider.StreamResult, error) {
+	if params.PromptCaching {
+		fmt.Fprintf(os.Stderr, "goai: openai: WithPromptCaching is not supported and will be ignored\n")
+	}
 	if m.shouldUseResponsesAPI(params) {
 		return m.doStreamResponses(ctx, params)
 	}
@@ -159,7 +166,9 @@ func (m *chatModel) doStreamChatCompletions(ctx context.Context, params provider
 	out := make(chan provider.StreamChunk, 64)
 	scanner := sse.NewScanner(resp.Body)
 	go func() {
-		defer func() { _ = resp.Body.Close() }()
+		var closeOnce sync.Once
+		closeBody := func() { closeOnce.Do(func() { _ = resp.Body.Close() }) }
+		defer closeBody()
 		// Close body on context cancellation to unblock scanner.Scan().
 		// Without this, the goroutine leaks if the server stalls mid-stream.
 		done := make(chan struct{})
@@ -167,7 +176,7 @@ func (m *chatModel) doStreamChatCompletions(ctx context.Context, params provider
 		go func() {
 			select {
 			case <-ctx.Done():
-				_ = resp.Body.Close()
+				closeBody()
 			case <-done:
 			}
 		}()
@@ -206,7 +215,8 @@ func (m *chatModel) doStreamResponses(ctx context.Context, params provider.Gener
 
 	out := make(chan provider.StreamChunk, 64)
 	go func() {
-		// streamResponses owns and closes resp.Body via defer.
+		var closeOnce sync.Once
+		closeBody := func() { closeOnce.Do(func() { _ = resp.Body.Close() }) }
 		// Close body on context cancellation to unblock scanner.Scan().
 		// Without this, the goroutine leaks if the server stalls mid-stream.
 		done := make(chan struct{})
@@ -214,11 +224,13 @@ func (m *chatModel) doStreamResponses(ctx context.Context, params provider.Gener
 		go func() {
 			select {
 			case <-ctx.Done():
-				_ = resp.Body.Close()
+				closeBody()
 			case <-done:
 			}
 		}()
-		streamResponses(ctx, resp.Body, out)
+		// Wrap body so streamResponses' defer close calls closeBody, not raw Close,
+		// preventing double-close when context cancellation races with normal completion.
+		streamResponses(ctx, onceCloser{resp.Body, closeBody}, out)
 	}()
 
 	return &provider.StreamResult{Stream: out}, nil
@@ -239,6 +251,19 @@ func (m *chatModel) doGenerateResponses(ctx context.Context, params provider.Gen
 	}
 
 	return parseResponsesResult(respBody)
+}
+
+// onceCloser wraps an io.ReadCloser so that Close is idempotent via a provided
+// close function. Used to prevent double-close when context cancellation races
+// with the normal end-of-stream close inside streamResponses.
+type onceCloser struct {
+	io.Reader
+	closeFn func()
+}
+
+func (o onceCloser) Close() error {
+	o.closeFn()
+	return nil
 }
 
 // --- HTTP helpers ---
@@ -288,7 +313,7 @@ func (m *chatModel) httpClient() *http.Client {
 
 func (m *chatModel) resolveToken(ctx context.Context) (string, error) {
 	if m.opts.tokenSource == nil {
-		return "", errors.New("no API key or token source configured")
+		return "", errors.New("goai: no API key or token source configured")
 	}
 	return m.opts.tokenSource.Token(ctx)
 }

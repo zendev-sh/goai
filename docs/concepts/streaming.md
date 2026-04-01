@@ -74,6 +74,19 @@ fmt.Println(result.Text)
 fmt.Printf("Tokens: %d\n", result.TotalUsage.TotalTokens)
 ```
 
+## Goroutine Lifetime and Leaks
+
+Both `TextStream` and `ObjectStream[T]` start a background goroutine when created.
+This goroutine runs until the stream is fully consumed or the context is cancelled.
+
+**Always do one of the following:**
+- Consume the full stream via `Stream()`, `TextStream()`, or `PartialObjectStream()` channels
+- Call `Result()` which drains the stream internally
+- Cancel the context passed to `StreamText`/`StreamObject`
+
+Discarding a stream without consuming it or cancelling the context will leak the goroutine.
+The leaked goroutine will be blocked writing to its output channel until the process exits.
+
 ## Mutual Exclusivity
 
 `TextStream()` and `Stream()` are mutually exclusive - call only one of them. Both start a background goroutine that consumes from the provider's stream. Calling the second one after the first returns a closed channel.

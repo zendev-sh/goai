@@ -90,11 +90,14 @@ func WithOnStepFinish(fn func(StepResult)) Option {
 }
 
 // WithOnRequest sets a callback invoked before each model call.
+// Panics in OnRequest propagate to the caller in all synchronous paths.
 func WithOnRequest(fn func(RequestInfo)) Option {
 	return func(o *options) { o.OnRequest = fn }
 }
 
 // WithOnResponse sets a callback invoked after each model call completes.
+// Panics in OnResponse propagate to the caller when using GenerateText or GenerateObject
+// (synchronous paths). In streaming paths, panics are recovered and logged to stderr.
 func WithOnResponse(fn func(ResponseInfo)) Option {
 	return func(o *options) { o.OnResponse = fn }
 }

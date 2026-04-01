@@ -6,12 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/zendev-sh/goai/provider"
 )
+
+// osStderr holds os.Stderr at package level so ObjectStream methods can write to
+// stderr despite their receiver being named "os", which shadows the os package.
+var osStderr = os.Stderr
 
 // ObjectResult is the final result of a structured output generation.
 type ObjectResult[T any] struct {
@@ -141,6 +146,11 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 	// Call OnResponse hook when consume finishes (after all chunks processed).
 	if os.onResponse != nil {
 		defer func() {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Fprintf(osStderr, "goai: recovered panic in hook: %v\n", r)
+				}
+			}()
 			info := ResponseInfo{
 				Latency:      time.Since(os.startTime),
 				Usage:        os.usage,
@@ -238,6 +248,10 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 
 	o := applyOptions(opts...)
 
+	if o.Prompt == "" && len(o.Messages) == 0 {
+		return nil, errors.New("goai: prompt or messages must not be empty")
+	}
+
 	if o.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, o.Timeout)
@@ -314,7 +328,11 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 
 		if o.OnStepFinish != nil {
 			func() {
-				defer func() { _ = recover() }()
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Fprintf(osStderr, "goai: recovered panic in hook: %v\n", r)
+					}
+				}()
 				o.OnStepFinish(stepResult)
 			}()
 		}
@@ -369,6 +387,10 @@ func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts
 	}
 
 	o := applyOptions(opts...)
+
+	if o.Prompt == "" && len(o.Messages) == 0 {
+		return nil, errors.New("goai: prompt or messages must not be empty")
+	}
 
 	var timeoutCancel context.CancelFunc
 	if o.Timeout > 0 {

@@ -218,9 +218,24 @@ func WithProviderOptions(opts map[string]any) Option {
 }
 
 // WithPromptCaching enables provider-specific prompt caching.
+// Currently supported by: Anthropic, Bedrock (Anthropic-family models only), and MiniMax
+// (which delegates to Anthropic). Other providers log a warning to stderr when
+// this option is set.
 func WithPromptCaching(b bool) Option {
 	return func(o *options) { o.PromptCaching = b }
 }
+
+// Tool choice constants for use with WithToolChoice.
+const (
+	// ToolChoiceAuto lets the model decide whether to call a tool (default behavior).
+	ToolChoiceAuto = "auto"
+
+	// ToolChoiceNone prevents the model from calling any tools.
+	ToolChoiceNone = "none"
+
+	// ToolChoiceRequired forces the model to call at least one tool.
+	ToolChoiceRequired = "required"
+)
 
 // WithToolChoice controls tool selection.
 func WithToolChoice(tc string) Option {
@@ -292,6 +307,26 @@ func checkJSONSerializable(caller, key string, v reflect.Value, seen map[uintptr
 	switch v.Kind() {
 	case reflect.Chan, reflect.Func, reflect.UnsafePointer:
 		panic(fmt.Sprintf("goai: %s: option key %q has non-serializable value of type %s", caller, key, v.Type()))
+	}
+
+	// If the type implements json.Marshaler, call MarshalJSON in a recover
+	// to catch panicking implementations early.
+	marshalerType := reflect.TypeOf((*json.Marshaler)(nil)).Elem()
+	if v.Type().Implements(marshalerType) || (v.Kind() != reflect.Ptr && reflect.PointerTo(v.Type()).Implements(marshalerType)) {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					panic(fmt.Sprintf("goai: %s: option key %q MarshalJSON panicked: %v", caller, key, r))
+				}
+			}()
+			if _, err := json.Marshal(v.Interface()); err != nil {
+				panic(fmt.Sprintf("goai: %s: option key %q MarshalJSON failed: %v", caller, key, err))
+			}
+		}()
+		return // Marshaler handles its own serialization
+	}
+
+	switch v.Kind() {
 	case reflect.Ptr:
 		if !v.IsNil() {
 			addr := v.Pointer()

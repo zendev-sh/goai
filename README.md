@@ -51,7 +51,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 - **20 provider-defined tools**: Web fetch, file search, image generation, X search, and more - [full list](#provider-defined-tools)
 - **MCP client**: Connect to any MCP server (stdio, HTTP, SSE), auto-convert tools for use with GoAI
 - **Observability**: Built-in Langfuse integration with hooks for request/response/step/tool tracing
-- **Telemetry hooks**: `OnRequest`, `OnResponse`, `OnStepFinish`, `OnToolCall` callbacks
+- **Telemetry hooks**: `OnRequest`, `OnResponse`, `OnStepFinish`, `OnToolCall`, `OnToolCallStart` callbacks
 - **Retry/backoff**: Automatic retry with exponential backoff on 429/5xx errors
 - **Minimal dependencies**: Core uses only stdlib; Vertex adds `golang.org/x/oauth2` for ADC
 
@@ -539,7 +539,8 @@ fmt.Printf("Model used: %s\n", result.Response.Model)
 | `WithOnRequest(fn)`    | Called before each API call      |
 | `WithOnResponse(fn)`   | Called after each API call       |
 | `WithOnStepFinish(fn)` | Called after each tool loop step |
-| `WithOnToolCall(fn)`   | Called after each tool execution |
+| `WithOnToolCall(fn)`        | Called after each tool execution              |
+| `WithOnToolCallStart(fn)`   | Called before each tool execution begins      |
 
 ### Structured Output Options
 

@@ -135,13 +135,14 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 	return &provider.EmbedResult{
 		Embeddings: embeddings,
 		// Gemini doesn't return token usage for embeddings.
-		Usage: provider.Usage{},
+		Usage:    provider.Usage{},
+		Response: provider.ResponseMetadata{Model: m.id},
 	}, nil
 }
 
 func (m *embeddingModel) resolveToken(ctx context.Context) (string, error) {
 	if m.opts.tokenSource == nil {
-		return "", errors.New("no API key or token source configured")
+		return "", errors.New("goai: no API key or token source configured")
 	}
 	return m.opts.tokenSource.Token(ctx)
 }

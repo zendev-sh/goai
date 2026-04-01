@@ -487,3 +487,22 @@ func TestEmbedding_EnvVarResolution(t *testing.T) {
 		t.Error("tokenSource should be set from GOOGLE_GENERATIVE_AI_API_KEY")
 	}
 }
+
+func TestEmbedding_ResponseModelPopulated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"embeddings": []map[string]any{{"values": []float64{0.4, 0.5}}},
+		})
+	}))
+	defer srv.Close()
+
+	model := Embedding("text-embedding-004", WithAPIKey("test-key"), WithBaseURL(srv.URL))
+	result, err := model.DoEmbed(t.Context(), []string{"hello"}, provider.EmbedParams{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Response.Model != "text-embedding-004" {
+		t.Errorf("Response.Model = %q, want %q", result.Response.Model, "text-embedding-004")
+	}
+}

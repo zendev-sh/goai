@@ -119,6 +119,9 @@ func (m *chatModel) Capabilities() provider.ModelCapabilities {
 }
 
 func (m *chatModel) DoGenerate(ctx context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
+	if params.PromptCaching {
+		fmt.Fprintf(os.Stderr, "goai: runpod: WithPromptCaching is not supported and will be ignored\n")
+	}
 	body := openaicompat.BuildRequest(params, m.id, false, openaicompat.RequestConfig{})
 
 	resp, err := m.doHTTP(ctx, body)
@@ -136,6 +139,9 @@ func (m *chatModel) DoGenerate(ctx context.Context, params provider.GeneratePara
 }
 
 func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams) (*provider.StreamResult, error) {
+	if params.PromptCaching {
+		fmt.Fprintf(os.Stderr, "goai: runpod: WithPromptCaching is not supported and will be ignored\n")
+	}
 	body := openaicompat.BuildRequest(params, m.id, true, openaicompat.RequestConfig{
 		IncludeStreamOptions: true,
 	})
@@ -208,7 +214,7 @@ func (m *chatModel) httpClient() *http.Client {
 
 func (m *chatModel) resolveToken(ctx context.Context) (string, error) {
 	if m.opts.tokenSource == nil {
-		return "", errors.New("no API key or token source configured")
+		return "", errors.New("goai: no API key or token source configured")
 	}
 	return m.opts.tokenSource.Token(ctx)
 }

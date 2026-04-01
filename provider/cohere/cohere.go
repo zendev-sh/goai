@@ -137,6 +137,9 @@ func (m *chatModel) Capabilities() provider.ModelCapabilities {
 }
 
 func (m *chatModel) DoGenerate(ctx context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
+	if params.PromptCaching {
+		fmt.Fprintf(os.Stderr, "goai: cohere: WithPromptCaching is not supported and will be ignored\n")
+	}
 	body := buildChatRequest(params, m.id, false)
 
 	resp, err := m.doHTTP(ctx, "/chat", body)
@@ -154,6 +157,9 @@ func (m *chatModel) DoGenerate(ctx context.Context, params provider.GeneratePara
 }
 
 func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams) (*provider.StreamResult, error) {
+	if params.PromptCaching {
+		fmt.Fprintf(os.Stderr, "goai: cohere: WithPromptCaching is not supported and will be ignored\n")
+	}
 	body := buildChatRequest(params, m.id, true)
 
 	resp, err := m.doHTTP(ctx, "/chat", body)
@@ -226,7 +232,7 @@ func (m *chatModel) httpClient() *http.Client {
 
 func (m *chatModel) resolveToken(ctx context.Context) (string, error) {
 	if m.opts.tokenSource == nil {
-		return "", errors.New("no API key or token source configured")
+		return "", errors.New("goai: no API key or token source configured")
 	}
 	return m.opts.tokenSource.Token(ctx)
 }
@@ -315,12 +321,13 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 			InputTokens: result.Meta.BilledUnits.InputTokens,
 			TotalTokens: result.Meta.BilledUnits.InputTokens,
 		},
+		Response: provider.ResponseMetadata{Model: m.id},
 	}, nil
 }
 
 func (m *embeddingModel) resolveToken(ctx context.Context) (string, error) {
 	if m.opts.tokenSource == nil {
-		return "", errors.New("no API key or token source configured")
+		return "", errors.New("goai: no API key or token source configured")
 	}
 	return m.opts.tokenSource.Token(ctx)
 }

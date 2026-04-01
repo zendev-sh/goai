@@ -102,9 +102,8 @@ func ConvertMessages(msgs []provider.Message, system string) []map[string]any {
 		}
 		if len(toolCalls) > 0 {
 			m["tool_calls"] = toolCalls
-			if m["content"] == nil {
-				m["content"] = ""
-			}
+			// OpenAI spec requires content to be null (not empty string) when
+			// only tool_calls are present. Omit content entirely when absent.
 		}
 
 		result = append(result, m)

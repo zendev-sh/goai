@@ -158,12 +158,15 @@ func (m *imagenModel) DoGenerate(ctx context.Context, params provider.ImageParam
 		}
 	}
 
-	return &provider.ImageResult{Images: images}, nil
+	return &provider.ImageResult{
+		Images:   images,
+		Response: provider.ResponseMetadata{Model: m.id},
+	}, nil
 }
 
 func (m *imagenModel) resolveToken(ctx context.Context) (string, error) {
 	if m.opts.tokenSource == nil {
-		return "", errors.New("no API key or token source configured")
+		return "", errors.New("goai: no API key or token source configured")
 	}
 	return m.opts.tokenSource.Token(ctx)
 }
@@ -302,12 +305,15 @@ func (m *geminiImageModel) DoGenerate(ctx context.Context, params provider.Image
 		return nil, fmt.Errorf("no image data in response")
 	}
 
-	return &provider.ImageResult{Images: images}, nil
+	return &provider.ImageResult{
+		Images:   images,
+		Response: provider.ResponseMetadata{Model: m.id},
+	}, nil
 }
 
 func (m *geminiImageModel) resolveToken(ctx context.Context) (string, error) {
 	if m.opts.tokenSource == nil {
-		return "", errors.New("no API key or token source configured")
+		return "", errors.New("goai: no API key or token source configured")
 	}
 	return m.opts.tokenSource.Token(ctx)
 }

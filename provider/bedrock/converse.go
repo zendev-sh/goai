@@ -385,9 +385,13 @@ func parseConverseResponse(body []byte) (*provider.GenerateResult, error) {
 		return nil, fmt.Errorf("parsing bedrock response: %w", err)
 	}
 
+	netInput := resp.Usage.InputTokens - resp.Usage.CacheReadInputTokens
+	if netInput < 0 {
+		netInput = 0
+	}
 	result := &provider.GenerateResult{
 		Usage: provider.Usage{
-			InputTokens:      resp.Usage.InputTokens,
+			InputTokens:      netInput,
 			OutputTokens:     resp.Usage.OutputTokens,
 			TotalTokens:      resp.Usage.TotalTokens,
 			CacheReadTokens:  resp.Usage.CacheReadInputTokens,
@@ -467,7 +471,9 @@ func parseConverseResponse(body []byte) (*provider.GenerateResult, error) {
 }
 
 // parseEventStream parses a Bedrock Converse streaming response (EventStream binary protocol).
-func parseEventStream(ctx context.Context, body io.ReadCloser, out chan<- provider.StreamChunk, responseMeta provider.ResponseMetadata) {
+// When rfMode is true, a synthetic __json_response tool call is converted to a text chunk
+// instead of being emitted as a tool call, mirroring the DoGenerate ResponseFormat behavior.
+func parseEventStream(ctx context.Context, body io.ReadCloser, out chan<- provider.StreamChunk, responseMeta provider.ResponseMetadata, rfMode bool) {
 	defer close(out)
 	defer func() { _ = body.Close() }()
 
@@ -487,8 +493,10 @@ func parseEventStream(ctx context.Context, body io.ReadCloser, out chan<- provid
 	// Track content blocks by index to know if a block is text or toolUse.
 	// For tool blocks, accumulate input deltas so the final ChunkToolCall
 	// includes the full tool input (matches openaicompat accumulation pattern).
+	// isRFBlock marks the synthetic __json_response tool block used by rfMode.
 	type blockInfo struct {
 		isToolUse bool
+		isRFBlock bool // true when rfMode and this is the synthetic RF tool
 		toolUseID string
 		toolName  string
 		inputBuf  strings.Builder // accumulated tool input JSON fragments
@@ -548,18 +556,25 @@ func parseEventStream(ctx context.Context, body io.ReadCloser, out chan<- provid
 			idx := intVal(payload, "contentBlockIndex")
 			if start, ok := payload["start"].(map[string]any); ok {
 				if tu, ok := start["toolUse"].(map[string]any); ok {
+					toolName := strVal(tu, "name")
+					isRF := rfMode && toolName == responseFormatToolName
 					bi := &blockInfo{
 						isToolUse: true,
+						isRFBlock: isRF,
 						toolUseID: strVal(tu, "toolUseId"),
-						toolName:  strVal(tu, "name"),
+						toolName:  toolName,
 					}
 					blocks[idx] = bi
-					if !provider.TrySend(ctx, out, provider.StreamChunk{
-						Type:       provider.ChunkToolCallStreamStart,
-						ToolCallID: bi.toolUseID,
-						ToolName:   bi.toolName,
-					}) {
-						return
+					// In rfMode the RF tool block is hidden from callers; only
+					// emit ChunkToolCallStreamStart for real tool calls.
+					if !isRF {
+						if !provider.TrySend(ctx, out, provider.StreamChunk{
+							Type:       provider.ChunkToolCallStreamStart,
+							ToolCallID: bi.toolUseID,
+							ToolName:   bi.toolName,
+						}) {
+							return
+						}
 					}
 				} else {
 					blocks[idx] = &blockInfo{isToolUse: false}
@@ -580,16 +595,20 @@ func parseEventStream(ctx context.Context, body io.ReadCloser, out chan<- provid
 					if bi != nil {
 						bi.inputBuf.WriteString(inputFrag)
 					}
-					chunk := provider.StreamChunk{
-						Type:      provider.ChunkToolCallDelta,
-						ToolInput: inputFrag,
-					}
-					if bi != nil {
-						chunk.ToolCallID = bi.toolUseID
-						chunk.ToolName = bi.toolName
-					}
-					if !provider.TrySend(ctx, out, chunk) {
-						return
+					// RF blocks are converted to text at contentBlockStop; suppress
+					// intermediate tool deltas so callers never see the synthetic tool.
+					if bi == nil || !bi.isRFBlock {
+						chunk := provider.StreamChunk{
+							Type:      provider.ChunkToolCallDelta,
+							ToolInput: inputFrag,
+						}
+						if bi != nil {
+							chunk.ToolCallID = bi.toolUseID
+							chunk.ToolName = bi.toolName
+						}
+						if !provider.TrySend(ctx, out, chunk) {
+							return
+						}
 					}
 				}
 				if rc, ok := delta["reasoningContent"].(map[string]any); ok {
@@ -634,21 +653,36 @@ func parseEventStream(ctx context.Context, body io.ReadCloser, out chan<- provid
 		case "contentBlockStop":
 			idx := intVal(payload, "contentBlockIndex")
 			if bi, ok := blocks[idx]; ok && bi.isToolUse {
-				if !provider.TrySend(ctx, out, provider.StreamChunk{
-					Type:       provider.ChunkToolCall,
-					ToolCallID: bi.toolUseID,
-					ToolName:   bi.toolName,
-					ToolInput:  bi.inputBuf.String(),
-				}) {
-					return
+				if bi.isRFBlock {
+					// Convert the RF tool input to a text chunk.
+					if !provider.TrySend(ctx, out, provider.StreamChunk{
+						Type: provider.ChunkText,
+						Text: bi.inputBuf.String(),
+					}) {
+						return
+					}
+				} else {
+					if !provider.TrySend(ctx, out, provider.StreamChunk{
+						Type:       provider.ChunkToolCall,
+						ToolCallID: bi.toolUseID,
+						ToolName:   bi.toolName,
+						ToolInput:  bi.inputBuf.String(),
+					}) {
+						return
+					}
 				}
 			}
 
 		case "messageStop":
 			stopReason := strVal(payload, "stopReason")
+			fr := mapStopReason(stopReason)
+			// In rfMode the RF tool_use finish is semantically a stop.
+			if rfMode && fr == provider.FinishToolCalls {
+				fr = provider.FinishStop
+			}
 			if !provider.TrySend(ctx, out, provider.StreamChunk{
 				Type:         provider.ChunkStepFinish,
-				FinishReason: mapStopReason(stopReason),
+				FinishReason: fr,
 			}) {
 				return
 			}
@@ -661,6 +695,12 @@ func parseEventStream(ctx context.Context, body io.ReadCloser, out chan<- provid
 				usage.TotalTokens = intVal(u, "totalTokens")
 				usage.CacheReadTokens = intVal(u, "cacheReadInputTokens")
 				usage.CacheWriteTokens = intVal(u, "cacheWriteInputTokens")
+				// InputTokens from Bedrock includes cache-read tokens; subtract to
+				// report only net (uncached) input tokens, matching non-streaming behavior.
+				usage.InputTokens -= usage.CacheReadTokens
+				if usage.InputTokens < 0 {
+					usage.InputTokens = 0
+				}
 			}
 			accUsage = usage
 			chunk := provider.StreamChunk{

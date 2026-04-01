@@ -18,6 +18,33 @@ import (
 	"github.com/zendev-sh/goai/provider"
 )
 
+// openAIKnownKeys lists provider option keys that applyProviderOptions handles
+// explicitly and that must not be forwarded verbatim in the passthrough loop.
+// Allocated once at package init to avoid per-request map allocation.
+var openAIKnownKeys = map[string]bool{
+	"structuredOutputs": true,
+	"strictJsonSchema":  true,
+	"useResponsesAPI":   true,
+	"parallelToolCalls": true,
+	"user":              true,
+	"logprobs":          true,
+	"metadata":          true,
+	"safetyIdentifier":  true,
+	"store":             true,
+	"serviceTier":       true,
+}
+
+// openAIProtectedKeys lists wire-format keys that must not be overwritten by
+// provider option passthrough. Allocated once at package init to avoid
+// per-request map allocation.
+var openAIProtectedKeys = map[string]bool{
+	"model": true, "stream": true, "messages": true,
+	"max_tokens": true, "max_completion_tokens": true,
+	"temperature": true, "top_p": true, "stop": true,
+	"seed": true, "frequency_penalty": true, "presence_penalty": true,
+	"tools": true, "tool_choice": true, "response_format": true,
+}
+
 // RequestConfig holds provider-specific settings for building requests.
 type RequestConfig struct {
 	// IncludeStreamOptions adds stream_options.include_usage to the request.
@@ -199,19 +226,11 @@ func applyProviderOptions(body map[string]any, opts map[string]any) {
 		return
 	}
 
-	knownKeys := map[string]bool{
-		"structuredOutputs": true,
-		"strictJsonSchema":  true,
-		"useResponsesAPI":   true,
-	}
-
 	if v, ok := opts["parallelToolCalls"]; ok {
 		body["parallel_tool_calls"] = v
-		knownKeys["parallelToolCalls"] = true
 	}
 	if v, ok := opts["user"]; ok {
 		body["user"] = v
-		knownKeys["user"] = true
 	}
 	if v, ok := opts["logprobs"]; ok {
 		switch lp := v.(type) {
@@ -227,35 +246,23 @@ func applyProviderOptions(body map[string]any, opts map[string]any) {
 			body["logprobs"] = true
 			body["top_logprobs"] = int(lp)
 		}
-		knownKeys["logprobs"] = true
 	}
 	if v, ok := opts["metadata"]; ok {
 		body["metadata"] = v
-		knownKeys["metadata"] = true
 	}
 	if v, ok := opts["safetyIdentifier"]; ok {
 		body["safety_identifier"] = v
-		knownKeys["safetyIdentifier"] = true
 	}
 	if v, ok := opts["store"]; ok {
 		body["store"] = v
-		knownKeys["store"] = true
 	}
 	if v, ok := opts["serviceTier"]; ok {
 		body["service_tier"] = v
-		knownKeys["serviceTier"] = true
 	}
 
-	// Pass through any remaining unknown keys.
-	protectedKeys := map[string]bool{
-		"model": true, "stream": true, "messages": true,
-		"max_tokens": true, "max_completion_tokens": true,
-		"temperature": true, "top_p": true, "stop": true,
-		"seed": true, "frequency_penalty": true, "presence_penalty": true,
-		"tools": true, "tool_choice": true, "response_format": true,
-	}
+	// Pass through any remaining unknown keys (not handled above, not protected).
 	for k, v := range opts {
-		if !knownKeys[k] && !protectedKeys[k] {
+		if !openAIKnownKeys[k] && !openAIProtectedKeys[k] {
 			body[k] = v
 		}
 	}

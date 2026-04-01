@@ -327,7 +327,8 @@ func extractResponseFormatResult(result *provider.GenerateResult) {
 }
 
 func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams) (*provider.StreamResult, error) {
-	if params.ResponseFormat != nil {
+	rfMode := params.ResponseFormat != nil
+	if rfMode {
 		params = injectResponseFormatTool(params)
 	}
 	resp, err := m.doRequest(ctx, params, true)
@@ -341,7 +342,7 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 	}
 
 	innerCh := make(chan provider.StreamChunk, 64)
-	go parseEventStream(ctx, resp.Body, innerCh, responseMeta)
+	go parseEventStream(ctx, resp.Body, innerCh, responseMeta, rfMode)
 
 	// Read initial chunks to detect tool-streaming errors that arrive as
 	// EventStream exceptions (e.g., nvidia.nemotron returns HTTP 200 but
@@ -370,7 +371,7 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 					Model: m.ModelID(),
 				}
 				out := make(chan provider.StreamChunk, 64)
-				go parseEventStream(ctx, resp2.Body, out, retryMeta)
+				go parseEventStream(ctx, resp2.Body, out, retryMeta, rfMode)
 				return &provider.StreamResult{Stream: out}, nil
 			}
 			// Stop peeking once we get meaningful content or a non-tool error.

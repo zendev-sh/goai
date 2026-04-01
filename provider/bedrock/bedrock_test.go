@@ -1451,6 +1451,10 @@ func TestParseConverseResponse_CacheTokens(t *testing.T) {
 	if result.Usage.CacheWriteTokens != 10 {
 		t.Errorf("CacheWriteTokens = %d, want 10", result.Usage.CacheWriteTokens)
 	}
+	// InputTokens should be net (raw 100 - cacheRead 50 = 50).
+	if result.Usage.InputTokens != 50 {
+		t.Errorf("InputTokens = %d, want 50 (net: 100 - 50)", result.Usage.InputTokens)
+	}
 }
 
 func TestParseConverseResponse_Reasoning(t *testing.T) {
@@ -2621,7 +2625,7 @@ func TestParseEventStream_Exception(t *testing.T) {
 	buf.Write(buildExceptionFrame("validationException", `invalid request`))
 
 	ch := make(chan provider.StreamChunk, 64)
-	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{})
+	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{}, false)
 
 	var gotError bool
 	for chunk := range ch {
@@ -2645,7 +2649,7 @@ func TestParseEventStream_UnknownEventType(t *testing.T) {
 	buf.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 
 	ch := make(chan provider.StreamChunk, 64)
-	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{})
+	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{}, false)
 
 	var gotText bool
 	for chunk := range ch {
@@ -2688,7 +2692,7 @@ func TestParseEventStream_NonEventMessageType(t *testing.T) {
 	buf.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 
 	ch := make(chan provider.StreamChunk, 64)
-	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{})
+	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{}, false)
 
 	var gotText bool
 	for chunk := range ch {
@@ -2710,7 +2714,7 @@ func TestParseEventStream_ContentBlockStartText(t *testing.T) {
 	buf.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 
 	ch := make(chan provider.StreamChunk, 64)
-	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{})
+	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{}, false)
 
 	var gotText bool
 	for chunk := range ch {
@@ -2730,7 +2734,7 @@ func TestParseEventStream_ReasoningRedacted(t *testing.T) {
 	buf.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 
 	ch := make(chan provider.StreamChunk, 64)
-	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{})
+	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{}, false)
 
 	var gotRedacted bool
 	for chunk := range ch {
@@ -2752,7 +2756,7 @@ func TestParseEventStream_ReasoningPlainText(t *testing.T) {
 	buf.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 
 	ch := make(chan provider.StreamChunk, 64)
-	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{})
+	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{}, false)
 
 	var gotReasoning bool
 	for chunk := range ch {
@@ -2773,7 +2777,7 @@ func TestParseEventStream_ContentBlockStopTool(t *testing.T) {
 	buf.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 
 	ch := make(chan provider.StreamChunk, 64)
-	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{})
+	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{}, false)
 
 	var gotToolCall bool
 	for chunk := range ch {
@@ -2792,7 +2796,7 @@ func TestParseEventStream_CacheWriteTokens(t *testing.T) {
 	buf.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":100,"outputTokens":10,"totalTokens":110,"cacheWriteInputTokens":25}}`)))
 
 	ch := make(chan provider.StreamChunk, 64)
-	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{})
+	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{}, false)
 
 	var gotCacheWrite bool
 	for chunk := range ch {
@@ -3085,7 +3089,7 @@ func TestParseEventStream_ReasoningWithSignature(t *testing.T) {
 	buf.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 
 	ch := make(chan provider.StreamChunk, 64)
-	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{})
+	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{}, false)
 
 	var gotSig bool
 	for chunk := range ch {
@@ -3113,7 +3117,7 @@ func TestParseEventStream_ReasoningStreamingFormat(t *testing.T) {
 	buf.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 
 	ch := make(chan provider.StreamChunk, 64)
-	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{})
+	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{}, false)
 
 	var gotText, gotSig bool
 	for chunk := range ch {
@@ -3328,7 +3332,7 @@ func TestParseEventStream_InvalidJSONPayload(t *testing.T) {
 	buf.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}`)))
 
 	ch := make(chan provider.StreamChunk, 64)
-	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{})
+	go parseEventStream(t.Context(), io.NopCloser(&buf), ch, provider.ResponseMetadata{}, false)
 
 	var gotText bool
 	for chunk := range ch {
@@ -3712,7 +3716,7 @@ func TestParseEventStream_ContextCancel_AllBranches(t *testing.T) {
 			out := make(chan provider.StreamChunk) // unbuffered
 			done := make(chan struct{})
 			go func() {
-				parseEventStream(ctx, io.NopCloser(&buf), out, provider.ResponseMetadata{})
+				parseEventStream(ctx, io.NopCloser(&buf), out, provider.ResponseMetadata{}, false)
 				close(done)
 			}()
 			<-done
@@ -3747,7 +3751,7 @@ func TestParseEventStream_ContextCancel_AllBranches(t *testing.T) {
 
 		done := make(chan struct{})
 		go func() {
-			parseEventStream(ctx, io.NopCloser(&buf), out, provider.ResponseMetadata{})
+			parseEventStream(ctx, io.NopCloser(&buf), out, provider.ResponseMetadata{}, false)
 			close(done)
 		}()
 
@@ -3779,7 +3783,7 @@ func TestParseEventStream_ContextCancel_AllBranches(t *testing.T) {
 
 		done := make(chan struct{})
 		go func() {
-			parseEventStream(ctx, io.NopCloser(&buf), out, provider.ResponseMetadata{})
+			parseEventStream(ctx, io.NopCloser(&buf), out, provider.ResponseMetadata{}, false)
 			close(done)
 		}()
 
@@ -3808,7 +3812,7 @@ func TestParseEventStream_ContextCancel_AllBranches(t *testing.T) {
 
 		done := make(chan struct{})
 		go func() {
-			parseEventStream(ctx, io.NopCloser(&buf), out, provider.ResponseMetadata{})
+			parseEventStream(ctx, io.NopCloser(&buf), out, provider.ResponseMetadata{}, false)
 			close(done)
 		}()
 
@@ -4368,5 +4372,176 @@ func TestWithBearerToken_NoSigV4Headers(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// --- Issue 2: InputTokens net of CacheReadTokens ---
+
+// converseResponseWithCache builds a Converse API JSON response including cache token fields.
+func converseResponseWithCache(text, stopReason string, inputTokens, outputTokens, cacheRead, cacheWrite int) string {
+	return fmt.Sprintf(`{
+		"output": {"message": {"role": "assistant", "content": [{"text": %q}]}},
+		"stopReason": %q,
+		"usage": {
+			"inputTokens": %d,
+			"outputTokens": %d,
+			"totalTokens": %d,
+			"cacheReadInputTokens": %d,
+			"cacheWriteInputTokens": %d
+		}
+	}`, text, stopReason, inputTokens, outputTokens, inputTokens+outputTokens, cacheRead, cacheWrite)
+}
+
+func TestDoGenerate_InputTokensNetOfCacheRead(t *testing.T) {
+	// Provider returns inputTokens=100, cacheReadInputTokens=30.
+	// Result.Usage.InputTokens must be 70 (net of cache).
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, converseResponseWithCache("hello", "end_turn", 100, 20, 30, 0))
+	}))
+	defer server.Close()
+
+	model := Chat("m", WithAccessKey("AK"), WithSecretKey("SK"), WithBaseURL(server.URL))
+	result, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Usage.InputTokens != 70 {
+		t.Errorf("InputTokens = %d, want 70 (net of cache read)", result.Usage.InputTokens)
+	}
+	if result.Usage.CacheReadTokens != 30 {
+		t.Errorf("CacheReadTokens = %d, want 30", result.Usage.CacheReadTokens)
+	}
+}
+
+func TestDoGenerate_InputTokensNetOfCacheRead_NoUnderflow(t *testing.T) {
+	// cacheReadInputTokens > inputTokens: result must be clamped to 0, not negative.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, converseResponseWithCache("hello", "end_turn", 10, 5, 20, 0))
+	}))
+	defer server.Close()
+
+	model := Chat("m", WithAccessKey("AK"), WithSecretKey("SK"), WithBaseURL(server.URL))
+	result, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Usage.InputTokens < 0 {
+		t.Errorf("InputTokens = %d, want >= 0", result.Usage.InputTokens)
+	}
+}
+
+func TestDoStream_InputTokensNetOfCacheRead(t *testing.T) {
+	// Streaming path: provider returns inputTokens=100, cacheReadInputTokens=30.
+	// The ChunkFinish usage must have InputTokens=70.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
+		_, _ = w.Write(buildEventStreamFrame("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"text":"hi"}}`)))
+		_, _ = w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"end_turn"}`)))
+		_, _ = w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{
+			"inputTokens":100,
+			"outputTokens":20,
+			"totalTokens":120,
+			"cacheReadInputTokens":30,
+			"cacheWriteInputTokens":0
+		}}`)))
+	}))
+	defer server.Close()
+
+	model := Chat("m", WithAccessKey("AK"), WithSecretKey("SK"), WithBaseURL(server.URL))
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var finishUsage provider.Usage
+	for chunk := range result.Stream {
+		if chunk.Type == provider.ChunkFinish {
+			finishUsage = chunk.Usage
+		}
+	}
+	if finishUsage.InputTokens != 70 {
+		t.Errorf("streaming InputTokens = %d, want 70 (net of cache read)", finishUsage.InputTokens)
+	}
+	if finishUsage.CacheReadTokens != 30 {
+		t.Errorf("streaming CacheReadTokens = %d, want 30", finishUsage.CacheReadTokens)
+	}
+}
+
+// --- Issue 3: DoStream ResponseFormat tool-to-text conversion ---
+
+func TestDoStream_ResponseFormat_ToolToText(t *testing.T) {
+	// DoStream with ResponseFormat: the synthetic __json_response tool call
+	// must be converted to a ChunkText chunk and not emitted as a tool call.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
+		// Simulate the model calling the __json_response tool.
+		_, _ = w.Write(buildEventStreamFrame("contentBlockStart", []byte(
+			`{"contentBlockIndex":0,"start":{"toolUse":{"toolUseId":"tc_rf","name":"__json_response"}}}`,
+		)))
+		_, _ = w.Write(buildEventStreamFrame("contentBlockDelta", []byte(
+			`{"contentBlockIndex":0,"delta":{"toolUse":{"input":"{\"name\":\"Alice\"}"}}}`,
+		)))
+		_, _ = w.Write(buildEventStreamFrame("contentBlockStop", []byte(`{"contentBlockIndex":0}`)))
+		_, _ = w.Write(buildEventStreamFrame("messageStop", []byte(`{"stopReason":"tool_use"}`)))
+		_, _ = w.Write(buildEventStreamFrame("metadata", []byte(`{"usage":{"inputTokens":10,"outputTokens":5,"totalTokens":15}}`)))
+	}))
+	defer server.Close()
+
+	model := Chat("m", WithAccessKey("AK"), WithSecretKey("SK"), WithBaseURL(server.URL))
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "give me json"}}},
+		},
+		ResponseFormat: &provider.ResponseFormat{
+			Schema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}}}`),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var texts []string
+	var toolCalls []string
+	var toolStreamStarts []string
+	var finishReason provider.FinishReason
+	for chunk := range result.Stream {
+		switch chunk.Type {
+		case provider.ChunkText:
+			texts = append(texts, chunk.Text)
+		case provider.ChunkToolCall:
+			toolCalls = append(toolCalls, chunk.ToolName)
+		case provider.ChunkToolCallStreamStart:
+			toolStreamStarts = append(toolStreamStarts, chunk.ToolName)
+		case provider.ChunkStepFinish:
+			finishReason = chunk.FinishReason
+		}
+	}
+
+	// The synthetic tool call should appear as text, not as a tool call.
+	if len(texts) == 0 || texts[0] != `{"name":"Alice"}` {
+		t.Errorf("texts = %v, want [{\"name\":\"Alice\"}]", texts)
+	}
+	if len(toolCalls) != 0 {
+		t.Errorf("toolCalls = %v, want empty (RF tool should be hidden)", toolCalls)
+	}
+	if len(toolStreamStarts) != 0 {
+		t.Errorf("toolStreamStarts = %v, want empty (RF tool should be hidden)", toolStreamStarts)
+	}
+	// tool_use finish reason for the RF tool should map to stop.
+	if finishReason != provider.FinishStop {
+		t.Errorf("FinishReason = %q, want stop", finishReason)
 	}
 }

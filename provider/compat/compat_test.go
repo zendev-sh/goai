@@ -629,3 +629,26 @@ func TestEmbedding_ProviderOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestEmbedding_ResponseModelPopulated verifies that EmbedResult.Response.Model
+// is populated with the model ID passed to Embedding().
+func TestEmbedding_ResponseModelPopulated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":  []map[string]any{{"embedding": []float64{0.1, 0.2}, "index": 0}},
+			"model": "my-embed-model",
+			"usage": map[string]any{"prompt_tokens": 3, "total_tokens": 3},
+		})
+	}))
+	defer srv.Close()
+
+	model := Embedding("my-embed-model", WithBaseURL(srv.URL))
+	result, err := model.DoEmbed(t.Context(), []string{"hello"}, provider.EmbedParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Response.Model != "my-embed-model" {
+		t.Errorf("Response.Model = %q, want %q", result.Response.Model, "my-embed-model")
+	}
+}

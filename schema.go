@@ -5,11 +5,25 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 )
 
 // schemaMarshalFunc is swappable for testing the panic path.
 var schemaMarshalFunc = json.Marshal
+
+// schemaMarshalFuncIsDefault returns true when schemaMarshalFunc has not been
+// replaced. Caching is only safe when the default marshal function is in use;
+// swapping it (in tests) must bypass the cache to ensure the injected function
+// is actually called.
+func schemaMarshalFuncIsDefault() bool {
+	// Compare function pointers via reflect to detect test overrides.
+	return reflect.ValueOf(schemaMarshalFunc).Pointer() == reflect.ValueOf(json.Marshal).Pointer()
+}
+
+// schemaCache caches computed JSON schemas keyed by reflect.Type to avoid
+// recomputing on every call to SchemaFrom[T]().
+var schemaCache sync.Map
 
 // SchemaFrom generates a JSON Schema from the Go type T. It panics if the
 // generated schema cannot be marshaled to JSON, which indicates a bug in
@@ -22,18 +36,31 @@ var schemaMarshalFunc = json.Marshal
 // Supports struct tags:
 //   - json:"name" for field naming, json:"-" to skip
 //   - jsonschema:"description=...,enum=a|b|c" for descriptions and enums
+//
+// Results are cached: repeated calls with the same T return a cached value.
+// The cache is bypassed when schemaMarshalFunc has been replaced (test-only).
 func SchemaFrom[T any]() json.RawMessage {
 	t := reflect.TypeFor[T]()
-	// Unwrap pointer types.
-	for t.Kind() == reflect.Ptr {
-		t = t.Elem()
+	useCache := schemaMarshalFuncIsDefault()
+	if useCache {
+		if cached, ok := schemaCache.Load(t); ok {
+			return cached.(json.RawMessage)
+		}
 	}
-	schema := typeToSchema(t, make(map[reflect.Type]bool))
+	// Unwrap pointer types.
+	unwrapped := t
+	for unwrapped.Kind() == reflect.Ptr {
+		unwrapped = unwrapped.Elem()
+	}
+	schema := typeToSchema(unwrapped, make(map[reflect.Type]bool))
 	// typeToSchema only produces JSON-safe types (map[string]any with string/bool/int/slice values),
 	// so json.Marshal cannot fail here. Panic on impossible error to surface bugs in typeToSchema.
 	data, err := schemaMarshalFunc(schema)
 	if err != nil {
 		panic(fmt.Sprintf("goai: SchemaFrom marshal failed (bug in typeToSchema): %v", err))
+	}
+	if useCache {
+		schemaCache.Store(t, json.RawMessage(data))
 	}
 	return data
 }
@@ -77,14 +104,24 @@ func typeToSchema(t reflect.Type, seen map[reflect.Type]bool) map[string]any {
 		return map[string]any{"type": "number"}
 	case reflect.Slice:
 		elem := t.Elem()
-		if seen[elem] {
+		// Break cycles:
+		// - seen[elem]: elem is a struct currently being processed (set by the struct case).
+		// - elem == t: self-referential named slice type (e.g. type Foo []Foo), where the
+		//   element type IS the slice type itself. Without this guard, recursion is unbounded.
+		//   Do NOT set seen[elem] here; that would block the struct case from fully processing
+		//   non-recursive slice-of-struct types like []SomeStruct.
+		// Limitation: mutually recursive named slice types (e.g. type A []B; type B []A) are
+		// NOT detected by this guard and will cause a stack overflow. Use struct wrappers
+		// instead of raw named-slice mutual recursion.
+		if seen[elem] || elem == t {
 			return map[string]any{"type": "array"}
 		}
 		return map[string]any{"type": "array", "items": typeToSchema(elem, seen)}
 	case reflect.Map:
 		if t.Key().Kind() == reflect.String {
 			elem := t.Elem()
-			if seen[elem] {
+			// Same cycle-break logic as the Slice case above.
+			if seen[elem] || elem == t {
 				return map[string]any{"type": "object"}
 			}
 			return map[string]any{"type": "object", "additionalProperties": typeToSchema(elem, seen)}

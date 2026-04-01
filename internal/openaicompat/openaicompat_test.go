@@ -903,9 +903,10 @@ func TestConvertMessages_AssistantToolCallsNoText(t *testing.T) {
 	if len(result) != 1 {
 		t.Fatalf("got %d messages, want 1", len(result))
 	}
-	// Should have empty content and tool_calls
-	if result[0]["content"] != "" {
-		t.Errorf("content = %v, want empty string", result[0]["content"])
+	// Should have null content (not empty string) and tool_calls.
+	// OpenAI requires content to be null or omitted when only tool_calls are present.
+	if result[0]["content"] != nil {
+		t.Errorf("content = %v, want nil (null JSON)", result[0]["content"])
 	}
 	tcs := result[0]["tool_calls"].([]map[string]any)
 	if len(tcs) != 1 {
@@ -2193,5 +2194,58 @@ func TestExtractTextContent_NullJSON(t *testing.T) {
 	got := extractTextContent(json.RawMessage("null"))
 	if got != "" {
 		t.Errorf("extractTextContent(null) = %q, want empty string", got)
+	}
+}
+
+// TestConvertMessages_ToolCallsNoText verifies that an assistant message with
+// tool calls but no text content does not produce "content":"" in the output.
+// OpenAI requires content to be null or omitted, not an empty string.
+func TestConvertMessages_ToolCallsNoText(t *testing.T) {
+	msgs := []provider.Message{
+		{
+			Role: provider.RoleAssistant,
+			Content: []provider.Part{
+				{
+					Type:       provider.PartToolCall,
+					ToolCallID: "call_abc",
+					ToolName:   "get_weather",
+					ToolInput:  json.RawMessage(`{"location":"NYC"}`),
+				},
+			},
+		},
+	}
+
+	result := ConvertMessages(msgs, "")
+	if len(result) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result))
+	}
+
+	m := result[0]
+
+	// Verify tool_calls are present.
+	toolCalls, ok := m["tool_calls"]
+	if !ok {
+		t.Fatal("expected tool_calls key to be present")
+	}
+	tc := toolCalls.([]map[string]any)
+	if len(tc) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(tc))
+	}
+
+	// Verify content is NOT empty string.
+	// It should be absent from the map (nil map lookup) or nil.
+	content, hasContent := m["content"]
+	if hasContent && content == "" {
+		t.Error(`content = "", want null or absent; OpenAI rejects empty string with tool_calls`)
+	}
+
+	// Also verify via JSON serialization.
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonStr := string(b)
+	if strings.Contains(jsonStr, `"content":""`) {
+		t.Errorf("marshaled JSON contains %q, want null or no content field; got: %s", `"content":""`, jsonStr)
 	}
 }

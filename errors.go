@@ -217,8 +217,8 @@ func extractErrorMessage(statusCode int, body []byte) string {
 	// body is non-empty here (len(body)==0 returned early above).
 	statusText := http.StatusText(statusCode)
 	bodyStr := string(body)
-	if len(bodyStr) > 200 {
-		bodyStr = bodyStr[:200] + "..."
+	if runes := []rune(bodyStr); len(runes) > 200 {
+		bodyStr = string(runes[:200]) + "..."
 	}
 	return fmt.Sprintf("%d %s: %s", statusCode, statusText, bodyStr)
 }

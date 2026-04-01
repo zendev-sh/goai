@@ -270,6 +270,9 @@ func (m *chatModel) wireModelID() string {
 }
 
 func (m *chatModel) DoGenerate(ctx context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
+	if params.PromptCaching {
+		fmt.Fprintf(os.Stderr, "goai: vertex: WithPromptCaching is not supported and will be ignored\n")
+	}
 	sanitizeToolSchemas(&params)
 	stripGeminiProviderOptions(&params)
 	body := openaicompat.BuildRequest(params, m.wireModelID(), false, openaicompat.RequestConfig{})
@@ -289,6 +292,9 @@ func (m *chatModel) DoGenerate(ctx context.Context, params provider.GeneratePara
 }
 
 func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams) (*provider.StreamResult, error) {
+	if params.PromptCaching {
+		fmt.Fprintf(os.Stderr, "goai: vertex: WithPromptCaching is not supported and will be ignored\n")
+	}
 	sanitizeToolSchemas(&params)
 	stripGeminiProviderOptions(&params)
 	body := openaicompat.BuildRequest(params, m.wireModelID(), true, openaicompat.RequestConfig{

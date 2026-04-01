@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -143,7 +144,9 @@ func (ts *TextStream) Stream() <-chan provider.StreamChunk {
 	return ch
 }
 
-// TextStream returns a channel that emits only text content strings.
+// TextStream returns the underlying channel of text chunks.
+// Note: this method has the same name as the containing type (TextStream);
+// call it as stream.TextStream() to receive the channel.
 // Mutually exclusive with Stream() -- only call one streaming method.
 func (ts *TextStream) TextStream() <-chan string {
 	ch := make(chan string, 64)
@@ -163,6 +166,8 @@ func (ts *TextStream) TextStream() <-chan string {
 // Check Err() after Result() to detect stream errors - Result does not surface
 // errors directly (use Err or check result.Steps for partial data).
 // Can be called after Stream() or TextStream() to get accumulated data.
+// Note: unlike ObjectStream.Result(), this method does not return an error.
+// Call Err() after Result() to check for stream errors.
 func (ts *TextStream) Result() *TextResult {
 	ts.consumeOnce.Do(func() {
 		go ts.consume(nil, nil)
@@ -199,7 +204,11 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 	// GenerateText's OnResponse → OnStepFinish sequence.
 	if ts.onStepFinish != nil {
 		defer func() {
-			defer func() { _ = recover() }()
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+				}
+			}()
 			ts.onStepFinish(StepResult{
 				Number:           1,
 				Text:             ts.stepText.String(),
@@ -216,7 +225,11 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 	// Call OnResponse hook when consume finishes (after all chunks processed).
 	if ts.onResponse != nil {
 		defer func() {
-			defer func() { _ = recover() }()
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+				}
+			}()
 			info := ResponseInfo{
 				Latency:      time.Since(ts.startTime),
 				Usage:        ts.usage,
@@ -234,21 +247,21 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 	for chunk := range ts.source {
 		switch chunk.Type {
 		case provider.ChunkText:
-			ts.text.WriteString(chunk.Text)      // global accumulator (existing, includes reasoning)
-			ts.stepText.WriteString(chunk.Text)   // per-step text-only accumulator (new)
+			ts.text.WriteString(chunk.Text)     // global accumulator (existing, includes reasoning)
+			ts.stepText.WriteString(chunk.Text) // per-step text-only accumulator (new)
 			if s, ok := chunk.Metadata["source"].(provider.Source); ok {
-				ts.sources = append(ts.sources, s)           // global (existing)
-				ts.stepSources = append(ts.stepSources, s)   // per-step (new)
+				ts.sources = append(ts.sources, s)         // global (existing)
+				ts.stepSources = append(ts.stepSources, s) // per-step (new)
 			}
 
 		case provider.ChunkReasoning:
-			ts.text.WriteString(chunk.Text)      // global accumulator (existing, includes reasoning)
+			ts.text.WriteString(chunk.Text) // global accumulator (existing, includes reasoning)
 			// NOTE: reasoning is NOT written to ts.stepText. This matches drainStep behavior
 			// where text and reasoning are separated. StepResult.Text contains text-only,
 			// consistent between OnStepFinish hook (from drainStep) and Result().Steps (from consume).
 			if s, ok := chunk.Metadata["source"].(provider.Source); ok {
-				ts.sources = append(ts.sources, s)           // global (preserve existing behavior)
-				ts.stepSources = append(ts.stepSources, s)   // per-step
+				ts.sources = append(ts.sources, s)         // global (preserve existing behavior)
+				ts.stepSources = append(ts.stepSources, s) // per-step
 			}
 
 		case provider.ChunkToolCall:
@@ -507,7 +520,8 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 
 		var totalUsage provider.Usage
 		var lastFinishReason provider.FinishReason
-		firstStep := true // true only for step 1 (already have firstResult)
+		var lastResponse provider.ResponseMetadata
+		firstStep := true       // true only for step 1 (already have firstResult)
 		stepStart := step1Start // goroutine-local start time per step
 
 		for step := 1; step <= o.MaxSteps; step++ {
@@ -521,7 +535,11 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 				// Steps 2+: DoStream inside goroutine.
 				if o.OnRequest != nil {
 					func() {
-						defer func() { _ = recover() }()
+						defer func() {
+							if r := recover(); r != nil {
+								fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+							}
+						}()
 						o.OnRequest(RequestInfo{
 							Model:        model.ModelID(),
 							MessageCount: len(params.Messages),
@@ -541,7 +559,11 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 					// Fire OnResponse on error (recover-wrapped).
 					if o.OnResponse != nil {
 						func() {
-							defer func() { _ = recover() }()
+							defer func() {
+								if r := recover(); r != nil {
+									fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+								}
+							}()
 							info := ResponseInfo{Latency: time.Since(stepStart), Error: err}
 							var apiErr *APIError
 							if errors.As(err, &apiErr) {
@@ -574,7 +596,11 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			// OnResponse: Error is NOT set (call succeeded). Mid-stream errors use stream.Err().
 			if o.OnResponse != nil {
 				func() {
-					defer func() { _ = recover() }()
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+						}
+					}()
 					o.OnResponse(ResponseInfo{
 						Latency:      time.Since(stepStart),
 						Usage:        ds.usage,
@@ -596,11 +622,16 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			}
 			totalUsage = addUsage(totalUsage, ds.usage)
 			lastFinishReason = ds.finishReason
+			lastResponse = ds.response
 
 			// OnStepFinish (recover-wrapped).
 			if o.OnStepFinish != nil {
 				func() {
-					defer func() { _ = recover() }()
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+						}
+					}()
 					o.OnStepFinish(stepResult)
 				}()
 			}
@@ -635,11 +666,12 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			params.ToolChoice = ""
 		}
 
-		// Emit final ChunkFinish with total usage.
+		// Emit final ChunkFinish with total usage and last step Response metadata.
 		provider.TrySend(ctx, out, provider.StreamChunk{
 			Type:         provider.ChunkFinish,
 			FinishReason: lastFinishReason,
 			Usage:        totalUsage,
+			Response:     lastResponse,
 		})
 	}()
 
@@ -658,6 +690,11 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 	}
 
 	o := applyOptions(opts...)
+
+	if o.Prompt == "" && len(o.Messages) == 0 {
+		return nil, errors.New("goai: prompt or messages must not be empty")
+	}
+
 	toolMap := buildToolMap(o.Tools)
 
 	if o.MaxSteps > 1 && len(toolMap) > 0 {
@@ -717,6 +754,10 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 	}
 
 	o := applyOptions(opts...)
+
+	if o.Prompt == "" && len(o.Messages) == 0 {
+		return nil, errors.New("goai: prompt or messages must not be empty")
+	}
 
 	if o.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -780,7 +821,11 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 
 		if o.OnStepFinish != nil {
 			func() {
-				defer func() { _ = recover() }()
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+					}
+				}()
 				o.OnStepFinish(stepResult)
 			}()
 		}
@@ -828,6 +873,10 @@ func buildToolMap(tools []Tool) map[string]Tool {
 	m := make(map[string]Tool, len(tools))
 	for _, t := range tools {
 		if t.Execute != nil {
+			if t.Name == "" {
+				fmt.Fprintf(os.Stderr, "goai: tool with empty name skipped\n")
+				continue
+			}
 			m[t.Name] = t
 		}
 	}
@@ -871,13 +920,21 @@ func executeToolsParallel(
 			results[i] = toolOutput{index: i, err: ErrUnknownTool}
 			if onToolCallStart != nil {
 				func() {
-					defer func() { _ = recover() }()
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+						}
+					}()
 					onToolCallStart(ToolCallStartInfo{ToolCallID: tc.ID, ToolName: tc.Name, Step: step, Input: tc.Input})
 				}()
 			}
 			if onToolCall != nil {
 				func() {
-					defer func() { _ = recover() }()
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+						}
+					}()
 					onToolCall(ToolCallInfo{
 						ToolCallID: tc.ID,
 						ToolName:   tc.Name,
@@ -898,11 +955,16 @@ func executeToolsParallel(
 			defer func() {
 				if r := recover(); r != nil {
 					if !executed {
+						panicStr := fmt.Sprintf("%v", r)
+						runes := []rune(panicStr)
+						if len(runes) > 500 {
+							panicStr = string(runes[:500]) + "..."
+						}
 						// Distinguish OnToolCallStart panic from Execute panic.
 						if !hookFired {
-							results[i] = toolOutput{index: i, err: fmt.Errorf("goai: OnToolCallStart hook for tool %q panicked: %v", tc.Name, r)}
+							results[i] = toolOutput{index: i, err: fmt.Errorf("goai: OnToolCallStart hook for tool %q panicked: %s", tc.Name, panicStr)}
 						} else {
-							results[i] = toolOutput{index: i, err: fmt.Errorf("goai: tool %q panicked: %v", tc.Name, r)}
+							results[i] = toolOutput{index: i, err: fmt.Errorf("goai: tool %q panicked: %s", tc.Name, panicStr)}
 						}
 					}
 					// executed==true: Execute succeeded, results[i] already set.
@@ -959,7 +1021,12 @@ func buildToolMessages(calls []provider.ToolCall, results []toolOutput) []provid
 	for i, tc := range calls {
 		r := results[i]
 		if r.err != nil {
-			msgs = append(msgs, ToolMessage(tc.ID, tc.Name, "error: "+r.err.Error()))
+			errStr := r.err.Error()
+			runes := []rune(errStr)
+			if len(runes) > 500 {
+				errStr = string(runes[:500]) + "..."
+			}
+			msgs = append(msgs, ToolMessage(tc.ID, tc.Name, "error: "+errStr))
 		} else {
 			msgs = append(msgs, ToolMessage(tc.ID, tc.Name, r.result))
 		}
@@ -1023,7 +1090,7 @@ func buildTextResult(steps []StepResult, totalUsage provider.Usage) *TextResult 
 }
 
 type drainResult struct {
-	text             string // text-only (ChunkText), used for appendToolRoundTrip
+	text string // text-only (ChunkText), used for appendToolRoundTrip
 	// Note: ChunkReasoning is forwarded to consumer but NOT accumulated here.
 	// Reasoning is visible via Stream()/TextStream() but not echoed back to the model.
 	toolCalls        []provider.ToolCall

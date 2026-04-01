@@ -97,7 +97,8 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 	}
 
 	var result struct {
-		Data []struct {
+		Model string `json:"model"`
+		Data  []struct {
 			Embedding []float64 `json:"embedding"`
 			Index     int       `json:"index"`
 		} `json:"data"`
@@ -122,12 +123,13 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 	return &provider.EmbedResult{
 		Embeddings: embeddings,
 		Usage:      provider.Usage{InputTokens: result.Usage.PromptTokens, TotalTokens: result.Usage.TotalTokens},
+		Response:   provider.ResponseMetadata{Model: result.Model},
 	}, nil
 }
 
 func (m *embeddingModel) resolveToken(ctx context.Context) (string, error) {
 	if m.opts.tokenSource == nil {
-		return "", errors.New("no API key or token source configured")
+		return "", errors.New("goai: no API key or token source configured")
 	}
 	return m.opts.tokenSource.Token(ctx)
 }

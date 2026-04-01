@@ -1,6 +1,7 @@
 package goai
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -503,6 +504,74 @@ func TestWithProviderOptions_NestingExceedsLimit(t *testing.T) {
 		nested = map[string]any{"next": nested}
 	}
 	applyOptions(WithProviderOptions(nested))
+}
+
+// panicingMarshaler is a json.Marshaler whose MarshalJSON always panics.
+type panicingMarshaler struct{}
+
+func (p panicingMarshaler) MarshalJSON() ([]byte, error) {
+	panic("intentional panic in MarshalJSON")
+}
+
+func TestWithProviderOptions_PanicingMarshaler(t *testing.T) {
+	// A type implementing json.Marshaler that panics should trigger a panic
+	// at WithProviderOptions construction time, not later during actual marshaling.
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for panicing MarshalJSON implementation")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("panic value is not a string: %v", r)
+		}
+		if !strings.Contains(msg, "MarshalJSON panicked") {
+			t.Errorf("panic message %q should contain 'MarshalJSON panicked'", msg)
+		}
+	}()
+	applyOptions(WithProviderOptions(map[string]any{
+		"custom": panicingMarshaler{},
+	}))
+}
+
+// failingMarshaler is a json.Marshaler whose MarshalJSON always returns an error.
+type failingMarshaler struct{}
+
+func (f failingMarshaler) MarshalJSON() ([]byte, error) {
+	return nil, fmt.Errorf("intentional error in MarshalJSON")
+}
+
+func TestWithProviderOptions_FailingMarshaler(t *testing.T) {
+	// A type implementing json.Marshaler that returns an error should trigger a panic
+	// at WithProviderOptions construction time.
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for failing MarshalJSON implementation")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("panic value is not a string: %v", r)
+		}
+		if !strings.Contains(msg, "MarshalJSON failed") {
+			t.Errorf("panic message %q should contain 'MarshalJSON failed'", msg)
+		}
+	}()
+	applyOptions(WithProviderOptions(map[string]any{
+		"custom": failingMarshaler{},
+	}))
+}
+
+func TestWithToolChoice_Constants(t *testing.T) {
+	if ToolChoiceAuto != "auto" {
+		t.Errorf("ToolChoiceAuto = %q, want %q", ToolChoiceAuto, "auto")
+	}
+	if ToolChoiceNone != "none" {
+		t.Errorf("ToolChoiceNone = %q, want %q", ToolChoiceNone, "none")
+	}
+	if ToolChoiceRequired != "required" {
+		t.Errorf("ToolChoiceRequired = %q, want %q", ToolChoiceRequired, "required")
+	}
 }
 
 func TestApplyOptions_Defaults(t *testing.T) {

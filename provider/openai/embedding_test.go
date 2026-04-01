@@ -362,3 +362,26 @@ func TestEmbedding_WithDimensions(t *testing.T) {
 		t.Errorf("request body dimensions = %v (%T), want 256", gotDimensions, gotDimensions)
 	}
 }
+
+func TestEmbedding_ResponseModelPopulated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model": "text-embedding-3-small",
+			"data": []map[string]any{
+				{"embedding": []float64{0.1, 0.2, 0.3}, "index": 0},
+			},
+			"usage": map[string]any{"prompt_tokens": 3, "total_tokens": 3},
+		})
+	}))
+	defer srv.Close()
+
+	model := Embedding("text-embedding-3-small", WithAPIKey("test-key"), WithBaseURL(srv.URL))
+	result, err := model.DoEmbed(t.Context(), []string{"hi"}, provider.EmbedParams{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Response.Model != "text-embedding-3-small" {
+		t.Errorf("Response.Model = %q, want %q", result.Response.Model, "text-embedding-3-small")
+	}
+}

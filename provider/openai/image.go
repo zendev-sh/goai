@@ -137,7 +137,10 @@ func (m *imageModel) DoGenerate(ctx context.Context, params provider.ImageParams
 		imagesMeta[i] = meta
 	}
 
-	imgResult := &provider.ImageResult{Images: images}
+	imgResult := &provider.ImageResult{
+		Images:   images,
+		Response: provider.ResponseMetadata{Model: m.id},
+	}
 
 	// Build provider metadata if any image has metadata.
 	if slices.ContainsFunc(imagesMeta, func(m map[string]any) bool { return len(m) > 0 }) {
@@ -181,7 +184,7 @@ func hasDefaultResponseFormat(modelID string) bool {
 
 func (m *imageModel) resolveToken(ctx context.Context) (string, error) {
 	if m.opts.tokenSource == nil {
-		return "", errors.New("no API key or token source configured")
+		return "", errors.New("goai: no API key or token source configured")
 	}
 	return m.opts.tokenSource.Token(ctx)
 }

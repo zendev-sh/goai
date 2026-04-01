@@ -2409,3 +2409,76 @@ func TestChat_EnvVarResolution_GeminiAPIKey(t *testing.T) {
 		t.Error("tokenSource should be set from GEMINI_API_KEY")
 	}
 }
+
+// TestParseSSE_OverflowError_ResponseBodyPopulated verifies that a
+// ContextOverflowError emitted from a streaming SSE error response includes
+// both Message and ResponseBody.
+func TestParseSSE_OverflowError_ResponseBodyPopulated(t *testing.T) {
+	overflowMsg := "context window exceeds limit"
+	data := `{"error":{"code":400,"message":"` + overflowMsg + `","status":"INVALID_ARGUMENT"}}`
+	sseInput := "data: " + data + "\n\n"
+
+	out := make(chan provider.StreamChunk, 8)
+	parseSSE(t.Context(), strings.NewReader(sseInput), out)
+
+	var chunks []provider.StreamChunk
+	for c := range out {
+		chunks = append(chunks, c)
+	}
+
+	if len(chunks) == 0 {
+		t.Fatal("expected at least one chunk")
+	}
+
+	errChunk := chunks[0]
+	if errChunk.Type != provider.ChunkError {
+		t.Fatalf("chunk type = %v, want ChunkError", errChunk.Type)
+	}
+
+	var overflowErr *goai.ContextOverflowError
+	if !errors.As(errChunk.Error, &overflowErr) {
+		t.Fatalf("error type = %T, want *goai.ContextOverflowError", errChunk.Error)
+	}
+	if overflowErr.Message == "" {
+		t.Error("ContextOverflowError.Message is empty")
+	}
+	if overflowErr.ResponseBody == "" {
+		t.Error("ContextOverflowError.ResponseBody is empty; want the raw SSE data string")
+	}
+	if overflowErr.ResponseBody != data {
+		t.Errorf("ResponseBody = %q, want %q", overflowErr.ResponseBody, data)
+	}
+}
+
+// TestDoStream_ContextCancel_NoDoubleClose verifies that cancelling the context
+// does not cause a panic or double-close of resp.Body.
+func TestDoStream_ContextCancel_NoDoubleClose(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		// Flush a chunk then block indefinitely to simulate a stalled server.
+		_, _ = fmt.Fprint(w, `data: {"modelVersion":"gemini-2.5-flash","candidates":[{"content":{"parts":[{"text":"hi"}]}}]}`+"\n\n")
+		w.(http.Flusher).Flush()
+		// Block until client disconnects.
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL(server.URL))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	result, err := model.DoStream(ctx, provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Cancel context while stream is in progress.
+	cancel()
+
+	// Drain the channel; this should not panic or deadlock.
+	for range result.Stream {
+	}
+}

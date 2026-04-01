@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/internal/gemini"
@@ -129,6 +130,9 @@ func (m *chatModel) Capabilities() provider.ModelCapabilities {
 }
 
 func (m *chatModel) DoGenerate(ctx context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
+	if params.PromptCaching {
+		fmt.Fprintf(os.Stderr, "goai: google: WithPromptCaching is not supported and will be ignored\n")
+	}
 	body, err := m.buildRequest(params)
 	if err != nil {
 		return nil, err
@@ -150,6 +154,9 @@ func (m *chatModel) DoGenerate(ctx context.Context, params provider.GeneratePara
 }
 
 func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams) (*provider.StreamResult, error) {
+	if params.PromptCaching {
+		fmt.Fprintf(os.Stderr, "goai: google: WithPromptCaching is not supported and will be ignored\n")
+	}
 	body, err := m.buildRequest(params)
 	if err != nil {
 		return nil, err
@@ -163,14 +170,16 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 
 	out := make(chan provider.StreamChunk, 64)
 	go func() {
-		defer func() { _ = resp.Body.Close() }()
+		var closeOnce sync.Once
+		closeBody := func() { closeOnce.Do(func() { _ = resp.Body.Close() }) }
+		defer closeBody()
 		// Close body on context cancellation to unblock scanner.Scan().
 		// Without this, the goroutine leaks if the server stalls mid-stream.
 		done := make(chan struct{})
 		go func() {
 			select {
 			case <-ctx.Done():
-				_ = resp.Body.Close()
+				closeBody()
 			case <-done:
 			}
 		}()
@@ -594,7 +603,7 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 			if goai.IsOverflow(msg) {
 				provider.TrySend(ctx, out, provider.StreamChunk{
 					Type:  provider.ChunkError,
-					Error: &goai.ContextOverflowError{Message: msg},
+					Error: &goai.ContextOverflowError{Message: msg, ResponseBody: data},
 				})
 			} else {
 				provider.TrySend(ctx, out, provider.StreamChunk{
@@ -898,7 +907,7 @@ func (m *chatModel) httpClient() *http.Client {
 
 func (m *chatModel) resolveToken(ctx context.Context) (string, error) {
 	if m.opts.tokenSource == nil {
-		return "", errors.New("no API key or token source configured")
+		return "", errors.New("goai: no API key or token source configured")
 	}
 	return m.opts.tokenSource.Token(ctx)
 }

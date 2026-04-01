@@ -8,7 +8,11 @@ import (
 	"github.com/zendev-sh/goai/provider"
 )
 
-// GenerateImage generates images from a text prompt.
+// GenerateImage generates images from a text prompt using the given model.
+//
+// Note: GenerateImage uses ImageOption, not the general-purpose Option type.
+// Use WithImagePrompt, WithImageTimeout, WithImageMaxRetries, etc.
+// These cannot be mixed with Option values from GenerateText/Embed calls.
 func GenerateImage(ctx context.Context, model provider.ImageModel, opts ...ImageOption) (*ImageResult, error) {
 	if model == nil {
 		return nil, errors.New("goai: model must not be nil")
@@ -46,6 +50,8 @@ func GenerateImage(ctx context.Context, model provider.ImageModel, opts ...Image
 	return &ImageResult{
 		Images:           result.Images,
 		ProviderMetadata: result.ProviderMetadata,
+		Usage:            result.Usage,
+		Response:         result.Response,
 	}, nil
 }
 
@@ -55,9 +61,20 @@ type ImageResult struct {
 
 	// ProviderMetadata contains provider-specific response data.
 	ProviderMetadata map[string]map[string]any
+
+	// Usage tracks token or operation consumption (if reported by the provider).
+	Usage provider.Usage
+
+	// Response contains provider-specific response metadata (ID, model, headers).
+	Response provider.ResponseMetadata
 }
 
-// ImageOption configures image generation.
+// ImageOption configures a GenerateImage call.
+//
+// GenerateImage uses ImageOption (not the general-purpose Option type) because
+// image generation has a distinct parameter set that does not overlap with text
+// generation options. Common cross-cutting options like timeout and retries have
+// dedicated WithImage* equivalents: WithImageTimeout, WithImageMaxRetries.
 type ImageOption func(*imageOptions)
 
 type imageOptions struct {

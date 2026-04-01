@@ -289,7 +289,7 @@ func Embed(ctx context.Context, model provider.EmbeddingModel, value string, opt
 | `value` | `string`                  | The text to embed.                                                         |
 | `opts`  | `...Option`               | Options (`WithTimeout`, `WithMaxRetries`, `WithEmbeddingProviderOptions`). |
 
-**Returns:** `*EmbedResult` containing the embedding vector and usage.
+**Returns:** `*EmbedResult` containing the embedding vector, usage, and provider response metadata (`Response.Model` when available).
 
 **Example:**
 
@@ -322,7 +322,7 @@ func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []stri
 | `values` | `[]string`                | The texts to embed.                                                                                |
 | `opts`   | `...Option`               | Options (`WithMaxParallelCalls`, `WithTimeout`, `WithMaxRetries`, `WithEmbeddingProviderOptions`). |
 
-**Returns:** `*EmbedManyResult` containing one embedding vector per input value and aggregated usage. When `EmbedMany` auto-chunks a large batch, `ProviderMetadata` in the result is taken from the first chunk only.
+**Returns:** `*EmbedManyResult` containing one embedding vector per input value, aggregated usage, and provider response metadata (`Response.Model` when available). When `EmbedMany` auto-chunks a large batch, `ProviderMetadata` is merged from all chunks using last-write-wins semantics per namespace key; `Response` is taken from the first chunk.
 
 **Example:**
 

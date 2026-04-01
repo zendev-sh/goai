@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"io"
 	"net/http"
 
@@ -124,6 +125,9 @@ func (m *chatModel) Capabilities() provider.ModelCapabilities {
 }
 
 func (m *chatModel) DoGenerate(ctx context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
+	if params.PromptCaching {
+		fmt.Fprintf(os.Stderr, "goai: %s: WithPromptCaching is not supported and will be ignored\n", m.opts.providerID)
+	}
 	if m.opts.baseURL == "" {
 		return nil, fmt.Errorf("compat: base URL is required (use WithBaseURL)")
 	}
@@ -145,6 +149,9 @@ func (m *chatModel) DoGenerate(ctx context.Context, params provider.GeneratePara
 }
 
 func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams) (*provider.StreamResult, error) {
+	if params.PromptCaching {
+		fmt.Fprintf(os.Stderr, "goai: %s: WithPromptCaching is not supported and will be ignored\n", m.opts.providerID)
+	}
 	if m.opts.baseURL == "" {
 		return nil, fmt.Errorf("compat: base URL is required (use WithBaseURL)")
 	}
@@ -288,7 +295,8 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 	}
 
 	var result struct {
-		Data []struct {
+		Model string `json:"model"`
+		Data  []struct {
 			Embedding []float64 `json:"embedding"`
 			Index     int       `json:"index"`
 		} `json:"data"`
@@ -312,6 +320,7 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 	return &provider.EmbedResult{
 		Embeddings: embeddings,
 		Usage:      provider.Usage{InputTokens: result.Usage.PromptTokens, TotalTokens: result.Usage.TotalTokens},
+		Response:   provider.ResponseMetadata{Model: result.Model},
 	}, nil
 }
 

@@ -372,6 +372,12 @@ type ImageResult struct {
 	// ProviderMetadata contains provider-specific response data
 	// (e.g. revisedPrompt).
 	ProviderMetadata map[string]map[string]any
+
+	// Usage tracks token or operation consumption (if reported by the provider).
+	Usage Usage
+
+	// Response contains provider-specific response metadata (ID, model, headers).
+	Response ResponseMetadata
 }
 
 // ImageData contains a single generated image.
@@ -409,4 +415,7 @@ type EmbedResult struct {
 
 	// ProviderMetadata contains provider-specific response data.
 	ProviderMetadata map[string]map[string]any
+
+	// Response contains provider-specific response metadata (ID, model, headers).
+	Response ResponseMetadata
 }

@@ -3555,3 +3555,33 @@ func TestStreamResponses_InputTokensNormalized(t *testing.T) {
 		t.Errorf("CacheReadTokens = %d, want 30", usage.CacheReadTokens)
 	}
 }
+
+// TestChat_DoGenerate_PromptCachingWarning verifies that passing PromptCaching=true
+// to the OpenAI provider succeeds (warning is written to stderr, not returned as error).
+func TestChat_DoGenerate_PromptCachingWarning(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{
+			"id": "chatcmpl-warn",
+			"model": "gpt-4o",
+			"choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+			"usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
+		}`)
+	}))
+	defer server.Close()
+
+	model := Chat("gpt-4o", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	result, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		PromptCaching:   true,
+		ProviderOptions: chatCompletionsOpts,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Text != "ok" {
+		t.Errorf("Text = %q, want ok", result.Text)
+	}
+}

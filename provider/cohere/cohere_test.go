@@ -1978,3 +1978,20 @@ func TestMapFinishReason_Unknown(t *testing.T) {
 		t.Errorf("mapFinishReason(SOMETHING_ELSE) = %q, want %q", got, provider.FinishOther)
 	}
 }
+
+func TestEmbedding_ResponseModelPopulated(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"embeddings":{"float":[[0.1,0.2,0.3]]},"meta":{"billed_units":{"input_tokens":5}}}`)
+	}))
+	defer server.Close()
+
+	model := Embedding("embed-v4.0", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	result, err := model.DoEmbed(t.Context(), []string{"hello"}, provider.EmbedParams{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Response.Model != "embed-v4.0" {
+		t.Errorf("Response.Model = %q, want %q", result.Response.Model, "embed-v4.0")
+	}
+}

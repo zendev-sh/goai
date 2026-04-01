@@ -229,11 +229,17 @@ func (m *chatCompletionsModel) Capabilities() provider.ModelCapabilities {
 }
 
 func (m *chatCompletionsModel) DoGenerate(ctx context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
+	if params.PromptCaching {
+		fmt.Fprintf(os.Stderr, "goai: azure: WithPromptCaching is not supported and will be ignored\n")
+	}
 	forceChatCompletions(&params)
 	return m.inner.DoGenerate(ctx, params)
 }
 
 func (m *chatCompletionsModel) DoStream(ctx context.Context, params provider.GenerateParams) (*provider.StreamResult, error) {
+	if params.PromptCaching {
+		fmt.Fprintf(os.Stderr, "goai: azure: WithPromptCaching is not supported and will be ignored\n")
+	}
 	forceChatCompletions(&params)
 	return m.inner.DoStream(ctx, params)
 }

@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/internal/httpc"
@@ -38,6 +39,28 @@ const (
 	betaFeatures      = "claude-code-20250219,interleaved-thinking-2025-05-14"
 	defaultMaxTokens  = 16384
 )
+
+// anthropicHandledKeys lists provider option keys that are explicitly handled
+// in buildRequest and must not be passed through verbatim.
+// Allocated once at package init to avoid per-request map allocation.
+var anthropicHandledKeys = map[string]bool{
+	"thinking": true, "_headers": true,
+	"disableParallelToolUse": true, "effort": true, "speed": true,
+	"container": true, "contextManagement": true,
+}
+
+// anthropicProtectedKeys lists wire-format keys that must not be overwritten
+// by provider option passthrough.
+// Allocated once at package init to avoid per-request map allocation.
+var anthropicProtectedKeys = map[string]bool{
+	"model": true, "stream": true, "messages": true,
+	"max_tokens": true, "system": true, "temperature": true,
+	"top_p": true, "top_k": true, "stop_sequences": true,
+	"tools": true, "tool_choice": true,
+	// SDK-internal keys that are never sent on the wire.
+	"structuredOutputMode": true, "sendReasoning": true,
+	"cacheControl": true,
+}
 
 // Option configures the Anthropic provider.
 type Option func(*options)
@@ -188,7 +211,9 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 
 	out := make(chan provider.StreamChunk, 64)
 	go func() {
-		defer func() { _ = resp.Body.Close() }()
+		var closeOnce sync.Once
+		closeBody := func() { closeOnce.Do(func() { _ = resp.Body.Close() }) }
+		defer closeBody()
 		// Close body on context cancellation to unblock scanner.Scan().
 		// Without this, the goroutine leaks if the server stalls mid-stream.
 		done := make(chan struct{})
@@ -196,7 +221,7 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 		go func() {
 			select {
 			case <-ctx.Done():
-				_ = resp.Body.Close()
+				closeBody()
 			case <-done:
 			}
 		}()
@@ -403,22 +428,8 @@ func (m *chatModel) buildRequest(params provider.GenerateParams, streaming bool)
 
 	// Provider options passthrough -- allows callers to inject arbitrary
 	// request body fields. Skip keys handled above.
-	handledKeys := map[string]bool{
-		"thinking": true, "_headers": true,
-		"disableParallelToolUse": true, "effort": true, "speed": true,
-		"container": true, "contextManagement": true,
-	}
-	protectedKeys := map[string]bool{
-		"model": true, "stream": true, "messages": true,
-		"max_tokens": true, "system": true, "temperature": true,
-		"top_p": true, "top_k": true, "stop_sequences": true,
-		"tools": true, "tool_choice": true,
-		// SDK-internal keys that are never sent on the wire.
-		"structuredOutputMode": true, "sendReasoning": true,
-		"cacheControl": true,
-	}
 	for k, v := range params.ProviderOptions {
-		if handledKeys[k] || protectedKeys[k] {
+		if anthropicHandledKeys[k] || anthropicProtectedKeys[k] {
 			continue
 		}
 		body[k] = v
@@ -948,7 +959,22 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 		if !provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: fmt.Errorf("reading stream: %w", err)}) {
 			return
 		}
+		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+		provider.TrySend(ctx, out, provider.StreamChunk{
+			Type:         provider.ChunkFinish,
+			FinishReason: "error",
+			Usage:        usage,
+			Response:     responseMeta,
+		})
+		return
 	}
+	// Clean EOF without message_stop: emit finish with accumulated usage and response meta.
+	usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+	provider.TrySend(ctx, out, provider.StreamChunk{
+		Type:     provider.ChunkFinish,
+		Usage:    usage,
+		Response: responseMeta,
+	})
 }
 
 func handleStreamError(ctx context.Context, data string, event map[string]any, out chan<- provider.StreamChunk) {
@@ -1295,7 +1321,7 @@ func (m *chatModel) httpClient() *http.Client {
 
 func (m *chatModel) resolveToken(ctx context.Context) (string, error) {
 	if m.opts.tokenSource == nil {
-		return "", errors.New("no API key or token source configured")
+		return "", errors.New("goai: no API key or token source configured")
 	}
 	return m.opts.tokenSource.Token(ctx)
 }
