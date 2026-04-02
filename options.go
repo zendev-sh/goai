@@ -12,6 +12,16 @@ import (
 // Option configures a generation call.
 type Option func(*options)
 
+// WithOptions combines multiple Options into a single Option.
+// This is useful for libraries that need to return one Option encapsulating several.
+func WithOptions(opts ...Option) Option {
+	return func(o *options) {
+		for _, opt := range opts {
+			opt(o)
+		}
+	}
+}
+
 // options holds all configuration for a generation call.
 type options struct {
 	// System is the system prompt.
@@ -73,19 +83,19 @@ type options struct {
 	ToolChoice string
 
 	// OnStepFinish is called after each generation step completes (including tool execution).
-	OnStepFinish func(StepResult)
+	OnStepFinish []func(StepResult)
 
 	// OnRequest is called before each model API call.
-	OnRequest func(RequestInfo)
+	OnRequest []func(RequestInfo)
 
 	// OnResponse is called after each model API call completes.
-	OnResponse func(ResponseInfo)
+	OnResponse []func(ResponseInfo)
 
 	// OnToolCall is called after each tool execution.
-	OnToolCall func(ToolCallInfo)
+	OnToolCall []func(ToolCallInfo)
 
 	// OnToolCallStart is called before each tool execution.
-	OnToolCallStart func(ToolCallStartInfo)
+	OnToolCallStart []func(ToolCallStartInfo)
 
 	// ExplicitSchema overrides auto-generated JSON Schema for GenerateObject/StreamObject.
 	ExplicitSchema json.RawMessage

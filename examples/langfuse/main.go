@@ -107,23 +107,38 @@ func main() {
 		fmt.Printf("%s: %s — %s\n", r.Object.City, r.Object.Temperature, r.Object.Summary)
 	}
 
-	// --- Advanced: per-run metadata and session grouping ---
-	fmt.Println("\n=== With session and user ID ===")
-	lfSession := langfuse.New(langfuse.Config{
-		TraceName: "weather-agent",
-		Version:   "1.0.0",
-		SessionID: "session-abc123",
-		UserID:    "user-42",
-		Tags:      []string{"weather", "demo"},
-	})
+	// --- WithTracing: simple one-liner ---
+	// WithTracing() reads credentials from env vars and returns a single goai.Option.
+	fmt.Println("\n=== WithTracing (simple) ===")
+	r2, err := goai.GenerateObject[WeatherReport](ctx, model,
+		langfuse.WithTracing(),
+		goai.WithSystem("You are a weather assistant. Always call get_weather before answering."),
+		goai.WithPrompt("What's the weather in Berlin?"),
+		goai.WithTools(weatherTool),
+		goai.WithMaxSteps(3),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Berlin: %s -- %s\n", r2.Object.Temperature, r2.Object.Summary)
+
+	// --- WithTracing: with session, user, and tags ---
+	fmt.Println("\n=== WithTracing (with options) ===")
 	r, err := goai.GenerateObject[WeatherReport](ctx, model,
-		append(
-			lfSession.Run(),
-			goai.WithSystem("You are a weather assistant. Always call get_weather before answering."),
-			goai.WithPrompt("What's the weather in Paris?"),
-			goai.WithTools(weatherTool),
-			goai.WithMaxSteps(3),
-		)...,
+		langfuse.WithTracing(
+			langfuse.TraceName("weather-agent"),
+			langfuse.Version("1.0.0"),
+			langfuse.SessionID("session-abc123"),
+			langfuse.UserID("user-42"),
+			langfuse.Tags("weather", "demo"),
+			langfuse.OnFlushError(func(err error) {
+				log.Printf("langfuse flush error: %v", err)
+			}),
+		),
+		goai.WithSystem("You are a weather assistant. Always call get_weather before answering."),
+		goai.WithPrompt("What's the weather in Paris?"),
+		goai.WithTools(weatherTool),
+		goai.WithMaxSteps(3),
 	)
 	if err != nil {
 		log.Fatal(err)

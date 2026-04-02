@@ -52,7 +52,7 @@ type ObjectStream[T any] struct {
 	partialCh <-chan *T
 
 	// Hook support.
-	onResponse func(ResponseInfo)
+	onResponse []func(ResponseInfo)
 	startTime  time.Time
 
 	// Accumulated state.
@@ -144,13 +144,8 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 	}
 
 	// Call OnResponse hook when consume finishes (after all chunks processed).
-	if os.onResponse != nil {
+	if len(os.onResponse) > 0 {
 		defer func() {
-			defer func() {
-				if r := recover(); r != nil {
-					fmt.Fprintf(osStderr, "goai: recovered panic in hook: %v\n", r)
-				}
-			}()
 			info := ResponseInfo{
 				Latency:      time.Since(os.startTime),
 				Usage:        os.usage,
@@ -161,7 +156,16 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 			if errors.As(os.streamErr, &apiErr) {
 				info.StatusCode = apiErr.StatusCode
 			}
-			os.onResponse(info)
+			for _, fn := range os.onResponse {
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(osStderr, "goai: recovered panic in hook: %v\n", r)
+						}
+					}()
+					fn(info)
+				}()
+			}
 		}()
 	}
 
@@ -281,8 +285,8 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 	var totalUsage provider.Usage
 
 	for step := 1; step <= o.MaxSteps; step++ {
-		if o.OnRequest != nil {
-			o.OnRequest(RequestInfo{
+		for _, fn := range o.OnRequest {
+			fn(RequestInfo{
 				Model:        model.ModelID(),
 				MessageCount: len(params.Messages),
 				ToolCount:    len(params.Tools),
@@ -296,7 +300,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 			return model.DoGenerate(ctx, params)
 		})
 
-		if o.OnResponse != nil {
+		for _, fn := range o.OnResponse {
 			info := ResponseInfo{Latency: time.Since(start), Error: err}
 			if err == nil {
 				info.Usage = result.Usage
@@ -306,7 +310,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 			if errors.As(err, &apiErr) {
 				info.StatusCode = apiErr.StatusCode
 			}
-			o.OnResponse(info)
+			fn(info)
 		}
 
 		if err != nil {
@@ -326,15 +330,15 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 		steps = append(steps, stepResult)
 		totalUsage = addUsage(totalUsage, result.Usage)
 
-		if o.OnStepFinish != nil {
-			func() {
+		for _, fn := range o.OnStepFinish {
+			func(f func(StepResult)) {
 				defer func() {
 					if r := recover(); r != nil {
 						fmt.Fprintf(osStderr, "goai: recovered panic in hook: %v\n", r)
 					}
 				}()
-				o.OnStepFinish(stepResult)
-			}()
+				f(stepResult)
+			}(fn)
 		}
 
 		// If no tools have Execute functions, skip the tool loop regardless of MaxSteps.
@@ -411,8 +415,8 @@ func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts
 		Schema: schema,
 	}
 
-	if o.OnRequest != nil {
-		o.OnRequest(RequestInfo{
+	for _, fn := range o.OnRequest {
+		fn(RequestInfo{
 			Model:        model.ModelID(),
 			MessageCount: len(params.Messages),
 			ToolCount:    len(params.Tools),
@@ -429,13 +433,13 @@ func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts
 		if timeoutCancel != nil {
 			timeoutCancel()
 		}
-		if o.OnResponse != nil {
+		for _, fn := range o.OnResponse {
 			info := ResponseInfo{Latency: time.Since(start), Error: err}
 			var apiErr *APIError
 			if errors.As(err, &apiErr) {
 				info.StatusCode = apiErr.StatusCode
 			}
-			o.OnResponse(info)
+			fn(info)
 		}
 		return nil, err
 	}

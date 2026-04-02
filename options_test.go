@@ -590,3 +590,63 @@ func TestApplyOptions_Defaults(t *testing.T) {
 		t.Errorf("Messages should be empty by default")
 	}
 }
+
+func TestWithOptions(t *testing.T) {
+	t.Run("combines multiple options", func(t *testing.T) {
+		combined := WithOptions(
+			WithSystem("sys"),
+			WithPrompt("hello"),
+			WithMaxSteps(5),
+		)
+		o := applyOptions(combined)
+		if o.System != "sys" {
+			t.Errorf("System = %q, want sys", o.System)
+		}
+		if o.Prompt != "hello" {
+			t.Errorf("Prompt = %q, want hello", o.Prompt)
+		}
+		if o.MaxSteps != 5 {
+			t.Errorf("MaxSteps = %d, want 5", o.MaxSteps)
+		}
+	})
+
+	t.Run("last wins for simple fields", func(t *testing.T) {
+		o := applyOptions(
+			WithOptions(
+				WithSystem("first"),
+				WithMaxSteps(3),
+			),
+			WithSystem("second"),
+			WithMaxSteps(7),
+		)
+		if o.System != "second" {
+			t.Errorf("System = %q, want second (last wins)", o.System)
+		}
+		if o.MaxSteps != 7 {
+			t.Errorf("MaxSteps = %d, want 7 (last wins)", o.MaxSteps)
+		}
+	})
+
+	t.Run("hook composition both fire", func(t *testing.T) {
+		var calls []string
+		lib := WithOptions(
+			WithOnRequest(func(_ RequestInfo) { calls = append(calls, "lib") }),
+		)
+		user := WithOnRequest(func(_ RequestInfo) { calls = append(calls, "user") })
+
+		o := applyOptions(lib, user)
+		if len(o.OnRequest) != 2 {
+			t.Fatalf("OnRequest len = %d, want 2", len(o.OnRequest))
+		}
+		// Fire both hooks and verify order.
+		for _, fn := range o.OnRequest {
+			fn(RequestInfo{})
+		}
+		if len(calls) != 2 {
+			t.Fatalf("calls len = %d, want 2", len(calls))
+		}
+		if calls[0] != "lib" || calls[1] != "user" {
+			t.Errorf("calls = %v, want [lib user]", calls)
+		}
+	})
+}

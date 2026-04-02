@@ -98,8 +98,8 @@ type TextStream struct {
 	textCh <-chan string
 
 	// Hook support.
-	onResponse   func(ResponseInfo)
-	onStepFinish func(StepResult)
+	onResponse   []func(ResponseInfo)
+	onStepFinish []func(StepResult)
 	startTime    time.Time
 
 	// Accumulated state (written by consume goroutine, read after doneCh closes).
@@ -202,14 +202,9 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 	// step and ts.onStepFinish is nil, so this block is skipped.
 	// Deferred BEFORE OnResponse so it runs AFTER it (LIFO order), matching
 	// GenerateText's OnResponse → OnStepFinish sequence.
-	if ts.onStepFinish != nil {
+	if len(ts.onStepFinish) > 0 {
 		defer func() {
-			defer func() {
-				if r := recover(); r != nil {
-					fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
-				}
-			}()
-			ts.onStepFinish(StepResult{
+			stepResult := StepResult{
 				Number:           1,
 				Text:             ts.stepText.String(),
 				ToolCalls:        ts.toolCalls,
@@ -218,18 +213,23 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 				Response:         ts.response,
 				Sources:          ts.sources,
 				ProviderMetadata: ts.providerMetadata,
-			})
+			}
+			for _, fn := range ts.onStepFinish {
+				func(f func(StepResult)) {
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+						}
+					}()
+					f(stepResult)
+				}(fn)
+			}
 		}()
 	}
 
 	// Call OnResponse hook when consume finishes (after all chunks processed).
-	if ts.onResponse != nil {
+	if len(ts.onResponse) > 0 {
 		defer func() {
-			defer func() {
-				if r := recover(); r != nil {
-					fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
-				}
-			}()
 			info := ResponseInfo{
 				Latency:      time.Since(ts.startTime),
 				Usage:        ts.usage,
@@ -240,7 +240,16 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 			if errors.As(ts.streamErr, &apiErr) {
 				info.StatusCode = apiErr.StatusCode
 			}
-			ts.onResponse(info)
+			for _, fn := range ts.onResponse {
+				func(f func(ResponseInfo)) {
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+						}
+					}()
+					f(info)
+				}(fn)
+			}
 		}()
 	}
 
@@ -476,8 +485,8 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 	// --- Step 1 DoStream: synchronous (preserves (nil, error) contract) ---
 	// This ensures StreamText ALWAYS returns (nil, error) when the first DoStream
 	// fails, regardless of MaxSteps. Eliminates the split error contract.
-	if o.OnRequest != nil {
-		o.OnRequest(RequestInfo{
+	for _, fn := range o.OnRequest {
+		fn(RequestInfo{
 			Model:        model.ModelID(),
 			MessageCount: len(params.Messages),
 			ToolCount:    len(params.Tools),
@@ -497,13 +506,13 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 		// OnRequest/OnResponse: not recover-wrapped (caller's goroutine).
 		// OnStepFinish: always recover-wrapped (prevents losing accumulated results).
 		// Inside goroutines: all hooks recover-wrapped.
-		if o.OnResponse != nil {
+		for _, fn := range o.OnResponse {
 			info := ResponseInfo{Latency: time.Since(start), Error: err}
 			var apiErr *APIError
 			if errors.As(err, &apiErr) {
 				info.StatusCode = apiErr.StatusCode
 			}
-			o.OnResponse(info)
+			fn(info)
 		}
 		return nil, err // SAME error contract as single-step StreamText
 	}
@@ -533,21 +542,21 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 				firstStep = false
 			} else {
 				// Steps 2+: DoStream inside goroutine.
-				if o.OnRequest != nil {
-					func() {
+				for _, fn := range o.OnRequest {
+					func(f func(RequestInfo)) {
 						defer func() {
 							if r := recover(); r != nil {
 								fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
 							}
 						}()
-						o.OnRequest(RequestInfo{
+						f(RequestInfo{
 							Model:        model.ModelID(),
 							MessageCount: len(params.Messages),
 							ToolCount:    len(params.Tools),
 							Timestamp:    time.Now(),
 							Messages:     requestMessages(params.System, params.Messages),
 						})
-					}()
+					}(fn)
 				}
 
 				stepStart = time.Now()
@@ -557,8 +566,8 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 				})
 				if err != nil {
 					// Fire OnResponse on error (recover-wrapped).
-					if o.OnResponse != nil {
-						func() {
+					for _, fn := range o.OnResponse {
+						func(f func(ResponseInfo)) {
 							defer func() {
 								if r := recover(); r != nil {
 									fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
@@ -569,8 +578,8 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 							if errors.As(err, &apiErr) {
 								info.StatusCode = apiErr.StatusCode
 							}
-							o.OnResponse(info)
-						}()
+							f(info)
+						}(fn)
 					}
 					provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: err})
 					provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: lastFinishReason, Usage: totalUsage})
@@ -594,19 +603,19 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			}
 
 			// OnResponse: Error is NOT set (call succeeded). Mid-stream errors use stream.Err().
-			if o.OnResponse != nil {
-				func() {
+			for _, fn := range o.OnResponse {
+				func(f func(ResponseInfo)) {
 					defer func() {
 						if r := recover(); r != nil {
 							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
 						}
 					}()
-					o.OnResponse(ResponseInfo{
+					f(ResponseInfo{
 						Latency:      time.Since(stepStart),
 						Usage:        ds.usage,
 						FinishReason: ds.finishReason,
 					})
-				}()
+				}(fn)
 			}
 
 			// --- Build StepResult, fire OnStepFinish ---
@@ -625,15 +634,15 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			lastResponse = ds.response
 
 			// OnStepFinish (recover-wrapped).
-			if o.OnStepFinish != nil {
-				func() {
+			for _, fn := range o.OnStepFinish {
+				func(f func(StepResult)) {
 					defer func() {
 						if r := recover(); r != nil {
 							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
 						}
 					}()
-					o.OnStepFinish(stepResult)
-				}()
+					f(stepResult)
+				}(fn)
 			}
 
 			// --- Emit ChunkStepFinish ---
@@ -708,8 +717,8 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 
 	params := buildParams(o)
 
-	if o.OnRequest != nil {
-		o.OnRequest(RequestInfo{
+	for _, fn := range o.OnRequest {
+		fn(RequestInfo{
 			Model:        model.ModelID(),
 			MessageCount: len(params.Messages),
 			ToolCount:    len(params.Tools),
@@ -726,13 +735,13 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 		if timeoutCancel != nil {
 			timeoutCancel()
 		}
-		if o.OnResponse != nil {
+		for _, fn := range o.OnResponse {
 			info := ResponseInfo{Latency: time.Since(start), Error: err}
 			var apiErr *APIError
 			if errors.As(err, &apiErr) {
 				info.StatusCode = apiErr.StatusCode
 			}
-			o.OnResponse(info)
+			fn(info)
 		}
 		return nil, err
 	}
@@ -774,8 +783,8 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 	var totalUsage provider.Usage
 
 	for step := 1; step <= o.MaxSteps; step++ {
-		if o.OnRequest != nil {
-			o.OnRequest(RequestInfo{
+		for _, fn := range o.OnRequest {
+			fn(RequestInfo{
 				Model:        model.ModelID(),
 				MessageCount: len(params.Messages),
 				ToolCount:    len(params.Tools),
@@ -789,8 +798,8 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 			return model.DoGenerate(ctx, params)
 		})
 
-		if o.OnResponse != nil {
-			func() {
+		for _, fn := range o.OnResponse {
+			func(f func(ResponseInfo)) {
 				defer func() {
 					if r := recover(); r != nil {
 						fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
@@ -805,8 +814,8 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 				if errors.As(err, &apiErr) {
 					info.StatusCode = apiErr.StatusCode
 				}
-				o.OnResponse(info)
-			}()
+				f(info)
+			}(fn)
 		}
 
 		if err != nil {
@@ -826,15 +835,15 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		steps = append(steps, stepResult)
 		totalUsage = addUsage(totalUsage, result.Usage)
 
-		if o.OnStepFinish != nil {
-			func() {
+		for _, fn := range o.OnStepFinish {
+			func(f func(StepResult)) {
 				defer func() {
 					if r := recover(); r != nil {
 						fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
 					}
 				}()
-				o.OnStepFinish(stepResult)
-			}()
+				f(stepResult)
+			}(fn)
 		}
 
 		// If no tools have Execute functions, skip the tool loop regardless of MaxSteps.
@@ -906,8 +915,8 @@ func executeToolsParallel(
 	calls []provider.ToolCall,
 	toolMap map[string]Tool,
 	step int,
-	onToolCallStart func(ToolCallStartInfo),
-	onToolCall func(ToolCallInfo),
+	onToolCallStart []func(ToolCallStartInfo),
+	onToolCall []func(ToolCallInfo),
 ) []provider.Message {
 
 	results := make([]toolOutput, len(calls))
@@ -925,31 +934,31 @@ func executeToolsParallel(
 			// pre-hook crashed). For unknown tools, Execute never runs anyway, so both
 			// hooks fire independently for observability completeness.
 			results[i] = toolOutput{index: i, err: ErrUnknownTool}
-			if onToolCallStart != nil {
-				func() {
+			for _, fn := range onToolCallStart {
+				func(f func(ToolCallStartInfo)) {
 					defer func() {
 						if r := recover(); r != nil {
 							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
 						}
 					}()
-					onToolCallStart(ToolCallStartInfo{ToolCallID: tc.ID, ToolName: tc.Name, Step: step, Input: tc.Input})
-				}()
+					f(ToolCallStartInfo{ToolCallID: tc.ID, ToolName: tc.Name, Step: step, Input: tc.Input})
+				}(fn)
 			}
-			if onToolCall != nil {
-				func() {
+			for _, fn := range onToolCall {
+				func(f func(ToolCallInfo)) {
 					defer func() {
 						if r := recover(); r != nil {
 							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
 						}
 					}()
-					onToolCall(ToolCallInfo{
+					f(ToolCallInfo{
 						ToolCallID: tc.ID,
 						ToolName:   tc.Name,
 						Step:       step,
 						Input:      tc.Input,
 						Error:      ErrUnknownTool,
 					})
-				}()
+				}(fn)
 			}
 			continue
 		}
@@ -979,39 +988,60 @@ func executeToolsParallel(
 				}
 			}()
 
-			// OnToolCallStart: pre-execution.
-			if onToolCallStart != nil {
-				onToolCallStart(ToolCallStartInfo{
-					ToolCallID: tc.ID,
-					ToolName:   tc.Name,
-					Step:       step,
-					Input:      tc.Input,
-				})
+			// OnToolCallStart: pre-execution (each independently recover-wrapped).
+			var hookPanicked bool
+			for _, fn := range onToolCallStart {
+				func(f func(ToolCallStartInfo)) {
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+							hookPanicked = true
+						}
+					}()
+					f(ToolCallStartInfo{
+						ToolCallID: tc.ID,
+						ToolName:   tc.Name,
+						Step:       step,
+						Input:      tc.Input,
+					})
+				}(fn)
 			}
 			hookFired = true
+			if hookPanicked {
+				panicStr := fmt.Sprintf("goai: OnToolCallStart hook for tool %q panicked", tc.Name)
+				results[i] = toolOutput{index: i, err: fmt.Errorf("%s", panicStr)}
+				return
+			}
 
 			start := time.Now()
 			output, err := tool.Execute(ctx, tc.Input)
 			executed = true
 			results[i] = toolOutput{index: i, result: output, err: err}
 
-			// OnToolCall: post-execution.
-			if onToolCall != nil {
-				info := ToolCallInfo{
-					ToolCallID: tc.ID,
-					ToolName:   tc.Name,
-					Step:       step,
-					Input:      tc.Input,
-					Output:     output,
-					StartTime:  start,
-					Duration:   time.Since(start),
-					Error:      err,
-				}
-				var parsed any
-				if err == nil && json.Unmarshal([]byte(output), &parsed) == nil {
-					info.OutputObject = parsed
-				}
-				onToolCall(info)
+			// OnToolCall: post-execution (each independently recover-wrapped).
+			for _, fn := range onToolCall {
+				func(f func(ToolCallInfo)) {
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+						}
+					}()
+					info := ToolCallInfo{
+						ToolCallID: tc.ID,
+						ToolName:   tc.Name,
+						Step:       step,
+						Input:      tc.Input,
+						Output:     output,
+						StartTime:  start,
+						Duration:   time.Since(start),
+						Error:      err,
+					}
+					var parsed any
+					if err == nil && json.Unmarshal([]byte(output), &parsed) == nil {
+						info.OutputObject = parsed
+					}
+					f(info)
+				}(fn)
 			}
 		}(i, tc, tool)
 	}

@@ -1,20 +1,25 @@
 // Package langfuse provides Langfuse tracing hooks for goai.
 //
-// Create a Hooks instance once and use With() or Run() per call:
+// Basic usage -- credentials come from env vars (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY,
+// LANGFUSE_HOST or LANGFUSE_BASE_URL):
 //
-//	lf := langfuse.New(langfuse.Config{TraceName: "my-agent"})
-//
-//	// With() returns a factory — call it each time to get fresh options:
-//	opts := lf.With(goai.WithMaxSteps(5))
-//	result, err := goai.GenerateObject[Output](ctx, model, opts()...)
-//
-//	// Run() returns options directly for one-off calls:
-//	result, err := goai.GenerateObject[Output](ctx, model,
-//	    append(lf.Run(), goai.WithSystem(systemPrompt), goai.WithPrompt(userPrompt))...,
+//	result, err := goai.GenerateText(ctx, model,
+//	    langfuse.WithTracing(),
+//	    goai.WithPrompt("hello"),
 //	)
 //
-// Each With()/Run() call returns a fresh set of goai options with isolated state.
-// The HTTP client is shared across runs. Concurrent runs are safe.
+// With options:
+//
+//	result, err := goai.GenerateText(ctx, model,
+//	    langfuse.WithTracing(
+//	        langfuse.TraceName("my-agent"),
+//	        langfuse.UserID("user-123"),
+//	        langfuse.Tags("prod", "v2"),
+//	    ),
+//	    goai.WithPrompt("hello"),
+//	)
+//
+// Each call creates a fresh trace with isolated state. Concurrent calls are safe.
 //
 // Observation hierarchy:
 //
@@ -36,6 +41,85 @@ import (
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/provider"
 )
+
+// TracingOption configures WithTracing.
+type TracingOption func(*Config)
+
+// TraceName sets the trace name (default "agent").
+func TraceName(name string) TracingOption { return func(c *Config) { c.TraceName = name } }
+
+// UserID sets the Langfuse user ID on the trace.
+func UserID(id string) TracingOption { return func(c *Config) { c.UserID = id } }
+
+// SessionID sets the Langfuse session ID for grouping traces.
+func SessionID(id string) TracingOption { return func(c *Config) { c.SessionID = id } }
+
+// Tags sets tags on the trace.
+func Tags(tags ...string) TracingOption { return func(c *Config) { c.Tags = tags } }
+
+// Metadata sets metadata on the trace.
+func Metadata(m any) TracingOption { return func(c *Config) { c.Metadata = m } }
+
+// Release sets the release identifier on the trace.
+func Release(r string) TracingOption { return func(c *Config) { c.Release = r } }
+
+// Version sets the version identifier on the trace.
+func Version(v string) TracingOption { return func(c *Config) { c.Version = v } }
+
+// Environment sets the environment (overrides LANGFUSE_ENV).
+func Environment(env string) TracingOption { return func(c *Config) { c.Environment = env } }
+
+// PromptName sets the Langfuse prompt name for linking generations.
+func PromptName(name string) TracingOption { return func(c *Config) { c.PromptName = name } }
+
+// PromptVersion sets the Langfuse prompt version for linking generations.
+func PromptVersion(v int) TracingOption { return func(c *Config) { c.PromptVersion = v } }
+
+// OnFlushError sets a callback for flush errors (default: silently discard).
+func OnFlushError(fn func(error)) TracingOption { return func(c *Config) { c.OnFlushError = fn } }
+
+// PublicKey overrides the LANGFUSE_PUBLIC_KEY env var.
+func PublicKey(key string) TracingOption { return func(c *Config) { c.PublicKey = key } }
+
+// SecretKey overrides the LANGFUSE_SECRET_KEY env var.
+func SecretKey(key string) TracingOption { return func(c *Config) { c.SecretKey = key } }
+
+// Host overrides the LANGFUSE_HOST / LANGFUSE_BASE_URL env var.
+func Host(host string) TracingOption { return func(c *Config) { c.Host = host } }
+
+// WithTracing returns a goai.Option that enables Langfuse tracing for a single call.
+// Credentials are read from env vars unless overridden via PublicKey/SecretKey/Host options.
+// Each invocation creates a fresh trace -- safe for concurrent use.
+//
+// Each call allocates a small amount of state for trace isolation. The underlying
+// HTTP connections are pooled by Go's default transport, so creating a new
+// http.Client per call does not waste TCP connections.
+//
+// If neither LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY env vars nor PublicKey/SecretKey
+// options are set, WithTracing logs a warning to stderr and returns a no-op option.
+func WithTracing(opts ...TracingOption) goai.Option {
+	cfg := Config{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	// Resolve credentials from env vars if not set via options.
+	pub := cfg.PublicKey
+	if pub == "" {
+		pub = os.Getenv("LANGFUSE_PUBLIC_KEY")
+	}
+	sec := cfg.SecretKey
+	if sec == "" {
+		sec = os.Getenv("LANGFUSE_SECRET_KEY")
+	}
+	if pub == "" || sec == "" {
+		fmt.Fprintln(os.Stderr, "langfuse: warning: LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY not set, tracing disabled")
+		return goai.WithOptions() // no-op
+	}
+
+	h := New(cfg)
+	return goai.WithOptions(h.Run()...)
+}
 
 // Config configures Langfuse tracing. Credential fields override the corresponding
 // env vars (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST).
@@ -63,6 +147,8 @@ type Config struct {
 
 // Hooks holds the shared HTTP client and config.
 // Create once; call Run() to get a fresh set of options per agent run.
+//
+// Deprecated: Use [WithTracing] instead.
 type Hooks struct {
 	cfg Config
 	mu  sync.Mutex
@@ -70,6 +156,8 @@ type Hooks struct {
 }
 
 // New returns a Hooks instance. The HTTP client is initialised lazily on the first Run() call.
+//
+// Deprecated: Use [WithTracing] instead.
 func New(cfg Config) *Hooks {
 	if cfg.TraceName == "" {
 		cfg.TraceName = "agent"
@@ -113,6 +201,8 @@ func (h *Hooks) client() *client {
 //
 //	Options: lf.With()                      // tracing only
 //	Options: lf.With(goai.WithMaxSteps(5))  // tracing + extra options
+//
+// Deprecated: Use [WithTracing] instead.
 func (h *Hooks) With(opts ...goai.Option) func() []goai.Option {
 	return func() []goai.Option {
 		return append(h.Run(), opts...)
@@ -122,6 +212,8 @@ func (h *Hooks) With(opts ...goai.Option) func() []goai.Option {
 // Run returns a fresh set of goai options scoped to a single agent run.
 // Safe to call concurrently — each call gets completely isolated state.
 // No locking is needed within a run because goai calls hooks sequentially.
+//
+// Deprecated: Use [WithTracing] instead.
 func (h *Hooks) Run() []goai.Option {
 	cfg := h.cfg
 	lc := h.client()

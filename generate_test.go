@@ -4306,6 +4306,125 @@ func TestStreamText_ToolLoop_OnResponsePanicOnSuccess(t *testing.T) {
 // TestStreamText_ToolLoop_OnStepFinishPanic verifies that a panicking
 // OnStepFinish hook on step 2+ is safely recovered and the stream still
 // delivers the final text.
+// TestOnToolCall_PanicIsolation verifies that a panicking OnToolCall hook
+// does not prevent a second hook from firing.
+func TestOnToolCall_PanicIsolation(t *testing.T) {
+	var secondFired atomic.Bool
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "my_tool", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+					Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         "done",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 20, OutputTokens: 8},
+			}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "my_tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		WithOnToolCall(func(_ ToolCallInfo) { panic("hook1 panic") }),
+		WithOnToolCall(func(_ ToolCallInfo) { secondFired.Store(true) }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !secondFired.Load() {
+		t.Error("second OnToolCall hook should fire even if first panics")
+	}
+}
+
+// TestOnToolCallStart_PanicIsolation verifies that a panicking OnToolCallStart hook
+// does not prevent a second hook from firing, and the tool does not execute.
+func TestOnToolCallStart_PanicIsolation(t *testing.T) {
+	var secondFired atomic.Bool
+	var toolExecuted atomic.Bool
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "my_tool", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+					Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         "done",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 20, OutputTokens: 8},
+			}, nil
+		},
+	}
+
+	_, _ = GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "my_tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				toolExecuted.Store(true)
+				return "ok", nil
+			},
+		}),
+		WithOnToolCallStart(func(_ ToolCallStartInfo) { panic("hook1 panic") }),
+		WithOnToolCallStart(func(_ ToolCallStartInfo) { secondFired.Store(true) }),
+	)
+	if !secondFired.Load() {
+		t.Error("second OnToolCallStart hook should fire even if first panics")
+	}
+	if toolExecuted.Load() {
+		t.Error("tool should NOT execute when OnToolCallStart panics")
+	}
+}
+
+// TestGenerateText_OnResponse_PanicIsolation verifies that in the GenerateText
+// multi-step loop, a panicking OnResponse hook does not prevent the second hook
+// from firing (recover-wrapped path).
+func TestGenerateText_OnResponse_PanicIsolation(t *testing.T) {
+	var secondFired atomic.Bool
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         "ok",
+				FinishReason: provider.FinishStop,
+			}, nil
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("hi"),
+		WithOnResponse(func(_ ResponseInfo) { panic("hook1 panic") }),
+		WithOnResponse(func(_ ResponseInfo) { secondFired.Store(true) }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "ok" {
+		t.Errorf("Text = %q, want ok", result.Text)
+	}
+	if !secondFired.Load() {
+		t.Error("second OnResponse hook should fire even if first panics (GenerateText multi-step is recover-wrapped)")
+	}
+}
+
 func TestStreamText_ToolLoop_OnStepFinishPanic(t *testing.T) {
 	var callCount atomic.Int32
 	model := &mockModel{

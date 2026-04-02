@@ -84,27 +84,36 @@ type ToolCallInfo struct {
 	Error error
 }
 
-// WithOnStepFinish sets a callback invoked after each generation step completes.
+// WithOnStepFinish adds a callback invoked after each generation step completes.
+// Multiple callbacks are called in registration order.
+// In synchronous paths, a panic in one callback prevents subsequent callbacks from firing.
+// In streaming paths, panics are recovered and logged to stderr.
 func WithOnStepFinish(fn func(StepResult)) Option {
-	return func(o *options) { o.OnStepFinish = fn }
+	return func(o *options) { o.OnStepFinish = append(o.OnStepFinish, fn) }
 }
 
-// WithOnRequest sets a callback invoked before each model call.
-// Panics in OnRequest propagate to the caller in all synchronous paths.
+// WithOnRequest adds a callback invoked before each model call.
+// Multiple callbacks are called in registration order.
+// A panic in one callback prevents subsequent callbacks from firing and propagates
+// to the caller in synchronous paths (GenerateText, GenerateObject).
 func WithOnRequest(fn func(RequestInfo)) Option {
-	return func(o *options) { o.OnRequest = fn }
+	return func(o *options) { o.OnRequest = append(o.OnRequest, fn) }
 }
 
-// WithOnResponse sets a callback invoked after each model call completes.
-// Panics in OnResponse propagate to the caller when using GenerateText or GenerateObject
-// (synchronous paths). In streaming paths, panics are recovered and logged to stderr.
+// WithOnResponse adds a callback invoked after each model call completes.
+// Multiple callbacks are called in registration order.
+// Each callback is individually panic-recovered in the GenerateText multi-step loop
+// and in streaming consume paths (panics logged to stderr, do not crash the caller).
+// In single-step error paths and GenerateObject, panics propagate to the caller.
 func WithOnResponse(fn func(ResponseInfo)) Option {
-	return func(o *options) { o.OnResponse = fn }
+	return func(o *options) { o.OnResponse = append(o.OnResponse, fn) }
 }
 
-// WithOnToolCall sets a callback invoked after each tool execution.
+// WithOnToolCall adds a callback invoked after each tool execution.
+// Multiple callbacks are called in registration order. Each callback is individually
+// panic-recovered so a panic in one does not prevent others from firing.
 func WithOnToolCall(fn func(ToolCallInfo)) Option {
-	return func(o *options) { o.OnToolCall = fn }
+	return func(o *options) { o.OnToolCall = append(o.OnToolCall, fn) }
 }
 
 // ToolCallStartInfo is passed to the OnToolCallStart hook before a tool executes.
@@ -122,7 +131,10 @@ type ToolCallStartInfo struct {
 	Input json.RawMessage
 }
 
-// WithOnToolCallStart sets a callback invoked before each tool execution.
+// WithOnToolCallStart adds a callback invoked before each tool execution.
+// Multiple callbacks are called in registration order. Each callback is individually
+// panic-recovered so a panic in one does not prevent others from firing. If any callback
+// panics, the tool does not execute.
 func WithOnToolCallStart(fn func(ToolCallStartInfo)) Option {
-	return func(o *options) { o.OnToolCallStart = fn }
+	return func(o *options) { o.OnToolCallStart = append(o.OnToolCallStart, fn) }
 }

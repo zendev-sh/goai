@@ -1,12 +1,15 @@
 package langfuse
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -1232,5 +1235,412 @@ func TestStreamText_MultiStep_WithToolCalls(t *testing.T) {
 	traceBody := bodyOf(t, events, eventTrace)
 	if traceBody["name"] != "stream-multi-step" {
 		t.Errorf("trace name = %q, want %q", traceBody["name"], "stream-multi-step")
+	}
+}
+
+// --- WithTracing tests ------------------------------------------------------
+
+func TestWithTracing_SingleStep(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model := &mockModel{
+		id: "gpt-4o",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         "hello",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+			}, nil
+		},
+	}
+
+	_, err := goai.GenerateText(t.Context(), model,
+		WithTracing(
+			TraceName("single-step-test"),
+			PublicKey("pub"),
+			SecretKey("sec"),
+			Host(srv.URL),
+		),
+		goai.WithPrompt("hi"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	if len(events) != 3 {
+		t.Fatalf("event count = %d, want 3; types: %v", len(events), eventTypes(events))
+	}
+
+	traceBody := bodyOf(t, events, eventTrace)
+	if traceBody["name"] != "single-step-test" {
+		t.Errorf("trace name = %q, want %q", traceBody["name"], "single-step-test")
+	}
+
+	genBody := bodyOf(t, events, eventGeneration)
+	if genBody["model"] != "gpt-4o" {
+		t.Errorf("generation model = %q, want %q", genBody["model"], "gpt-4o")
+	}
+	usage, ok := genBody["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("generation usage missing: %T", genBody["usage"])
+	}
+	if usage["input"] != float64(10) {
+		t.Errorf("usage.input = %v, want 10", usage["input"])
+	}
+}
+
+func TestWithTracing_AllOptions(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model := &mockModel{
+		id: "m",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{Text: "ok", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	_, err := goai.GenerateText(t.Context(), model,
+		WithTracing(
+			TraceName("opts-test"),
+			PublicKey("pub"),
+			SecretKey("sec"),
+			Host(srv.URL),
+			UserID("user-42"),
+			SessionID("sess-abc"),
+			Tags("tag1", "tag2"),
+			Metadata(map[string]any{"key": "val"}),
+			Release("v1.0"),
+			Version("1.0.0"),
+			Environment("staging"),
+			PromptName("my-prompt"),
+			PromptVersion(3),
+		),
+		goai.WithPrompt("hi"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	traceBody := bodyOf(t, events, eventTrace)
+	if traceBody["name"] != "opts-test" {
+		t.Errorf("trace name = %q, want %q", traceBody["name"], "opts-test")
+	}
+	if traceBody["userId"] != "user-42" {
+		t.Errorf("userId = %q, want %q", traceBody["userId"], "user-42")
+	}
+	if traceBody["sessionId"] != "sess-abc" {
+		t.Errorf("sessionId = %q, want %q", traceBody["sessionId"], "sess-abc")
+	}
+	if traceBody["release"] != "v1.0" {
+		t.Errorf("release = %q, want %q", traceBody["release"], "v1.0")
+	}
+	if traceBody["version"] != "1.0.0" {
+		t.Errorf("version = %q, want %q", traceBody["version"], "1.0.0")
+	}
+
+	tags, ok := traceBody["tags"].([]any)
+	if !ok || len(tags) != 2 {
+		t.Errorf("tags = %v, want [tag1 tag2]", traceBody["tags"])
+	}
+
+	// Verify Environment is in trace metadata.
+	traceMeta, ok := traceBody["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("trace metadata not a map: %T", traceBody["metadata"])
+	}
+	if traceMeta["environment"] != "staging" {
+		t.Errorf("trace metadata.environment = %v, want staging", traceMeta["environment"])
+	}
+
+	// Verify Metadata values are present in trace metadata.
+	if traceMeta["key"] != "val" {
+		t.Errorf("trace metadata.key = %v, want val", traceMeta["key"])
+	}
+
+	genBody := bodyOf(t, events, eventGeneration)
+	if genBody["promptName"] != "my-prompt" {
+		t.Errorf("promptName = %q, want %q", genBody["promptName"], "my-prompt")
+	}
+	if genBody["promptVersion"] != float64(3) {
+		t.Errorf("promptVersion = %v, want 3", genBody["promptVersion"])
+	}
+}
+
+func TestWithTracing_EnvVars(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	t.Setenv("LANGFUSE_PUBLIC_KEY", "env-pub")
+	t.Setenv("LANGFUSE_SECRET_KEY", "env-sec")
+	t.Setenv("LANGFUSE_HOST", srv.URL)
+
+	model := &mockModel{
+		id: "m",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{Text: "ok", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	_, err := goai.GenerateText(t.Context(), model,
+		WithTracing(),
+		goai.WithPrompt("hi"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(getEvents()) == 0 {
+		t.Error("no events received - env var credentials were not used")
+	}
+}
+
+func TestWithTracing_MultiStep_WithToolCalls(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	callCount := 0
+	model := &mockModel{
+		id: "gpt-4o",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "my_tool", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+					Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         "done",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 20, OutputTokens: 8},
+			}, nil
+		},
+	}
+
+	_, err := goai.GenerateText(t.Context(), model,
+		WithTracing(
+			TraceName("tool-test"),
+			PublicKey("pub"),
+			SecretKey("sec"),
+			Host(srv.URL),
+		),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(goai.Tool{
+			Name:    "my_tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "tool result", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	if len(events) != 5 {
+		t.Fatalf("event count = %d, want 5; types: %v", len(events), eventTypes(events))
+	}
+
+	counts := map[string]int{}
+	for _, tp := range eventTypes(events) {
+		counts[tp]++
+	}
+	if counts[eventTrace] != 1 {
+		t.Errorf("trace events = %d, want 1", counts[eventTrace])
+	}
+	if counts[eventSpan] != 2 {
+		t.Errorf("span events = %d, want 2", counts[eventSpan])
+	}
+	if counts[eventGeneration] != 2 {
+		t.Errorf("generation events = %d, want 2", counts[eventGeneration])
+	}
+}
+
+func TestWithTracing_ConcurrentRuns(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model := &mockModel{
+		id: "gpt-4o",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         "ok",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 1, OutputTokens: 1},
+			}, nil
+		},
+	}
+
+	var wg sync.WaitGroup
+	const numGoroutines = 5
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = goai.GenerateText(context.Background(), model,
+				WithTracing(
+					PublicKey("pub"),
+					SecretKey("sec"),
+					Host(srv.URL),
+				),
+				goai.WithPrompt("hi"),
+			)
+		}()
+	}
+	wg.Wait()
+
+	events := getEvents()
+	const wantEvents = numGoroutines * 3
+	if len(events) != wantEvents {
+		t.Fatalf("event count = %d, want %d (%d runs x 3 events each); types: %v",
+			len(events), wantEvents, numGoroutines, eventTypes(events))
+	}
+
+	// Collect all trace IDs
+	traceIDs := map[string]bool{}
+	for _, e := range events {
+		if e["type"] == eventTrace {
+			if b, ok := e["body"].(map[string]any); ok {
+				if id, ok := b["id"].(string); ok {
+					traceIDs[id] = true
+				}
+			}
+		}
+	}
+	if len(traceIDs) != numGoroutines {
+		t.Errorf("distinct trace IDs = %d, want %d", len(traceIDs), numGoroutines)
+	}
+}
+
+func TestWithTracing_MissingCredentials(t *testing.T) {
+	// Clear any env vars that might provide credentials.
+	t.Setenv("LANGFUSE_PUBLIC_KEY", "")
+	t.Setenv("LANGFUSE_SECRET_KEY", "")
+	t.Setenv("LANGFUSE_HOST", "")
+
+	// Capture stderr output.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = w
+
+	opt := WithTracing()
+
+	w.Close()
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	os.Stderr = oldStderr
+
+	stderrOutput := buf.String()
+	if !strings.Contains(stderrOutput, "LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY not set") {
+		t.Errorf("expected warning on stderr, got: %q", stderrOutput)
+	}
+
+	// Verify the returned option is a no-op (doesn't panic when applied).
+	model := &mockModel{
+		id: "m",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{Text: "ok", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	_, err = goai.GenerateText(t.Context(), model,
+		opt,
+		goai.WithPrompt("hi"),
+	)
+	if err != nil {
+		t.Fatalf("no-op tracing should not cause errors: %v", err)
+	}
+}
+
+func TestWithTracing_StreamText_SingleStep(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model := &mockModel{
+		id: "gpt-4o",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "hello"},
+				provider.StreamChunk{Type: provider.ChunkText, Text: " world"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+			), nil
+		},
+	}
+
+	stream, err := goai.StreamText(t.Context(), model,
+		WithTracing(
+			TraceName("stream-with-tracing"),
+			PublicKey("pub"),
+			SecretKey("sec"),
+			Host(srv.URL),
+		),
+		goai.WithPrompt("hi"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range stream.TextStream() {
+	}
+	if stream.Err() != nil {
+		t.Fatal(stream.Err())
+	}
+
+	events := getEvents()
+	if len(events) != 3 {
+		t.Fatalf("event count = %d, want 3; types: %v", len(events), eventTypes(events))
+	}
+
+	traceBody := bodyOf(t, events, eventTrace)
+	if traceBody["name"] != "stream-with-tracing" {
+		t.Errorf("trace name = %q, want %q", traceBody["name"], "stream-with-tracing")
+	}
+
+	genBody := bodyOf(t, events, eventGeneration)
+	usage, ok := genBody["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("generation usage missing: %T", genBody["usage"])
+	}
+	if usage["input"] != float64(10) {
+		t.Errorf("usage.input = %v, want 10", usage["input"])
+	}
+}
+
+func TestWithTracing_OnFlushError(t *testing.T) {
+	// Server always returns 401 so flush fails.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	var flushErr error
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{Text: "ok", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	_, err := goai.GenerateText(t.Context(), model,
+		WithTracing(
+			PublicKey("bad"),
+			SecretKey("creds"),
+			Host(srv.URL),
+			OnFlushError(func(err error) { flushErr = err }),
+		),
+		goai.WithPrompt("hi"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if flushErr == nil {
+		t.Error("OnFlushError should have been called with a non-nil error via WithTracing")
 	}
 }
