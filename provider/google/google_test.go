@@ -460,6 +460,44 @@ func TestChat_Generate_ToolCall(t *testing.T) {
 	}
 }
 
+func TestChat_Generate_ToolCallWithThoughtSignature(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{
+			"candidates":[{"content":{"parts":[
+				{"functionCall":{"name":"bash","args":{"cmd":"ls"}},"thoughtSignature":"sig_abc123"}
+			]},"finishReason":"STOP"}],
+			"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5}
+		}`)
+	}))
+	defer server.Close()
+
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	result, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "run"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls = %d, want 1", len(result.ToolCalls))
+	}
+	tc := result.ToolCalls[0]
+	if tc.Metadata == nil {
+		t.Fatal("ToolCall.Metadata is nil, expected thoughtSignature")
+	}
+	google, ok := tc.Metadata["google"].(map[string]any)
+	if !ok {
+		t.Fatalf("Metadata[google] type = %T, want map[string]any", tc.Metadata["google"])
+	}
+	if sig, ok := google["thoughtSignature"].(string); !ok || sig != "sig_abc123" {
+		t.Errorf("thoughtSignature = %v, want sig_abc123", google["thoughtSignature"])
+	}
+}
+
 func TestChat_Generate_ErrorResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
