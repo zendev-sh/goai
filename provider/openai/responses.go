@@ -713,6 +713,20 @@ func streamResponses(ctx context.Context, body io.ReadCloser, out chan<- provide
 					}) {
 						return
 					}
+				case "rate_limit_exceeded", "429":
+					if !provider.TrySend(ctx, out, provider.StreamChunk{
+						Type:  provider.ChunkError,
+						Error: &goai.APIError{Message: msg, StatusCode: 429, IsRetryable: true},
+					}) {
+						return
+					}
+				case "server_error", "503", "502", "500":
+					if !provider.TrySend(ctx, out, provider.StreamChunk{
+						Type:  provider.ChunkError,
+						Error: &goai.APIError{Message: msg, IsRetryable: true},
+					}) {
+						return
+					}
 				default:
 					if !provider.TrySend(ctx, out, provider.StreamChunk{
 						Type:  provider.ChunkError,

@@ -366,7 +366,7 @@ func TestAzureURLRewrite(t *testing.T) {
 	if capturedPath != "/openai/v1/responses" {
 		t.Errorf("path = %s, want /openai/v1/responses", capturedPath)
 	}
-	if !strings.Contains(capturedQuery, "api-version=v1") {
+	if !strings.Contains(capturedQuery, "api-version=2025-03-01-preview") {
 		t.Errorf("query = %s", capturedQuery)
 	}
 }
@@ -536,7 +536,7 @@ func TestWithAPIVersion_Default(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// No WithAPIVersion -- should default to "v1".
+	// No WithAPIVersion -- should default to "2025-03-01-preview".
 	model := Chat("gpt-4o", WithAPIKey("k"), WithEndpoint(server.URL))
 	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
 		Messages: []provider.Message{
@@ -546,8 +546,8 @@ func TestWithAPIVersion_Default(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(capturedQuery, "api-version=v1") {
-		t.Errorf("query = %s, want api-version=v1", capturedQuery)
+	if !strings.Contains(capturedQuery, "api-version=2025-03-01-preview") {
+		t.Errorf("query = %s, want api-version=2025-03-01-preview", capturedQuery)
 	}
 }
 
@@ -1225,4 +1225,111 @@ func TestChat_PromptCachingIgnored(t *testing.T) {
 	if len(texts) != 1 || texts[0] != "ok" {
 		t.Errorf("DoStream texts = %v, want [ok]", texts)
 	}
+}
+
+// TestCognitiveServicesModel_CodexRouting verifies codex/pro models route
+// to cognitiveservices.azure.com via Responses API when deployment-based URLs enabled.
+func TestCognitiveServicesModel_CodexRouting(t *testing.T) {
+	var capturedPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, okResponsesJSON)
+	}))
+	defer server.Close()
+
+	models := []string{"gpt-5-codex", "gpt-5.2-codex", "gpt-5-pro", "gpt-5.4-pro"}
+	for _, modelID := range models {
+		t.Run(modelID, func(t *testing.T) {
+			t.Setenv("AZURE_RESOURCE_NAME", "testresource")
+			// Override endpoint via env so buildCognitiveServicesModel resolves correctly.
+			// We use WithEndpoint to provide the test server URL, but cognitiveservices
+			// builds its own URL from resource name. To intercept, we patch via httpClient.
+			model := Chat(modelID,
+				WithAPIKey("k"),
+				WithDeploymentBasedURLs(true),
+				WithHTTPClient(&http.Client{Transport: &rewriteTransport{target: server.URL}}),
+			)
+			_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+				Messages: []provider.Message{
+					{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Responses API path: /responses (not /chat/completions, not /deployments/...)
+			if !strings.Contains(capturedPath, "/responses") {
+				t.Errorf("expected Responses API path, got %s", capturedPath)
+			}
+		})
+	}
+}
+
+// TestCognitiveServicesModel_NonCodexNotRouted verifies non-codex OpenAI models
+// use deployment-based Chat Completions, not cognitiveservices.
+func TestCognitiveServicesModel_NonCodexNotRouted(t *testing.T) {
+	var capturedPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, okChatJSON)
+	}))
+	defer server.Close()
+
+	for _, modelID := range []string{"gpt-4.1", "gpt-5.4", "o3"} {
+		t.Run(modelID, func(t *testing.T) {
+			model := Chat(modelID, WithAPIKey("k"), WithEndpoint(server.URL), WithDeploymentBasedURLs(true))
+			_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+				Messages: []provider.Message{
+					{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Should use deployment-based Chat Completions path
+			if strings.Contains(capturedPath, "/responses") {
+				t.Errorf("expected Chat Completions path, got %s (Responses API should not be used for %s)", capturedPath, modelID)
+			}
+		})
+	}
+}
+
+// TestIsResponsesOnlyModel verifies the detection logic.
+func TestIsResponsesOnlyModel(t *testing.T) {
+	tests := []struct {
+		id   string
+		want bool
+	}{
+		{"gpt-5-codex", true},
+		{"gpt-5.2-codex", true},
+		{"gpt-5-pro", true},
+		{"gpt-5.4-pro", true},
+		{"gpt-4.1", false},
+		{"gpt-5.4", false},
+		{"o3", false},
+		{"codex-mini", false}, // codex CLI model, not -codex suffix
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			if got := isResponsesOnlyModel(tt.id); got != tt.want {
+				t.Errorf("isResponsesOnlyModel(%q) = %v, want %v", tt.id, got, tt.want)
+			}
+		})
+	}
+}
+
+// rewriteTransport rewrites all request URLs to a target server for testing.
+type rewriteTransport struct {
+	target string
+}
+
+func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	newReq := req.Clone(req.Context())
+	parsed, _ := req.URL.Parse(t.target + req.URL.Path)
+	parsed.RawQuery = req.URL.RawQuery
+	newReq.URL = parsed
+	newReq.Host = parsed.Host
+	return http.DefaultTransport.RoundTrip(newReq)
 }

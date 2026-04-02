@@ -289,6 +289,10 @@ type ToolCall struct {
 
 	// Input is the JSON-encoded arguments.
 	Input json.RawMessage
+
+	// Metadata carries provider-specific data that must be preserved across
+	// tool round-trips (e.g., Google's thoughtSignature).
+	Metadata map[string]any
 }
 
 // Usage tracks token consumption for a request.
