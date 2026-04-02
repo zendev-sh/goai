@@ -828,11 +828,19 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 		if part.FunctionCall != nil {
 			callID := fmt.Sprintf("call_%s_%d", part.FunctionCall.Name, callIndex)
 			callIndex++
-			result.ToolCalls = append(result.ToolCalls, provider.ToolCall{
+			tc := provider.ToolCall{
 				ID:    callID,
 				Name:  part.FunctionCall.Name,
 				Input: part.FunctionCall.Args,
-			})
+			}
+			if part.ThoughtSignature != "" {
+				tc.Metadata = map[string]any{
+					"google": map[string]any{
+						"thoughtSignature": part.ThoughtSignature,
+					},
+				}
+			}
+			result.ToolCalls = append(result.ToolCalls, tc)
 		} else if !part.Thought && part.Text != "" {
 			textParts = append(textParts, part.Text)
 		}

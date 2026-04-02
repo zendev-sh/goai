@@ -366,7 +366,7 @@ func TestAzureURLRewrite(t *testing.T) {
 	if capturedPath != "/openai/v1/responses" {
 		t.Errorf("path = %s, want /openai/v1/responses", capturedPath)
 	}
-	if !strings.Contains(capturedQuery, "api-version=v1") {
+	if !strings.Contains(capturedQuery, "api-version=2025-03-01-preview") {
 		t.Errorf("query = %s", capturedQuery)
 	}
 }
@@ -536,7 +536,7 @@ func TestWithAPIVersion_Default(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// No WithAPIVersion -- should default to "v1".
+	// No WithAPIVersion -- should default to "2025-03-01-preview".
 	model := Chat("gpt-4o", WithAPIKey("k"), WithEndpoint(server.URL))
 	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
 		Messages: []provider.Message{
@@ -546,8 +546,8 @@ func TestWithAPIVersion_Default(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(capturedQuery, "api-version=v1") {
-		t.Errorf("query = %s, want api-version=v1", capturedQuery)
+	if !strings.Contains(capturedQuery, "api-version=2025-03-01-preview") {
+		t.Errorf("query = %s, want api-version=2025-03-01-preview", capturedQuery)
 	}
 }
 

@@ -287,7 +287,7 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 			}
 
 		case provider.ChunkToolCall:
-			tc := provider.ToolCall{ID: chunk.ToolCallID, Name: chunk.ToolName, Input: json.RawMessage(chunk.ToolInput)}
+			tc := provider.ToolCall{ID: chunk.ToolCallID, Name: chunk.ToolName, Input: json.RawMessage(chunk.ToolInput), Metadata: chunk.Metadata}
 			ts.toolCalls = append(ts.toolCalls, tc)
 			ts.stepToolCalls = append(ts.stepToolCalls, tc)
 
@@ -1113,10 +1113,11 @@ func appendToolRoundTrip(
 	}
 	for _, tc := range toolCalls {
 		parts = append(parts, provider.Part{
-			Type:       provider.PartToolCall,
-			ToolCallID: tc.ID,
-			ToolName:   tc.Name,
-			ToolInput:  tc.Input,
+			Type:            provider.PartToolCall,
+			ToolCallID:      tc.ID,
+			ToolName:        tc.Name,
+			ToolInput:       tc.Input,
+			ProviderOptions: tc.Metadata,
 		})
 	}
 	msgs = append(msgs, provider.Message{Role: provider.RoleAssistant, Content: parts})
@@ -1211,9 +1212,10 @@ func drainStep(
 			}
 		case provider.ChunkToolCall:
 			dr.toolCalls = append(dr.toolCalls, provider.ToolCall{
-				ID:    chunk.ToolCallID,
-				Name:  chunk.ToolName,
-				Input: json.RawMessage(chunk.ToolInput),
+				ID:       chunk.ToolCallID,
+				Name:     chunk.ToolName,
+				Input:    json.RawMessage(chunk.ToolInput),
+				Metadata: chunk.Metadata,
 			})
 		case provider.ChunkStepFinish:
 			// Provider-internal step boundary (e.g., Anthropic extended thinking).

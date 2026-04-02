@@ -33,7 +33,7 @@ var (
 	_ provider.CapableModel  = (*chatCompletionsModel)(nil)
 )
 
-const defaultAPIVersion = "v1"
+const defaultAPIVersion = "2025-03-01-preview"
 
 // Option configures the Azure OpenAI provider.
 type Option func(*options)
@@ -84,7 +84,7 @@ func WithHTTPClient(c *http.Client) Option {
 }
 
 // WithAPIVersion sets the Azure OpenAI API version used in the api-version
-// query parameter. Defaults to "v1". Matches Vercel AI SDK's apiVersion option.
+// query parameter. Defaults to "2025-03-01-preview".
 func WithAPIVersion(v string) Option {
 	return func(o *options) {
 		o.apiVersion = v
@@ -177,6 +177,13 @@ func Chat(modelID string, opts ...Option) provider.LanguageModel {
 		return buildAIServicesModel(&o, modelID)
 	}
 
+	// Codex and pro model variants only work via Responses API on the
+	// cognitiveservices endpoint (deployment-based Chat Completions returns
+	// "unsupported operation"). Route them separately.
+	if o.useDeploymentBasedURLs && isResponsesOnlyModel(modelID) {
+		return buildCognitiveServicesModel(&o, modelID)
+	}
+
 	httpClient := buildHTTPClient(&o, modelID)
 
 	// Delegate to openai.Chat which handles Chat Completions vs Responses API routing.
@@ -189,7 +196,15 @@ func Chat(modelID string, opts ...Option) provider.LanguageModel {
 		openai.WithBaseURL("https://azure-placeholder"),
 	}
 
-	return openai.Chat(modelID, openaiOpts...)
+	model := openai.Chat(modelID, openaiOpts...)
+
+	// Deployment-based URLs don't support the Responses API on most Azure
+	// resources (returns 404). Force Chat Completions to avoid silent failures.
+	if o.useDeploymentBasedURLs {
+		return &chatCompletionsModel{inner: model}
+	}
+
+	return model
 }
 
 // isOpenAIModel returns true if the model ID is an OpenAI-native model
@@ -251,6 +266,9 @@ func forceChatCompletions(params *provider.GenerateParams) {
 		newOpts = make(map[string]any, 1)
 	}
 	newOpts["useResponsesAPI"] = false
+	// Strip Responses-API-only parameters that Chat Completions rejects.
+	delete(newOpts, "reasoning_summary")
+	delete(newOpts, "text_verbosity")
 	params.ProviderOptions = newOpts
 }
 
@@ -325,6 +343,43 @@ func buildAIServicesModel(o *options, modelID string) provider.LanguageModel {
 
 	model := openai.Chat(modelID, openaiOpts...)
 	return &chatCompletionsModel{inner: model}
+}
+
+// isResponsesOnlyModel returns true for Azure model variants that only work via
+// the Responses API on cognitiveservices.azure.com. These models return
+// "unsupported operation" on deployment-based Chat Completions.
+func isResponsesOnlyModel(modelID string) bool {
+	id := strings.ToLower(modelID)
+	return strings.Contains(id, "-codex") || strings.HasSuffix(id, "-pro")
+}
+
+// cognitiveServicesAPIVersion is used for the cognitiveservices.azure.com Responses API.
+const cognitiveServicesAPIVersion = "2025-04-01-preview"
+
+// buildCognitiveServicesModel creates an OpenAI model pointing at the Azure
+// Cognitive Services endpoint: https://{resource}.cognitiveservices.azure.com/openai
+// Codex/pro models only support Responses API, not Chat Completions.
+func buildCognitiveServicesModel(o *options, modelID string) provider.LanguageModel {
+	resourceName := extractResourceName(o)
+	baseURL := fmt.Sprintf("https://%s.cognitiveservices.azure.com/openai", resourceName)
+
+	baseTransport := http.DefaultTransport
+	if o.httpClient != nil && o.httpClient.Transport != nil {
+		baseTransport = o.httpClient.Transport
+	}
+
+	transport := &aiServicesRoundTripper{
+		base:        baseTransport,
+		apiKey:      o.apiKey,
+		tokenSource: o.tokenSource,
+		headers:     o.headers,
+		apiVersion:  cognitiveServicesAPIVersion,
+	}
+
+	httpClient := &http.Client{Transport: transport}
+
+	// openai.Chat defaults to Responses API which is what codex/pro models need.
+	return openai.Chat(modelID, openai.WithHTTPClient(httpClient), openai.WithAPIKey("azure-delegated"), openai.WithBaseURL(baseURL))
 }
 
 // aiServicesRoundTripper injects Azure auth headers and api-version query parameter
