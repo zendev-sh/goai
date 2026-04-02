@@ -4469,3 +4469,226 @@ func TestStreamText_ToolLoop_OnStepFinishPanic(t *testing.T) {
 		t.Errorf("Text = %q, want containing 'final'", result.Text)
 	}
 }
+
+// TestGenerateText_ToolLoop_EmptyFinishReason verifies that tool calls with
+// empty finish_reason (common in MiniMax, Azure MaaS deepseek) are still executed.
+func TestGenerateText_ToolLoop_EmptyFinishReason(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls: []provider.ToolCall{{
+						ID:    "tc1",
+						Name:  "get_weather",
+						Input: json.RawMessage(`{"city":"NYC"}`),
+					}},
+					FinishReason: "", // Bug: provider sends empty instead of "tool-calls"
+					Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         "Sunny in NYC",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 20, OutputTokens: 10},
+			}, nil
+		},
+	}
+
+	toolExecuted := false
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("weather?"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:        "get_weather",
+			Description: "Get weather",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
+			Execute: func(_ context.Context, input json.RawMessage) (string, error) {
+				toolExecuted = true
+				return "Sunny", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !toolExecuted {
+		t.Error("tool was not executed despite tool calls being present")
+	}
+	if callCount != 2 {
+		t.Errorf("model called %d times, want 2", callCount)
+	}
+	if result.Text != "Sunny in NYC" {
+		t.Errorf("Text = %q, want %q", result.Text, "Sunny in NYC")
+	}
+}
+
+// TestGenerateText_ToolLoop_StopFinishReason verifies that tool calls with
+// finish_reason="stop" (instead of "tool-calls") are still executed.
+func TestGenerateText_ToolLoop_StopFinishReason(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls: []provider.ToolCall{{
+						ID:    "tc1",
+						Name:  "get_weather",
+						Input: json.RawMessage(`{"city":"NYC"}`),
+					}},
+					FinishReason: provider.FinishStop, // Bug: provider sends "stop" instead of "tool-calls"
+					Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         "Done",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 20, OutputTokens: 10},
+			}, nil
+		},
+	}
+
+	toolExecuted := false
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("weather?"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:        "get_weather",
+			Description: "Get weather",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
+			Execute: func(_ context.Context, input json.RawMessage) (string, error) {
+				toolExecuted = true
+				return "Sunny", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !toolExecuted {
+		t.Error("tool was not executed despite tool calls being present")
+	}
+	if callCount != 2 {
+		t.Errorf("model called %d times, want 2", callCount)
+	}
+	if result.Text != "Done" {
+		t.Errorf("Text = %q", result.Text)
+	}
+}
+
+// TestStreamText_ToolLoop_EmptyFinishReason verifies that streaming tool calls
+// with empty finish_reason are still executed.
+func TestStreamText_ToolLoop_EmptyFinishReason(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test-stream",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkText, Text: "Looking up..."},
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "get_weather", ToolInput: `{"city":"NYC"}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: "", Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}}, // empty finish_reason
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "Sunny in NYC"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 20, OutputTokens: 8}},
+			), nil
+		},
+	}
+
+	toolExecuted := false
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("weather?"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:        "get_weather",
+			Description: "Get weather",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
+			Execute: func(_ context.Context, input json.RawMessage) (string, error) {
+				toolExecuted = true
+				return "Sunny", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for range stream.Stream() {
+	}
+
+	if !toolExecuted {
+		t.Error("tool was not executed despite tool calls being present in stream")
+	}
+	result := stream.Result()
+	if len(result.Steps) != 2 {
+		t.Fatalf("Steps = %d, want 2", len(result.Steps))
+	}
+	if !strings.Contains(result.Text, "Sunny in NYC") {
+		t.Errorf("Text = %q, want containing %q", result.Text, "Sunny in NYC")
+	}
+}
+
+// TestToolCallIDFromContext verifies that the tool call ID is available
+// inside the Execute function via ToolCallIDFromContext.
+func TestToolCallIDFromContext(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls: []provider.ToolCall{{
+						ID:    "call_abc123",
+						Name:  "my_tool",
+						Input: json.RawMessage(`{}`),
+					}},
+					FinishReason: provider.FinishToolCalls,
+					Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         "Done",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 20, OutputTokens: 10},
+			}, nil
+		},
+	}
+
+	var capturedID string
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("test"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:        "my_tool",
+			Description: "A test tool",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+			Execute: func(ctx context.Context, _ json.RawMessage) (string, error) {
+				capturedID = ToolCallIDFromContext(ctx)
+				return "ok", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capturedID != "call_abc123" {
+		t.Errorf("ToolCallIDFromContext = %q, want %q", capturedID, "call_abc123")
+	}
+}
+
+// TestToolCallIDFromContext_Empty verifies that ToolCallIDFromContext
+// returns empty string when called outside of tool execution.
+func TestToolCallIDFromContext_Empty(t *testing.T) {
+	id := ToolCallIDFromContext(t.Context())
+	if id != "" {
+		t.Errorf("ToolCallIDFromContext = %q, want empty", id)
+	}
+}

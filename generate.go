@@ -18,6 +18,19 @@ import (
 // ErrUnknownTool is returned when a tool call references a tool not in the tool map.
 var ErrUnknownTool = errors.New("goai: unknown tool")
 
+// toolCallIDKey is the context key for the current tool call ID.
+type toolCallIDKey struct{}
+
+// ToolCallIDFromContext returns the tool call ID from the context.
+// This is available inside a Tool's Execute function to identify which
+// tool call is being executed.
+func ToolCallIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(toolCallIDKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
 // TextResult is the final result of a text generation call.
 type TextResult struct {
 	// Text is the accumulated generated text across all steps.
@@ -645,6 +658,13 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 				}(fn)
 			}
 
+			// Normalize: providers that send empty/wrong finish_reason with tool calls
+			// (MiniMax, Azure MaaS deepseek, etc.) would cause the loop to exit early.
+			// The presence of tool calls is authoritative.
+			if len(ds.toolCalls) > 0 && ds.finishReason != provider.FinishToolCalls {
+				ds.finishReason = provider.FinishToolCalls
+			}
+
 			// --- Emit ChunkStepFinish ---
 			// Set Response directly on the chunk (StreamChunk.Response is a plain struct
 			// field with no restriction on who sets it). ProviderMetadata goes in Metadata
@@ -850,6 +870,13 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		// This allows callers to provide tool definitions for the model's awareness
 		// without requiring executable tools.
 		// No empty-step guard needed (unlike streaming): DoGenerate returns content or error.
+		// Normalize: providers that send empty/wrong finish_reason with tool calls
+		// (MiniMax, Azure MaaS deepseek, etc.) would cause the loop to exit early.
+		// The presence of tool calls is authoritative.
+		if len(result.ToolCalls) > 0 && result.FinishReason != provider.FinishToolCalls {
+			result.FinishReason = provider.FinishToolCalls
+		}
+
 		if result.FinishReason != provider.FinishToolCalls || len(result.ToolCalls) == 0 || len(toolMap) == 0 {
 			return buildTextResult(steps, totalUsage), nil
 		}
@@ -1014,7 +1041,8 @@ func executeToolsParallel(
 			}
 
 			start := time.Now()
-			output, err := tool.Execute(ctx, tc.Input)
+			toolCtx := context.WithValue(ctx, toolCallIDKey{}, tc.ID)
+			output, err := tool.Execute(toolCtx, tc.Input)
 			executed = true
 			results[i] = toolOutput{index: i, result: output, err: err}
 
