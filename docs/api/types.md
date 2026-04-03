@@ -19,7 +19,7 @@ The final result of a text generation call (`GenerateText` or `TextStream.Result
 
 ```go
 type TextResult struct {
-    Text         string                   // Accumulated generated text.
+    Text         string                   // Accumulated generated text (includes reasoning text when streaming).
     ToolCalls    []provider.ToolCall       // Tool calls from the final step.
     Steps        []StepResult             // Results from each generation step.
     TotalUsage   provider.Usage           // Aggregated token usage across all steps.
@@ -37,7 +37,7 @@ The result of a single generation step in a multi-step tool loop.
 ```go
 type StepResult struct {
     Number       int                      // 1-based step index.
-    Text         string                   // Text generated in this step.
+    Text         string                   // Text generated in this step (excludes reasoning text).
     ToolCalls    []provider.ToolCall       // Tool calls requested in this step.
     FinishReason provider.FinishReason    // Finish reason for this step.
     Usage        provider.Usage           // Token usage for this step.
@@ -93,6 +93,7 @@ The result of a single embedding generation.
 type EmbedResult struct {
     Embedding        []float64                 // The generated vector.
     Usage            provider.Usage            // Token consumption.
+    Response         provider.ResponseMetadata // Provider metadata.
     ProviderMetadata map[string]map[string]any // Provider-specific response data.
 }
 ```
@@ -105,6 +106,7 @@ The result of a batch embedding generation.
 type EmbedManyResult struct {
     Embeddings       [][]float64               // One vector per input value.
     Usage            provider.Usage            // Aggregated token consumption.
+    Response         provider.ResponseMetadata // Provider metadata.
     ProviderMetadata map[string]map[string]any // Provider-specific response data.
 }
 ```
@@ -116,6 +118,8 @@ The result of image generation.
 ```go
 type ImageResult struct {
     Images           []provider.ImageData      // Generated images.
+    Usage            provider.Usage            // Token consumption.
+    Response         provider.ResponseMetadata // Provider metadata.
     ProviderMetadata map[string]map[string]any // Provider-specific response data.
 }
 ```
@@ -342,13 +346,13 @@ A single event in a streaming response. The `Type` field determines which other 
 type StreamChunk struct {
     Type         StreamChunkType    // Chunk kind.
     Text         string             // Content (for ChunkText, ChunkReasoning).
-    ToolCallID   string             // Tool call fields (for ChunkToolCall).
+    ToolCallID   string             // Tool call fields (for ChunkToolCall, ChunkToolCallStreamStart).
     ToolName     string
     ToolInput    string
     FinishReason FinishReason       // For ChunkStepFinish, ChunkFinish.
-    Usage        Usage              // For ChunkFinish.
+    Usage        Usage              // For ChunkFinish (may also appear on ChunkStepFinish).
     Error        error              // For ChunkError.
-    Response     ResponseMetadata   // Populated on ChunkFinish.
+    Response     ResponseMetadata   // Populated on ChunkFinish (may also appear on ChunkStepFinish).
     Metadata     map[string]any     // Provider-specific data.
 }
 ```
@@ -455,6 +459,9 @@ type ToolCall struct {
     ID    string          // Unique identifier for this call.
     Name  string          // Tool to invoke.
     Input json.RawMessage // JSON-encoded arguments.
+
+    // Provider-specific data that must be preserved across tool round-trips.
+    Metadata map[string]any
 }
 ```
 
@@ -577,6 +584,8 @@ Response from image generation at the provider level.
 type ImageResult struct {
     Images           []ImageData                   // Generated images.
     ProviderMetadata map[string]map[string]any     // Provider-specific data.
+    Usage            Usage                         // Token/operation usage.
+    Response         ResponseMetadata              // Provider metadata.
 }
 ```
 

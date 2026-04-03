@@ -38,6 +38,8 @@ func main() {
 `GenerateText` waits for the full response before returning. Use `WithSystem` to set a system prompt:
 
 ```go
+ctx := context.Background()
+
 result, err := goai.GenerateText(ctx, model,
     goai.WithSystem("You are a helpful assistant that responds in haiku."),
     goai.WithPrompt("Tell me about Go."),
@@ -49,6 +51,8 @@ result, err := goai.GenerateText(ctx, model,
 For real-time output, use `StreamText`. It returns a `TextStream` with channel-based consumption:
 
 ```go
+ctx := context.Background()
+
 stream, err := goai.StreamText(ctx, model,
     goai.WithPrompt("Write a short story about a robot."),
 )
@@ -121,7 +125,7 @@ See the [Providers & Models](/concepts/providers-and-models) page for the full p
 
 ## Authentication
 
-Providers auto-resolve API keys from environment variables. No explicit key setup is needed if the correct variable is set.
+Providers can auto-resolve API keys from environment variables. Many examples still read env vars explicitly and pass `WithAPIKey(...)` to fail fast with clearer error messages.
 
 To override the environment variable, pass the key explicitly:
 
@@ -161,14 +165,14 @@ result, err := goai.GenerateText(ctx, model,
 )
 ```
 
-| Option | Description |
-|--------|-------------|
-| `WithSystem(s)` | System prompt |
-| `WithPrompt(s)` | User message |
-| `WithMaxOutputTokens(n)` | Limit response length |
-| `WithTemperature(t)` | Randomness (0.0 - 2.0) |
-| `WithMaxRetries(n)` | Retries on 429/5xx (default 2) |
-| `WithTimeout(d)` | Overall timeout |
+| Option                   | Description                    |
+| ------------------------ | ------------------------------ |
+| `WithSystem(s)`          | System prompt                  |
+| `WithPrompt(s)`          | User message                   |
+| `WithMaxOutputTokens(n)` | Limit response length          |
+| `WithTemperature(t)`     | Randomness (0.0 - 2.0)         |
+| `WithMaxRetries(n)`      | Retries on 429/5xx (default 2) |
+| `WithTimeout(d)`         | Overall timeout                |
 
 ## Next Steps
 

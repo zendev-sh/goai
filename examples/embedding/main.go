@@ -8,6 +8,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log"
@@ -19,9 +20,9 @@ import (
 )
 
 func main() {
-	apiKey := os.Getenv("GEMINI_API_KEY")
+	apiKey := cmp.Or(os.Getenv("GOOGLE_GENERATIVE_AI_API_KEY"), os.Getenv("GEMINI_API_KEY"))
 	if apiKey == "" {
-		log.Fatal("GEMINI_API_KEY not set")
+		log.Fatal("GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY must be set")
 	}
 
 	model := google.Embedding("gemini-embedding-001", google.WithAPIKey(apiKey))

@@ -29,11 +29,11 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 
 ## What's New
 
-> **v0.5.1**  - MiniMax provider: M2.7, M2.5, M2.1, M2 via Anthropic-compatible API. Thinking/reasoning, tool calling, streaming. [Docs →](https://goai.sh/providers/minimax)
+> **v0.5.2** - RunPod provider, Bedrock embeddings, and docs accuracy improvements. [Changelog →](https://github.com/zendev-sh/goai/releases)
 >
-> **v0.5.0**  - MCP (Model Context Protocol) client. Connect to any MCP server with 3 transports (stdio, HTTP, SSE). Auto-convert MCP tools for use with `GenerateText`. [Docs →](https://goai.sh/concepts/mcp)
+> **v0.5.1** - MCP (Model Context Protocol) client plus MiniMax provider support. [Docs →](https://goai.sh/concepts/mcp)
 >
-> **v0.4.4**  - Provider-defined tools: 20 tools across Anthropic, OpenAI, Google, Groq, xAI. Computer use, web search, code execution. [Changelog →](https://github.com/zendev-sh/goai/releases)
+> **v0.4.4** - Provider-defined tools: 20 tools across Anthropic, OpenAI, Google, Groq, xAI. Computer use, web search, code execution. [Changelog →](https://github.com/zendev-sh/goai/releases)
 
 ## Features
 
@@ -43,7 +43,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 - **Structured output**: `GenerateObject[T]` auto-generates JSON Schema from Go types via reflection
 - **Streaming**: Real-time text and partial object streaming via channels
 - **Dynamic auth**: `TokenSource` interface for OAuth, rotating keys, cloud IAM, with `CachedTokenSource` for TTL-based caching
-- **Prompt caching**: Automatic cache control for supported providers (Anthropic, Bedrock)
+- **Prompt caching**: Automatic cache control for supported providers (Anthropic, Bedrock, MiniMax)
 - **Citations/sources**: Grounding and inline citations from xAI, Perplexity, Google, OpenAI
 - **Web search**: Built-in web search tools for OpenAI, Anthropic, Google, Groq. Model decides when to search
 - **Code execution**: Server-side Python sandboxes via OpenAI, Anthropic, Google. No local setup
@@ -52,8 +52,8 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 - **MCP client**: Connect to any MCP server (stdio, HTTP, SSE), auto-convert tools for use with GoAI
 - **Observability**: Built-in Langfuse integration with hooks for request/response/step/tool tracing
 - **Telemetry hooks**: `OnRequest`, `OnResponse`, `OnStepFinish`, `OnToolCall`, `OnToolCallStart` callbacks
-- **Retry/backoff**: Automatic retry with exponential backoff on 429/5xx errors
-- **Minimal dependencies**: Core uses only stdlib; Vertex adds `golang.org/x/oauth2` for ADC
+- **Retry/backoff**: Automatic retry with exponential backoff on retryable HTTP errors (429/5xx)
+- **Minimal dependencies**: Direct dependency on `golang.org/x/oauth2`; one indirect module (`cloud.google.com/go/compute/metadata`) for ADC support
 
 ## Performance vs Vercel AI SDK
 
@@ -76,7 +76,7 @@ Requires Go 1.25+.
 
 ## Quick Start
 
-Providers auto-resolve API keys from environment variables. No explicit `WithAPIKey` needed:
+Most hosted providers auto-resolve API keys from environment variables. Local/custom providers may require explicit options:
 
 ```go
 package main
@@ -85,7 +85,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/provider/openai"
@@ -108,6 +107,8 @@ func main() {
 ## Streaming
 
 ```go
+ctx := context.Background()
+
 stream, err := goai.StreamText(ctx, model,
 	goai.WithSystem("You are a helpful assistant."),
 	goai.WithPrompt("Write a haiku about Go."),
@@ -131,6 +132,8 @@ fmt.Printf("\nTokens: %d in, %d out\n",
 Streaming with tools:
 
 ```go
+import "github.com/zendev-sh/goai/provider"
+
 stream, err := goai.StreamText(ctx, model,
 	goai.WithPrompt("What's the weather in Tokyo?"),
 	goai.WithTools(weatherTool),
@@ -187,6 +190,8 @@ final, err := stream.Result()
 Define tools with JSON Schema and an `Execute` handler. Set `MaxSteps` to enable the auto tool loop.
 
 ```go
+import "encoding/json"
+
 weatherTool := goai.Tool{
 	Name:        "get_weather",
 	Description: "Get the current weather for a city.",
@@ -333,7 +338,7 @@ See [examples/langfuse](examples/langfuse/) and [observability docs](https://goa
 
 ## Providers
 
-Every provider auto-resolves credentials from environment variables. Override with options when needed:
+Many providers auto-resolve credentials from environment variables. Others (for example `ollama`, `vllm`, `compat`) use explicit options:
 
 ```go
 // Auto-resolved: reads OPENAI_API_KEY from env
@@ -359,30 +364,30 @@ result, err := goai.GenerateText(ctx, model, goai.WithPrompt("Hello"))
 
 ### Provider Table
 
-| Provider   | Chat                           | Embed                | Image         | Auth                                        | E2E  | Import                |
-| ---------- | ------------------------------ | -------------------- | ------------- | ------------------------------------------- | ---- | --------------------- |
-| OpenAI     | `gpt-4o`, `o3`, `codex-*`      | `text-embedding-3-*` | `gpt-image-1` | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, TokenSource | Full | `provider/openai`     |
-| Anthropic  | `claude-*`                     | -                    | -             | `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, TokenSource | Full | `provider/anthropic`  |
-| Google     | `gemini-*`                     | `text-embedding-004` | `imagen-*`    | `GOOGLE_GENERATIVE_AI_API_KEY` / `GEMINI_API_KEY`, TokenSource | Full | `provider/google`     |
-| Bedrock    | `anthropic.*`, `meta.*`        | `titan-embed-*`, `cohere.embed-*`, `nova-2-*`, `marengo-*` | - | AWS keys, `AWS_BEARER_TOKEN_BEDROCK`, `AWS_BEDROCK_BASE_URL` | Full | `provider/bedrock`    |
-| Vertex     | `gemini-*`                     | `text-embedding-004` | `imagen-*`    | TokenSource, ADC                            | Unit | `provider/vertex`     |
-| Azure      | `gpt-4o`, `claude-*`           | -                    | via Azure     | `AZURE_OPENAI_API_KEY`, TokenSource         | Full | `provider/azure`      |
-| OpenRouter | various                        | -                    | -             | `OPENROUTER_API_KEY`, TokenSource           | Unit | `provider/openrouter` |
-| Mistral    | `mistral-large`, `magistral-*` | -                    | -             | `MISTRAL_API_KEY`, TokenSource              | Full | `provider/mistral`    |
-| Groq       | `mixtral-*`, `llama-*`         | -                    | -             | `GROQ_API_KEY`, TokenSource                 | Full | `provider/groq`       |
-| xAI        | `grok-*`                       | -                    | -             | `XAI_API_KEY`, TokenSource                  | Unit | `provider/xai`        |
-| Cohere     | `command-r-*`                  | `embed-*`            | -             | `COHERE_API_KEY`, TokenSource               | Unit | `provider/cohere`     |
-| DeepSeek   | `deepseek-*`                   | -                    | -             | `DEEPSEEK_API_KEY`, TokenSource             | Unit | `provider/deepseek`   |
-| MiniMax    | `MiniMax-M2.7`, `MiniMax-M2.5`, `MiniMax-M2.1`, `MiniMax-M2` | - | -  | `MINIMAX_API_KEY`, `MINIMAX_BASE_URL`, TokenSource | Full | `provider/minimax`    |
-| Fireworks  | various                        | -                    | -             | `FIREWORKS_API_KEY`, TokenSource            | Unit | `provider/fireworks`  |
-| Together   | various                        | -                    | -             | `TOGETHER_AI_API_KEY`, TokenSource          | Unit | `provider/together`   |
-| DeepInfra  | various                        | -                    | -             | `DEEPINFRA_API_KEY`, TokenSource            | Unit | `provider/deepinfra`  |
-| Perplexity | `sonar-*`                      | -                    | -             | `PERPLEXITY_API_KEY`, TokenSource           | Unit | `provider/perplexity` |
-| Cerebras   | `llama-*`                      | -                    | -             | `CEREBRAS_API_KEY`, TokenSource             | Unit | `provider/cerebras`   |
-| Ollama     | local models                   | local models         | -             | none                                        | Unit | `provider/ollama`     |
-| vLLM       | local models                   | local models         | -             | `API_KEY`, TokenSource                      | Unit | `provider/vllm`       |
-| RunPod     | any vLLM model                 | -                    | -             | `RUNPOD_API_KEY`, TokenSource               | Unit | `provider/runpod`     |
-| Compat     | any OpenAI-compatible          | any                  | -             | configurable                                | Unit | `provider/compat`     |
+| Provider   | Chat                                                         | Embed                                                      | Image         | Auth                                                                                               | E2E  | Import                |
+| ---------- | ------------------------------------------------------------ | ---------------------------------------------------------- | ------------- | -------------------------------------------------------------------------------------------------- | ---- | --------------------- |
+| OpenAI     | `gpt-4o`, `o3`, `codex-*`                                    | `text-embedding-3-*`                                       | `gpt-image-1` | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, TokenSource                                                   | Full | `provider/openai`     |
+| Anthropic  | `claude-*`                                                   | -                                                          | -             | `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, TokenSource                                             | Full | `provider/anthropic`  |
+| Google     | `gemini-*`                                                   | `text-embedding-004`                                       | `imagen-*`    | `GOOGLE_GENERATIVE_AI_API_KEY` / `GEMINI_API_KEY`, TokenSource                                     | Full | `provider/google`     |
+| Bedrock    | `anthropic.*`, `meta.*`                                      | `titan-embed-*`, `cohere.embed-*`, `nova-2-*`, `marengo-*` | -             | AWS keys, `AWS_BEARER_TOKEN_BEDROCK`, `AWS_BEDROCK_BASE_URL`                                       | Full | `provider/bedrock`    |
+| Vertex     | `gemini-*`                                                   | `text-embedding-004`                                       | `imagen-*`    | TokenSource, ADC, or `GOOGLE_API_KEY` / `GEMINI_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` fallback | Unit | `provider/vertex`     |
+| Azure      | `gpt-4o`, `claude-*`                                         | -                                                          | via Azure     | `AZURE_OPENAI_API_KEY`, TokenSource                                                                | Full | `provider/azure`      |
+| OpenRouter | various                                                      | -                                                          | -             | `OPENROUTER_API_KEY`, TokenSource                                                                  | Unit | `provider/openrouter` |
+| Mistral    | `mistral-large`, `magistral-*`                               | -                                                          | -             | `MISTRAL_API_KEY`, TokenSource                                                                     | Full | `provider/mistral`    |
+| Groq       | `mixtral-*`, `llama-*`                                       | -                                                          | -             | `GROQ_API_KEY`, TokenSource                                                                        | Full | `provider/groq`       |
+| xAI        | `grok-*`                                                     | -                                                          | -             | `XAI_API_KEY`, TokenSource                                                                         | Unit | `provider/xai`        |
+| Cohere     | `command-r-*`                                                | `embed-*`                                                  | -             | `COHERE_API_KEY`, TokenSource                                                                      | Unit | `provider/cohere`     |
+| DeepSeek   | `deepseek-*`                                                 | -                                                          | -             | `DEEPSEEK_API_KEY`, TokenSource                                                                    | Unit | `provider/deepseek`   |
+| MiniMax    | `MiniMax-M2.7`, `MiniMax-M2.5`, `MiniMax-M2.1`, `MiniMax-M2` | -                                                          | -             | `MINIMAX_API_KEY`, `MINIMAX_BASE_URL`, TokenSource                                                 | Full | `provider/minimax`    |
+| Fireworks  | various                                                      | -                                                          | -             | `FIREWORKS_API_KEY`, TokenSource                                                                   | Unit | `provider/fireworks`  |
+| Together   | various                                                      | -                                                          | -             | `TOGETHER_AI_API_KEY` (or `TOGETHER_API_KEY`), TokenSource                                         | Unit | `provider/together`   |
+| DeepInfra  | various                                                      | -                                                          | -             | `DEEPINFRA_API_KEY`, TokenSource                                                                   | Unit | `provider/deepinfra`  |
+| Perplexity | `sonar-*`                                                    | -                                                          | -             | `PERPLEXITY_API_KEY`, TokenSource                                                                  | Unit | `provider/perplexity` |
+| Cerebras   | `llama-*`                                                    | -                                                          | -             | `CEREBRAS_API_KEY`, TokenSource                                                                    | Unit | `provider/cerebras`   |
+| Ollama     | local models                                                 | local models                                               | -             | none                                                                                               | Unit | `provider/ollama`     |
+| vLLM       | local models                                                 | local models                                               | -             | Optional auth via `WithAPIKey` / `WithTokenSource`                                                 | Unit | `provider/vllm`       |
+| RunPod     | any vLLM model                                               | -                                                          | -             | `RUNPOD_API_KEY`, TokenSource                                                                      | Unit | `provider/runpod`     |
+| Compat     | any OpenAI-compatible                                        | any                                                        | -             | configurable                                                                                       | Unit | `provider/compat`     |
 
 **E2E column**: "Full" = tested with real API calls. "Unit" = tested with mock HTTP servers (100% coverage).
 
@@ -401,7 +406,7 @@ Last run: 2026-03-27. 103 models tested (generate + stream).
 | Groq (2)     | `llama-3.1-8b-instant`, `llama-3.3-70b-versatile`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | Mistral (5)  | `mistral-small-latest`, `mistral-large-latest`, `devstral-small-2507`, `codestral-latest`, `magistral-medium-latest`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | Cerebras (1) | `llama3.1-8b`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| MiniMax (4)  | `MiniMax-M2.7`, `MiniMax-M2.5`, `MiniMax-M2.1`, `MiniMax-M2` (generate + stream + tools + thinking)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| MiniMax (4)  | `MiniMax-M2.7`, `MiniMax-M2.5`, `MiniMax-M2.1`, `MiniMax-M2` (generate + stream + tools + thinking)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 </details>
 
@@ -534,13 +539,13 @@ fmt.Printf("Model used: %s\n", result.Response.Model)
 
 ### Telemetry Hooks
 
-| Option                 | Description                      |
-| ---------------------- | -------------------------------- |
-| `WithOnRequest(fn)`    | Called before each API call      |
-| `WithOnResponse(fn)`   | Called after each API call       |
-| `WithOnStepFinish(fn)` | Called after each tool loop step |
-| `WithOnToolCall(fn)`        | Called after each tool execution              |
-| `WithOnToolCallStart(fn)`   | Called before each tool execution begins      |
+| Option                    | Description                              |
+| ------------------------- | ---------------------------------------- |
+| `WithOnRequest(fn)`       | Called before each API call              |
+| `WithOnResponse(fn)`      | Called after each API call               |
+| `WithOnStepFinish(fn)`    | Called after each tool loop step         |
+| `WithOnToolCall(fn)`      | Called after each tool execution         |
+| `WithOnToolCallStart(fn)` | Called before each tool execution begins |
 
 ### Structured Output Options
 
@@ -570,7 +575,7 @@ fmt.Printf("Model used: %s\n", result.Response.Model)
 
 ## Error Handling
 
-GoAI returns typed errors for actionable failure modes:
+GoAI generation and image APIs return typed errors for actionable failure modes (MCP client APIs return `*mcp.MCPError`):
 
 ```go
 result, err := goai.GenerateText(ctx, model, goai.WithPrompt("..."))
@@ -585,7 +590,7 @@ if err != nil {
 			// 429 rate limit, 503 - already retried MaxRetries times
 		}
 		fmt.Printf("API error %d: %s\n", apiErr.StatusCode, apiErr.Message)
-		// apiErr.ResponseBody and apiErr.ResponseHeaders available for debugging
+		// HTTP API errors include ResponseBody and ResponseHeaders for debugging
 	default:
 		// Network error, context cancelled, etc.
 	}
@@ -594,12 +599,12 @@ if err != nil {
 
 Error types:
 
-| Type | Fields | When |
-|------|--------|------|
-| `APIError` | `StatusCode`, `Message`, `IsRetryable`, `ResponseBody`, `ResponseHeaders` | Non-2xx API responses |
-| `ContextOverflowError` | `Message`, `ResponseBody` | Prompt exceeds model context window |
+| Type                   | Fields                                                                    | When                                |
+| ---------------------- | ------------------------------------------------------------------------- | ----------------------------------- |
+| `APIError`             | `StatusCode`, `Message`, `IsRetryable`, `ResponseBody`, `ResponseHeaders` | Non-2xx API responses               |
+| `ContextOverflowError` | `Message`, `ResponseBody`                                                 | Prompt exceeds model context window |
 
-Retry behavior: automatic exponential backoff on 429/5xx. Respects `Retry-After` and `retry-after-ms` headers. OpenAI 404 treated as retryable (model propagation delay).
+Retry behavior: automatic exponential backoff on retryable HTTP errors (429/5xx, plus OpenAI 404 propagation). `retry-after-ms` and numeric `Retry-After` (seconds) are respected. Retries apply to request-level failures (including initial stream connection), not mid-stream error events.
 
 ## Provider-Defined Tools
 

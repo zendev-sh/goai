@@ -34,7 +34,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 1. Builds request parameters from the provided options.
 2. Calls `model.DoGenerate` with automatic retry on transient errors.
 3. If the model returns tool calls and executable tools are registered, executes them and appends results to the conversation.
-4. Repeats up to `MaxSteps` times (default 1, meaning no tool loop).
+4. Repeats up to `MaxSteps` times (default 1 = single model step; if that step requests executable tools, they can still be executed before returning).
 5. Fires telemetry hooks (`OnRequest`, `OnResponse`, `OnStepFinish`, `OnToolCall`) at appropriate points.
 
 **Example:**
@@ -179,7 +179,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 2. Sets `ResponseFormat` on the provider request to enable native JSON mode.
 3. Parses the model's JSON response into the target type `T`.
 
-When tools with `Execute` functions are provided and `MaxSteps > 1`, `GenerateObject` runs a tool loop identical to `GenerateText`. `ResponseFormat` is set on every step, and the model decides when to call tools vs produce the final JSON output. Structured output is parsed from the step that returns `finishReason` `"stop"`.
+When tools with `Execute` functions are provided and `MaxSteps > 1`, `GenerateObject` runs a tool loop identical to `GenerateText`. `ResponseFormat` is set on every step, and the model decides when to call tools vs produce the final JSON output. Structured output is parsed from the first step that is not a tool-call step (i.e. any step whose `finishReason` is not `"tool-calls"`).
 
 **Example:**
 
@@ -352,10 +352,10 @@ func GenerateImage(ctx context.Context, model provider.ImageModel, opts ...Image
 
 **Parameters:**
 
-| Name    | Type                  | Description                                                 |
-| ------- | --------------------- | ----------------------------------------------------------- |
-| `ctx`   | `context.Context`     | Request context.                                            |
-| `model` | `provider.ImageModel` | The image model to use.                                     |
+| Name    | Type                  | Description                                                                       |
+| ------- | --------------------- | --------------------------------------------------------------------------------- |
+| `ctx`   | `context.Context`     | Request context.                                                                  |
+| `model` | `provider.ImageModel` | The image model to use.                                                           |
 | `opts`  | `...ImageOption`      | Image-specific options (prompt, count, size, aspect ratio, max retries, timeout). |
 
 Note: `GenerateImage` uses `ImageOption` instead of `Option`. See the [Options](options.md) page for image-specific options.
@@ -450,6 +450,8 @@ func SchemaFrom[T any]() json.RawMessage
 
 **Supported types:** string, bool, int (all sizes), uint (all sizes), float32/64, slices, maps with string keys, structs, `time.Time` (string with `date-time` format), `json.RawMessage` (any type), and recursive types. Embedded structs are flattened. Pointer types produce nullable schemas (`type: ["<base>", "null"]`).
 
+> **Limitation:** mutually recursive named slice types (for example `type A []B; type B []A`) are not supported and can overflow the stack. Use struct wrappers instead.
+
 **Example:**
 
 ```go
@@ -471,3 +473,15 @@ schema := goai.SchemaFrom[City]()
 ## Error Utility Functions
 
 See [Errors](errors.md) for `IsOverflow`, `ParseHTTPError`, `ParseHTTPErrorWithHeaders`, `ParseStreamError`, `ClassifyStreamError`, `ErrUnknownTool`, and error type documentation.
+
+## Tool Call Context Utility
+
+### ToolCallIDFromContext
+
+Returns the provider tool call ID from a tool execution context.
+
+```go
+func ToolCallIDFromContext(ctx context.Context) string
+```
+
+This is useful inside a tool `Execute` function when you need to correlate logs or telemetry with the provider's tool call identifier.

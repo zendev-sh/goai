@@ -46,7 +46,10 @@ result, err := goai.GenerateText(ctx, model,
 
 ## Single Step vs Auto Loop
 
-By default, `MaxSteps` is 1. The model can request tool calls, but GoAI does not execute them automatically. The tool calls appear in `result.ToolCalls` for you to handle.
+By default, `MaxSteps` is 1.
+
+- `GenerateText`: if the model requests tool calls and matching tools have `Execute`, GoAI executes those tools in that step, then returns (no follow-up model step).
+- `StreamText`: automatic tool looping requires `WithMaxSteps(2+)`; with `MaxSteps(1)`, tool calls are surfaced in the stream/result for you to handle.
 
 Set `WithMaxSteps(n)` to enable the auto tool loop. GoAI will:
 
@@ -132,17 +135,17 @@ goai.WithOnToolCall(func(info goai.ToolCallInfo) {
 
 ### ToolCallInfo Fields
 
-| Field          | Type               | Description                                                                 |
-| -------------- | ------------------ | --------------------------------------------------------------------------- |
-| `ToolCallID`   | `string`           | Provider-assigned identifier for this tool call                             |
-| `ToolName`     | `string`           | Name of the tool that was executed                                          |
-| `Step`         | `int`              | 1-based index of the generation step in which this tool was called          |
-| `Input`        | `json.RawMessage`  | Raw JSON arguments passed to the tool                                       |
-| `Output`       | `string`           | String result returned by the tool (empty if the tool errored)              |
-| `OutputObject` | `any`              | Parsed JSON value of Output when valid JSON; nil otherwise                  |
-| `StartTime`    | `time.Time`        | When the tool execution began                                               |
-| `Duration`     | `time.Duration`    | Time taken to execute the tool                                              |
-| `Error`        | `error`            | Error returned by the tool, if any                                          |
+| Field          | Type              | Description                                                        |
+| -------------- | ----------------- | ------------------------------------------------------------------ |
+| `ToolCallID`   | `string`          | Provider-assigned identifier for this tool call                    |
+| `ToolName`     | `string`          | Name of the tool that was executed                                 |
+| `Step`         | `int`             | 1-based index of the generation step in which this tool was called |
+| `Input`        | `json.RawMessage` | Raw JSON arguments passed to the tool                              |
+| `Output`       | `string`          | String result returned by the tool (empty if the tool errored)     |
+| `OutputObject` | `any`             | Parsed JSON value of Output when valid JSON; nil otherwise         |
+| `StartTime`    | `time.Time`       | When the tool execution began                                      |
+| `Duration`     | `time.Duration`   | Time taken to execute the tool                                     |
+| `Error`        | `error`           | Error returned by the tool, if any                                 |
 
 > **Note:** When multiple tools execute in a single step, OnToolCall callbacks fire concurrently from separate goroutines. Order is non-deterministic.
 

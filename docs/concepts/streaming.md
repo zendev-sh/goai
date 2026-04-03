@@ -50,17 +50,17 @@ for chunk := range stream.Stream() {
 
 ### Chunk Types
 
-| Type | Fields Used | Description |
-|------|------------|-------------|
-| `ChunkText` | `Text`, `Metadata` | Generated text content |
-| `ChunkReasoning` | `Text`, `Metadata` | Extended thinking / chain-of-thought |
-| `ChunkToolCall` | `ToolCallID`, `ToolName`, `ToolInput` | Complete tool call |
-| `ChunkToolCallStreamStart` | `ToolCallID`, `ToolName` | Start of a streaming tool call |
-| `ChunkToolCallDelta` | `ToolInput` | Incremental tool call input |
-| `ChunkToolResult` | `Text` | Tool execution result |
-| `ChunkStepFinish` | `FinishReason`, `Usage`, `Response`, `Metadata` | End of a tool-loop step |
-| `ChunkFinish` | `FinishReason`, `Usage`, `Response`, `Metadata` | End of generation |
-| `ChunkError` | `Error` | Stream error |
+| Type                       | Fields Used                                     | Description                          |
+| -------------------------- | ----------------------------------------------- | ------------------------------------ |
+| `ChunkText`                | `Text`, `Metadata`                              | Generated text content               |
+| `ChunkReasoning`           | `Text`, `Metadata`                              | Extended thinking / chain-of-thought |
+| `ChunkToolCall`            | `ToolCallID`, `ToolName`, `ToolInput`           | Complete tool call                   |
+| `ChunkToolCallStreamStart` | `ToolCallID`, `ToolName`                        | Start of a streaming tool call       |
+| `ChunkToolCallDelta`       | `ToolInput`                                     | Incremental tool call input          |
+| `ChunkToolResult`          | `Text`                                          | Tool execution result                |
+| `ChunkStepFinish`          | `FinishReason`, `Usage`, `Response`, `Metadata` | End of a tool-loop step              |
+| `ChunkFinish`              | `FinishReason`, `Usage`, `Response`, `Metadata` | End of generation                    |
+| `ChunkError`               | `Error`                                         | Stream error                         |
 
 `Metadata` carries provider-specific data: `ChunkFinish` may include `"providerMetadata"` (OpenAI Chat Completions via openaicompat) or flat keys like `"iterations"` (Anthropic) and `"cacheWriteInputTokens"` (Bedrock). These are propagated into `TextResult.ProviderMetadata` and `Response.ProviderMetadata` respectively. Note: the OpenAI Responses API streaming path does not populate `ProviderMetadata` on the finish chunk — logprobs are only available via `GenerateText`. Reasoning summaries are delivered as `ChunkReasoning` chunks during streaming rather than appearing in `ProviderMetadata`.
 
@@ -80,6 +80,7 @@ Both `TextStream` and `ObjectStream[T]` start a background goroutine when create
 This goroutine runs until the stream is fully consumed or the context is cancelled.
 
 **Always do one of the following:**
+
 - Consume the full stream via `Stream()`, `TextStream()`, or `PartialObjectStream()` channels
 - Call `Result()` which drains the stream internally
 - Cancel the context passed to `StreamText`/`StreamObject`
@@ -89,7 +90,7 @@ The leaked goroutine will be blocked writing to its output channel until the pro
 
 ## Mutual Exclusivity
 
-`TextStream()` and `Stream()` are mutually exclusive - call only one of them. Both start a background goroutine that consumes from the provider's stream. Calling the second one after the first returns a closed channel.
+`TextStream()` and `Stream()` are mutually exclusive - call only one of them. Only the first call starts the background consumer goroutine; calling the second one after the first returns a closed channel.
 
 `Result()` can always be called, including after `TextStream()` or `Stream()`. If called after a streaming method, it waits for the stream to finish and returns the accumulated data.
 
@@ -173,12 +174,52 @@ if err != nil {
 fmt.Println(result.Text)
 ```
 
+## Streaming Objects
+
+`StreamObject[T]` returns an `*ObjectStream[T]` which provides both incremental partial objects and a final typed result:
+
+```go
+stream, err := goai.StreamObject[MyStruct](ctx, model,
+    goai.WithPrompt("Generate a struct"),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+// PartialObjectStream() returns a channel of partial typed objects
+// Use this for progressive UI updates as fields become available
+for partial := range stream.PartialObjectStream() {
+    fmt.Printf("title=%q sections=%d\n", partial.Title, len(partial.Sections))
+}
+
+// Result() blocks until the stream completes, then returns the final object
+result, err := stream.Result()
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Printf("Parsed: %+v\n", result.Object)
+
+// Err() checks for streaming errors
+if err := stream.Err(); err != nil {
+    log.Fatal("stream error:", err)
+}
+```
+
+### ObjectStream vs PartialObjectStream
+
+| Method                  | Use Case                  | Returns                            |
+| ----------------------- | ------------------------- | ---------------------------------- |
+| `PartialObjectStream()` | Progressive typed updates | `*T` partial objects               |
+| `Result()`              | Final typed result        | `*ObjectResult[T]` with `Object T` |
+
+`ObjectStream` does not expose a raw `Stream()` method; use `PartialObjectStream()` for incremental updates and `Result()` for the final value.
+
 ## Hooks on Streaming Calls
 
-`OnRequest` and `OnResponse` hooks fire on streaming paths the same way they do for `GenerateText`:
+`OnRequest` and `OnResponse` hooks fire on streaming paths similarly to `GenerateText`:
 
 - `OnRequest` fires before the stream begins (before the HTTP request is issued).
-- `OnResponse` fires after the stream is fully consumed — when the internal goroutine drains the last chunk and the `TextStream()` or `Stream()` channel closes. If the initial `StreamText` call itself returns an error (before any chunks are read), `OnResponse` fires immediately with that error.
+- `OnResponse` fires after each step is drained (including intermediate tool-call steps). For non-tool-loop streaming it fires once. If the initial `StreamText` call itself returns an error (before any chunks are read), `OnResponse` fires immediately with that error.
 
 ```go
 stream, err := goai.StreamText(ctx, model,
@@ -194,6 +235,8 @@ stream, err := goai.StreamText(ctx, model,
 ```
 
 `OnToolCall` and `OnStepFinish` also fire during streaming tool loops, with the same semantics as in `GenerateText`.
+
+> **Note:** In streaming tool loops, provider-specific metadata is attached to each `ChunkStepFinish.Metadata` under keys like `"providerMetadata"`. The final `ChunkFinish` includes aggregated usage, finish reason, and final response metadata.
 
 ## TextResult Fields
 

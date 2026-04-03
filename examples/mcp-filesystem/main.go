@@ -7,8 +7,8 @@
 //
 // Usage:
 //
-//	go run ./examples/mcp-filesystem /tmp
-//	go run ./examples/mcp-filesystem .
+//	go run ./examples/mcp-filesystem/main.go /tmp
+//	go run ./examples/mcp-filesystem/main.go .
 package main
 
 import (
@@ -22,7 +22,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		log.Fatal("usage: go run ./examples/mcp-filesystem <directory>")
+		log.Fatal("usage: go run ./examples/mcp-filesystem/main.go <directory>")
 	}
 	dir := os.Args[1]
 	ctx := context.Background()

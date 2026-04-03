@@ -5,7 +5,9 @@ description: "Use built-in server-side tools from OpenAI, Anthropic, Google, xAI
 
 # Provider-Defined Tools
 
-Provider-defined tools are built-in capabilities that execute server-side at the provider. Unlike regular tools where you supply an `Execute` function, provider tools are handled entirely by the provider's API. The model decides when to use them, and the provider executes them without any round-trip to your code.
+Provider-defined tools are built-in capabilities that execute server-side at the provider. Unlike regular tools where you supply an `Execute` function, provider tools are handled entirely by the provider's API.
+
+In practice, this means you pass the tool definition and the provider performs the tool execution as part of the model response (there is no Go-side `Execute` callback).
 
 ## How They Work
 
@@ -84,6 +86,19 @@ td := anthropic.Tools.WebSearch(
     anthropic.WithMaxUses(5),
 )
 
+// Additional web search options:
+td = anthropic.Tools.WebSearch(
+    // Exclude domains from results
+    anthropic.WithBlockedDomains("example.com"),
+    // Set user location for geographically relevant results
+    anthropic.WithWebSearchUserLocation(anthropic.WebSearchLocation{
+        City:     "San Francisco",
+        Region:   "California",
+        Country:  "US",
+        Timezone: "America/Los_Angeles",
+    }),
+)
+
 // Code execution (no options needed)
 td := anthropic.Tools.CodeExecution()
 ```
@@ -132,41 +147,41 @@ td := openai.Tools.ImageGeneration(
 
 **Additional WebSearch options:**
 
-| Option                                         | Type                 | Description                                         |
-| ---------------------------------------------- | -------------------- | --------------------------------------------------- |
-| `WithSearchContextSize(size string)`           | `string`             | `"low"`, `"medium"` (default), `"high"` — controls context breadth and cost |
-| `WithUserLocation(loc WebSearchLocation)`      | `WebSearchLocation`  | Location hint for geographically relevant results (`Country`, `City`, `Timezone`) |
-| `WithSearchFilters(filters WebSearchFilters)`  | `WebSearchFilters`   | Domain allow-list for search results                |
-| `WithExternalWebAccess(enabled bool)`          | `bool`               | `true` = live content (default), `false` = cached   |
+| Option                                        | Type                | Description                                                                       |
+| --------------------------------------------- | ------------------- | --------------------------------------------------------------------------------- |
+| `WithSearchContextSize(size string)`          | `string`            | `"low"`, `"medium"` (default), `"high"` — controls context breadth and cost       |
+| `WithUserLocation(loc WebSearchLocation)`     | `WebSearchLocation` | Location hint for geographically relevant results (`Country`, `City`, `Timezone`) |
+| `WithSearchFilters(filters WebSearchFilters)` | `WebSearchFilters`  | Domain allow-list for search results                                              |
+| `WithExternalWebAccess(enabled bool)`         | `bool`              | `true` = live content (default), `false` = cached                                 |
 
 **Additional CodeInterpreter options:**
 
-| Option                                               | Type                         | Description                                       |
-| ---------------------------------------------------- | ---------------------------- | ------------------------------------------------- |
-| `WithContainerID(id string)`                         | `string`                     | Use an existing container by ID                   |
+| Option                                                    | Type                        | Description                                       |
+| --------------------------------------------------------- | --------------------------- | ------------------------------------------------- |
+| `WithContainerID(id string)`                              | `string`                    | Use an existing container by ID                   |
 | `WithContainerFiles(container *CodeInterpreterContainer)` | `*CodeInterpreterContainer` | Auto-provisioned container with uploaded file IDs |
 
 **Additional FileSearch options:**
 
-| Option                                           | Type                 | Description                                              |
-| ------------------------------------------------ | -------------------- | -------------------------------------------------------- |
-| `WithRanking(ranking FileSearchRanking)`         | `FileSearchRanking`  | Ranking options: `Ranker` (string) and `ScoreThreshold` (0–1) |
+| Option                                            | Type                | Description                                                                       |
+| ------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------- |
+| `WithRanking(ranking FileSearchRanking)`          | `FileSearchRanking` | Ranking options: `Ranker` (string) and `ScoreThreshold` (0–1)                     |
 | `WithFileSearchFilters(filters FileSearchFilter)` | `FileSearchFilter`  | Metadata filter; use `*FileSearchComparisonFilter` or `*FileSearchCompoundFilter` |
 
 **Additional ImageGeneration options:**
 
-| Option                                           | Type                    | Description                                                |
-| ------------------------------------------------ | ----------------------- | ---------------------------------------------------------- |
-| `WithBackground(bg string)`                     | `string`                | Background type for the generated image                    |
-| `WithInputFidelity(fidelity string)`             | `string`                | `"low"` or `"high"` input processing fidelity              |
-| `WithInputImageMask(mask ImageGenerationMask)`   | `ImageGenerationMask`   | Inpainting mask (`FileID` or `ImageURL`)                   |
-| `WithImageModel(model string)`                   | `string`                | Image model to use (default: `"gpt-image-1"`)             |
-| `WithModeration(mod string)`                     | `string`                | Moderation level (default: `"auto"`)                       |
-| `WithOutputCompression(level int)`               | `int`                   | Output compression 0–100                                   |
-| `WithOutputFormat(format string)`                | `string`                | `"png"`, `"jpeg"`, `"webp"`                                |
-| `WithPartialImages(n int)`                       | `int`                   | Partial images in streaming (0–3)                          |
-| `WithImageQuality(quality string)`               | `string`                | `"auto"`, `"low"`, `"medium"`, `"high"`                    |
-| `WithImageSize(size string)`                     | `string`                | `"auto"`, `"1024x1024"`, `"1024x1536"`, `"1536x1024"`     |
+| Option                                         | Type                  | Description                                           |
+| ---------------------------------------------- | --------------------- | ----------------------------------------------------- |
+| `WithBackground(bg string)`                    | `string`              | Background type for the generated image               |
+| `WithInputFidelity(fidelity string)`           | `string`              | `"low"` or `"high"` input processing fidelity         |
+| `WithInputImageMask(mask ImageGenerationMask)` | `ImageGenerationMask` | Inpainting mask (`FileID` or `ImageURL`)              |
+| `WithImageModel(model string)`                 | `string`              | Image model to use (default: `"gpt-image-1"`)         |
+| `WithModeration(mod string)`                   | `string`              | Moderation level (default: `"auto"`)                  |
+| `WithOutputCompression(level int)`             | `int`                 | Output compression 0–100                              |
+| `WithOutputFormat(format string)`              | `string`              | `"png"`, `"jpeg"`, `"webp"`                           |
+| `WithPartialImages(n int)`                     | `int`                 | Partial images in streaming (0–3)                     |
+| `WithImageQuality(quality string)`             | `string`              | `"auto"`, `"low"`, `"medium"`, `"high"`               |
+| `WithImageSize(size string)`                   | `string`              | `"auto"`, `"1024x1024"`, `"1024x1536"`, `"1536x1024"` |
 
 ### Google (3 tools)
 
@@ -184,6 +199,17 @@ Import: `github.com/zendev-sh/goai/provider/google`
 // Google Search with time range filter
 td := google.Tools.GoogleSearch(
     google.WithTimeRange("2025-01-01T00:00:00Z", "2025-12-31T23:59:59Z"),
+)
+
+// Additional Google Search options:
+td = google.Tools.GoogleSearch(
+    // Enable web search (enabled by default in grounding)
+    google.WithWebSearch(),
+    // Enable image search results
+    google.WithImageSearch(),
+    // Or combine both
+    google.WithWebSearch(),
+    google.WithImageSearch(),
 )
 
 // URL context (no options)
@@ -210,10 +236,28 @@ td := xai.Tools.WebSearch(
     xai.WithAllowedDomains("go.dev", "github.com"),
 )
 
+// Additional web search options:
+td = xai.Tools.WebSearch(
+    // Exclude domains from results
+    xai.WithExcludedDomains("example.com"),
+    // Enable image understanding in search results
+    xai.WithWebSearchImageUnderstanding(true),
+)
+
 // X search with date range and handle filtering
-td := xai.Tools.XSearch(
+td = xai.Tools.XSearch(
     xai.WithAllowedXHandles("@golang"),
     xai.WithXSearchDateRange("2025-01-01", "2025-12-31"),
+)
+
+// Additional X search options:
+td = xai.Tools.XSearch(
+    // Exclude posts from these handles
+    xai.WithExcludedXHandles("@spam"),
+    // Enable image understanding in X posts
+    xai.WithXSearchImageUnderstanding(true),
+    // Enable video understanding in X posts
+    xai.WithXSearchVideoUnderstanding(true),
 )
 ```
 

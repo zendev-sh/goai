@@ -39,16 +39,6 @@ type WeatherReport struct {
 func main() {
 	model := openai.Chat("gpt-4o-mini", openai.WithAPIKey(os.Getenv("OPENAI_API_KEY")))
 
-	// Create a Hooks instance once. The HTTP client is shared across runs.
-	// Credentials are read from LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST.
-	lf := langfuse.New(langfuse.Config{
-		TraceName: "weather-agent",
-		Version:   "1.0.0",
-		OnFlushError: func(err error) {
-			log.Printf("langfuse flush error: %v", err)
-		},
-	})
-
 	// Tool that simulates fetching weather data.
 	weatherTool := goai.Tool{
 		Name:        "get_weather",
@@ -67,17 +57,18 @@ func main() {
 
 	ctx := context.Background()
 
-	// --- Single run with Run() ---
-	// Run() returns fresh options for a one-off call.
-	fmt.Println("=== Single run ===")
+	// --- WithTracing: simple one-liner ---
+	// WithTracing() reads credentials from env vars and returns a single goai.Option.
+	fmt.Println("=== WithTracing (simple) ===")
 	result, err := goai.GenerateObject[WeatherReport](ctx, model,
-		append(
-			lf.Run(),
-			goai.WithSystem("You are a weather assistant. Always call get_weather before answering."),
-			goai.WithPrompt("What's the weather in Tokyo?"),
-			goai.WithTools(weatherTool),
-			goai.WithMaxSteps(3),
-		)...,
+		langfuse.WithTracing(
+			langfuse.TraceName("weather-agent"),
+			langfuse.Version("1.0.0"),
+		),
+		goai.WithSystem("You are a weather assistant. Always call get_weather before answering."),
+		goai.WithPrompt("What's the weather in Tokyo?"),
+		goai.WithTools(weatherTool),
+		goai.WithMaxSteps(3),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -85,42 +76,6 @@ func main() {
 	fmt.Printf("City: %s\nTemp: %s\nSummary: %s\n", result.Object.City, result.Object.Temperature, result.Object.Summary)
 	fmt.Printf("Steps: %d | Tokens: %d in / %d out\n\n",
 		len(result.Steps), result.Usage.InputTokens, result.Usage.OutputTokens)
-
-	// --- Reusable factory with With() ---
-	// With() bakes in base options and returns a factory you call per run.
-	// Use this when you run the same agent multiple times (e.g. in a loop).
-	fmt.Println("=== Reusable factory (two cities) ===")
-	runAgent := lf.With(
-		goai.WithSystem("You are a weather assistant. Always call get_weather before answering."),
-		goai.WithTools(weatherTool),
-		goai.WithMaxSteps(3),
-	)
-
-	for _, city := range []string{"London", "Sydney"} {
-		r, err := goai.GenerateObject[WeatherReport](ctx, model,
-			append(runAgent(), goai.WithPrompt("What's the weather in "+city+"?"))...,
-		)
-		if err != nil {
-			log.Printf("%s: %v", city, err)
-			continue
-		}
-		fmt.Printf("%s: %s — %s\n", r.Object.City, r.Object.Temperature, r.Object.Summary)
-	}
-
-	// --- WithTracing: simple one-liner ---
-	// WithTracing() reads credentials from env vars and returns a single goai.Option.
-	fmt.Println("\n=== WithTracing (simple) ===")
-	r2, err := goai.GenerateObject[WeatherReport](ctx, model,
-		langfuse.WithTracing(),
-		goai.WithSystem("You are a weather assistant. Always call get_weather before answering."),
-		goai.WithPrompt("What's the weather in Berlin?"),
-		goai.WithTools(weatherTool),
-		goai.WithMaxSteps(3),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("Berlin: %s -- %s\n", r2.Object.Temperature, r2.Object.Summary)
 
 	// --- WithTracing: with session, user, and tags ---
 	fmt.Println("\n=== WithTracing (with options) ===")

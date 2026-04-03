@@ -8,7 +8,7 @@
 //
 // Usage:
 //
-//	go run ./examples/mcp-sse
+//	go run ./examples/mcp-sse/main.go
 package main
 
 import (

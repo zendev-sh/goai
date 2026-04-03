@@ -363,6 +363,7 @@ goai.WithProviderOptions(opts map[string]any)      // provider-specific params
 goai.WithOnRequest(fn func(RequestInfo))           // before each API call
 goai.WithOnResponse(fn func(ResponseInfo))         // after each API call
 goai.WithOnStepFinish(fn func(StepResult))         // after each step
+goai.WithOnToolCallStart(fn func(ToolCallStartInfo)) // before each tool execution
 goai.WithOnToolCall(fn func(ToolCallInfo))         // after each tool execution
 
 goai.WithExplicitSchema(schema json.RawMessage)    // override auto-generated schema
@@ -534,8 +535,8 @@ Fireworks, Together, DeepInfra, OpenRouter, Perplexity, Cerebras
 
 ### Local
 
-| Provider | Import            | Chat | Embed | Default URL       |
-| -------- | ----------------- | ---- | ----- | ----------------- |
+| Provider | Import            | Chat | Embed | Default URL          |
+| -------- | ----------------- | ---- | ----- | -------------------- |
 | Ollama   | `provider/ollama` | Yes  | Yes   | `localhost:11434/v1` |
 | vLLM     | `provider/vllm`   | Yes  | Yes   | `localhost:8000/v1`  |
 | RunPod   | `provider/runpod` | Yes  | -     | `RUNPOD_ENDPOINT_ID` |

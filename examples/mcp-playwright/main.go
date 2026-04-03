@@ -7,7 +7,7 @@
 //
 // Usage:
 //
-//	go run ./examples/mcp-playwright
+//	go run ./examples/mcp-playwright/main.go
 package main
 
 import (

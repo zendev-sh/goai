@@ -175,7 +175,7 @@ result, err := goai.GenerateObject[WeatherSummary](ctx, model,
 )
 ```
 
-The schema is sent on every step. The model freely interleaves tool calls and eventually produces the final JSON output when it is ready. Structured output is parsed from the step that returns with finish reason `"stop"`.
+The schema is sent on every step. The model freely interleaves tool calls and eventually produces the final JSON output when it is ready. Structured output is parsed from the first non-tool-call step.
 
 ### ObjectResult.Steps
 
@@ -195,7 +195,7 @@ for _, step := range result.Steps {
 
 ### MaxSteps Exhaustion
 
-If `MaxSteps` is reached before the model produces a structured output step (finish reason `"stop"`), `GenerateObject` returns an error:
+If `MaxSteps` is reached before the model produces a non-tool-call structured output step, `GenerateObject` returns an error:
 
 ```
 goai: max steps (5) reached without producing structured output

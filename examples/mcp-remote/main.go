@@ -8,7 +8,7 @@
 //
 // Usage:
 //
-//	go run ./examples/mcp-remote
+//	go run ./examples/mcp-remote/main.go
 package main
 
 import (
@@ -29,6 +29,8 @@ func main() {
 
 	// --- Start testserver in HTTP mode ---
 	fmt.Println("Starting testserver in HTTP mode...")
+	// This example expects a local MCP test server package at ./mcp/testserver.
+	// If you don't have one, use the public MCP examples like mcp-filesystem.
 	cmd := exec.CommandContext(ctx, "go", "run", "./mcp/testserver", "--mode=http", "--addr=:0")
 	cmd.Stderr = os.Stderr
 
