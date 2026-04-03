@@ -84,6 +84,9 @@ func main() {
 		imgModel = azure.Image("gpt-image-1",
 			azure.WithAPIKey(os.Getenv("AZURE_IMAGE_API_KEY")),
 			azure.WithEndpoint("https://"+os.Getenv("AZURE_IMAGE_RESOURCE_NAME")+".openai.azure.com"),
+			azure.WithHeaders(map[string]string{
+				"x-ms-oai-image-generation-deployment": "gpt-image-1.5",
+			}),
 		)
 	}
 

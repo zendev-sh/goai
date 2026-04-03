@@ -84,29 +84,31 @@ GoAI provides types for handling streaming errors:
 
 ```go
 // StreamErrorType classifies the type of stream error
-type StreamErrorType int
+type StreamErrorType string
 
 const (
-    StreamErrorContextOverflow StreamErrorType = iota
-    StreamErrorAPI
+    StreamErrorContextOverflow StreamErrorType = "context_overflow"
+    StreamErrorAPI             StreamErrorType = "api_error"
 )
 
 // ParsedStreamError represents a parsed streaming error
 type ParsedStreamError struct {
-    Type    StreamErrorType
-    Message string
+    Type         StreamErrorType
+    Message      string
+    IsRetryable  bool
+    ResponseBody string
 }
 
 // Parse a stream error from SSE data
-err := goai.ParseStreamError(sseData)
-if errors.As(err, &parsed) {
+parsed := goai.ParseStreamError(sseData)
+if parsed != nil {
     if parsed.Type == goai.StreamErrorContextOverflow {
         // Handle context overflow mid-stream
     }
 }
 
 // Classify a raw error for handling
-goai.ClassifyStreamError(body)
+err := goai.ClassifyStreamError(body)
 ```
 
 ## HTTP Error Parsing
@@ -115,10 +117,10 @@ GoAI provides helper functions for parsing HTTP errors:
 
 ```go
 // Parse a raw HTTP error response
-err := goai.ParseHTTPError(statusCode, body)
+err := goai.ParseHTTPError("openai", statusCode, body)
 
 // Parse with response headers (for retry-after handling)
-err := goai.ParseHTTPErrorWithHeaders(statusCode, body, headers)
+err := goai.ParseHTTPErrorWithHeaders("openai", statusCode, body, headers)
 
 // Classify a stream error from SSE data
 err := goai.ClassifyStreamError(sseBody)

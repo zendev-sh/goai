@@ -179,7 +179,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 2. Sets `ResponseFormat` on the provider request to enable native JSON mode.
 3. Parses the model's JSON response into the target type `T`.
 
-When tools with `Execute` functions are provided and `MaxSteps > 1`, `GenerateObject` runs a tool loop identical to `GenerateText`. `ResponseFormat` is set on every step, and the model decides when to call tools vs produce the final JSON output. Structured output is parsed from the first step that is not a tool-call step (i.e. any step whose `finishReason` is not `"tool-calls"`).
+When tools with `Execute` functions are provided and `MaxSteps > 1`, `GenerateObject` runs a tool loop identical to `GenerateText`. `ResponseFormat` is set on every step, and the model decides when to call tools vs produce the final JSON output. Structured output is parsed from the step that returns `finishReason` `"stop"`.
 
 **Example:**
 
