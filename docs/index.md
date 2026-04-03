@@ -26,7 +26,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomat
 - **GenerateObject[T]** — type-safe structured output using Go generics
 - **StreamObject[T]** — partial object streaming with typed results
 - **Embed / EmbedMany** — text embeddings with auto-chunking
-- **GenerateImage** — image generation (OpenAI, Google, Azure)
+- **GenerateImage** — image generation (OpenAI, Google, Azure, Vertex AI)
 - **Tool Calling** — custom tools with auto tool loops (`MaxSteps`)
 - **20 Provider-Defined Tools** — web search, code execution, computer use, file search
 - **[MCP Client](/concepts/mcp)** — connect to any MCP server (stdio, HTTP, SSE), auto-convert tools for GoAI

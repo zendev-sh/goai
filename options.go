@@ -103,7 +103,8 @@ type options struct {
 	// SchemaName is the schema name sent to providers (default "response").
 	SchemaName string
 
-	// MaxParallelCalls controls batch parallelism for EmbedMany (default 4).
+	// MaxParallelCalls controls batch parallelism for EmbedMany.
+	// If <= 0, EmbedMany uses a default of 4.
 	MaxParallelCalls int
 
 	// EmbeddingProviderOptions are provider-specific parameters for embedding requests.
@@ -306,7 +307,7 @@ const (
 // (same address on the current call stack → json.Marshal would fail) from diamond patterns
 // (same address reachable via two different paths → json.Marshal handles fine).
 // depth guards against slice cycles, which cannot be detected by address (slices are not
-// tracked in seen). The limit of 1000 is a pragmatic guard against pathological input ; 
+// tracked in seen). The limit of 1000 is a pragmatic guard against pathological input ;
 // cyclic slices that escape address-based detection, or unreasonably deep nesting.
 func checkJSONSerializable(caller, key string, v reflect.Value, seen map[uintptr]int, depth int) {
 	if depth > 1000 {

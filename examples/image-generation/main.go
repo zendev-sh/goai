@@ -1,11 +1,10 @@
 //go:build ignore
 
-// Example: OpenAI Image Generation tool via Responses API.
+// Example: image generation (GenerateImage and provider-defined image tool).
 //
-// The LLM decides when to generate images during conversation.
-// Different from goai.GenerateImage() which calls the Images API directly:
-//   - GenerateImage(): you decide when to generate, calls /images/generations
-//   - ImageGeneration tool: LLM decides when to generate, runs inside conversation
+// This example demonstrates both approaches:
+//  1. goai.GenerateImage() for direct image generation.
+//  2. OpenAI ImageGeneration provider-defined tool inside GenerateText.
 //
 // Via OpenAI direct:
 //
@@ -79,6 +78,27 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	imgModel := openai.Image("gpt-image-1", openai.WithAPIKey(os.Getenv("OPENAI_API_KEY")))
+	if auth == "azure" {
+		imgModel = azure.Image("gpt-image-1",
+			azure.WithAPIKey(os.Getenv("AZURE_IMAGE_API_KEY")),
+			azure.WithEndpoint("https://"+os.Getenv("AZURE_IMAGE_RESOURCE_NAME")+".openai.azure.com"),
+			azure.WithHeaders(map[string]string{
+				"x-ms-oai-image-generation-deployment": "gpt-image-1.5",
+			}),
+		)
+	}
+
+	directImage, err := goai.GenerateImage(ctx, imgModel,
+		goai.WithImagePrompt("Minimal blue gopher mascot logo for a Go SDK named GoAI"),
+		goai.WithImageCount(1),
+		goai.WithImageSize("1024x1024"),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Direct GenerateImage: %d image(s)\n", len(directImage.Images))
 
 	fmt.Println("Text:", result.Text)
 	fmt.Printf("Usage: %d in, %d out\n", result.TotalUsage.InputTokens, result.TotalUsage.OutputTokens)

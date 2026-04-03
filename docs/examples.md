@@ -51,20 +51,20 @@ Structured output with typed Go structs using `GenerateObject[T]` and `StreamObj
 
 ```bash
 export GEMINI_API_KEY=...
-go run ./examples/structured/
+go run ./examples/structured/main.go
 ```
 
 ### embedding
 
 Text embeddings with `Embed` and `EmbedMany`, including cosine similarity comparison.
 
-- **Provider:** Google Gemini (`text-embedding-004`)
+- **Provider:** Google Gemini (`gemini-embedding-001`)
 - **Features:** `Embed`, `EmbedMany`, auto-chunking, pairwise cosine similarity
 - **Source:** [`examples/embedding/`](https://github.com/zendev-sh/goai/tree/main/examples/embedding)
 
 ```bash
 export GEMINI_API_KEY=...
-go run ./examples/embedding/
+go run ./examples/embedding/main.go
 ```
 
 ### citations
@@ -181,7 +181,7 @@ go run examples/computer-use/main.go anthropic
 Anthropic's sandboxed Python code execution tool.
 
 - **Providers:** Anthropic (direct + Bedrock)
-- **Features:** `anthropic.Tools.CodeExecution()`, server-side Python execution
+- **Features:** `anthropic.Tools.CodeExecution()`, server-side Python execution (Anthropic direct) or tool-call-style client-side handling (Bedrock)
 - **Source:** [`examples/code-execution/`](https://github.com/zendev-sh/goai/tree/main/examples/code-execution)
 
 ```bash
@@ -253,18 +253,20 @@ MCP (Model Context Protocol) client examples. Connect to MCP servers and use the
 
 MCP tools with GoAI LLM integration. Connects to an MCP server, converts its tools, and passes them to `GenerateText` for an agent loop.
 
+> **Note:** This example requires a local MCP test server implementation compatible with the commands used in `examples/mcp-tools/main.go`.
+
 - **Provider:** Google Gemini
 - **Features:** `mcp.NewStdioTransport`, `mcp.NewClient`, `mcp.ConvertTools`, `goai.WithTools`, `WithMaxSteps`
 - **Source:** [`examples/mcp-tools/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-tools)
 
 ```bash
 export GEMINI_API_KEY=...
-go run ./examples/mcp-tools
+go run ./examples/mcp-tools/main.go
 ```
 
 ### mcp-filesystem
 
-Filesystem MCP server integration via stdio. Browse, read, write, and search files using the official MCP filesystem server.
+Filesystem MCP server integration via stdio. Lists available tools and calls `list_directory` on the official MCP filesystem server.
 
 - **Transport:** Stdio
 - **Requires:** Node.js (npx)
@@ -272,7 +274,7 @@ Filesystem MCP server integration via stdio. Browse, read, write, and search fil
 - **Source:** [`examples/mcp-filesystem/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-filesystem)
 
 ```bash
-go run ./examples/mcp-filesystem /tmp
+go run ./examples/mcp-filesystem/main.go /tmp
 ```
 
 ### mcp-github
@@ -286,7 +288,7 @@ GitHub MCP server integration via stdio. Discover and call GitHub tools.
 
 ```bash
 export GITHUB_TOKEN=ghp_...
-go run ./examples/mcp-github
+go run ./examples/mcp-github/main.go
 ```
 
 ### mcp-playwright
@@ -299,19 +301,21 @@ Playwright MCP server for browser automation. Navigate, click, fill, screenshot 
 - **Source:** [`examples/mcp-playwright/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-playwright)
 
 ```bash
-go run ./examples/mcp-playwright
+go run ./examples/mcp-playwright/main.go
 ```
 
 ### mcp-remote
 
 MCP over Streamable HTTP transport. Demonstrates session management, notifications, and remote tool calling.
 
+> **Note:** This example requires a local MCP test server implementation compatible with the commands used in `examples/mcp-remote/main.go`.
+
 - **Transport:** Streamable HTTP
 - **Features:** `mcp.NewHTTPTransport`, session management, remote server
 - **Source:** [`examples/mcp-remote/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-remote)
 
 ```bash
-go run ./examples/mcp-remote
+go run ./examples/mcp-remote/main.go
 ```
 
 ### mcp-sse
@@ -323,17 +327,19 @@ MCP over legacy SSE transport (protocol version 2024-11-05). Endpoint discovery,
 - **Source:** [`examples/mcp-sse/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-sse)
 
 ```bash
-go run ./examples/mcp-sse
+go run ./examples/mcp-sse/main.go
 ```
 
 ### mcp-local
 
 MCP client basics without an LLM. Exercises every MCP capability: tools, prompts, and resources.
 
+> **Note:** This example requires a local MCP test server implementation compatible with the commands used in `examples/mcp-local/main.go`.
+
 - **Transport:** Stdio
 - **Features:** `mcp.NewStdioTransport`, `client.ListTools`, `client.ListPrompts`, `client.ListResources`
 - **Source:** [`examples/mcp-local/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-local)
 
 ```bash
-go run ./examples/mcp-local
+go run ./examples/mcp-local/main.go
 ```

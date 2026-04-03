@@ -234,7 +234,7 @@ type Part struct {
 	// URL for images (data:image/png;base64,... format).
 	URL string
 
-	// Tool call fields (for PartToolCall).
+	// Tool call fields (for PartToolCall and PartToolResult).
 	ToolCallID string
 	ToolName   string
 	ToolInput  json.RawMessage

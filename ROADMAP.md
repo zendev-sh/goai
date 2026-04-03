@@ -13,22 +13,22 @@
 
 ### Providers (22+)
 
-| Category        | Providers                                           |
-| --------------- | --------------------------------------------------- |
-| Flagship        | OpenAI, Anthropic, Google (Gemini + Imagen)         |
-| Cloud platforms | AWS Bedrock (SigV4), Azure OpenAI, Google Vertex AI |
-| Fast inference  | Groq, Cerebras, Fireworks, Together, DeepInfra      |
-| Specialized     | Mistral, xAI, DeepSeek, Cohere, Perplexity, MiniMax |
-| Aggregators     | OpenRouter                                          |
-| Local/Serverless| Ollama, vLLM, RunPod                                |
-| Bring your own  | `compat.Chat()` for any OpenAI-compatible endpoint  |
+| Category         | Providers                                           |
+| ---------------- | --------------------------------------------------- |
+| Flagship         | OpenAI, Anthropic, Google (Gemini + Imagen)         |
+| Cloud platforms  | AWS Bedrock (SigV4), Azure OpenAI, Google Vertex AI |
+| Fast inference   | Groq, Cerebras, Fireworks, Together, DeepInfra      |
+| Specialized      | Mistral, xAI, DeepSeek, Cohere, Perplexity, MiniMax |
+| Aggregators      | OpenRouter                                          |
+| Local/Serverless | Ollama, vLLM, RunPod                                |
+| Bring your own   | `compat.Chat()` for any OpenAI-compatible endpoint  |
 
 ### SDK features
 
 - **Tool system** - Define tools with JSON Schema, auto tool loop with `WithMaxSteps`
 - **TokenSource** - Static keys, OAuth-refreshed, cached credentials (mutex-free during network I/O, TTL-based)
 - **WithHTTPClient** - Custom transport for proxies, auth middleware, Codex/Copilot patterns
-- **Prompt caching** - `WithPromptCaching()` automatic `cache_control` on system messages (immutable, no input mutation)
+- **Prompt caching** - `WithPromptCaching(bool)` automatic `cache_control` on system messages (immutable, no input mutation)
 - **Retry/backoff** - Exponential backoff on 429/5xx (+ OpenAI 404), `InvalidatingTokenSource` interface for token refresh on auth failures
 - **Thread-safe** - All providers safe for concurrent use; Bedrock fallback uses RWMutex for cross-region retry
 - **Telemetry hooks** - `WithOnRequest`, `WithOnResponse`, `WithOnToolCall`, `WithOnStepFinish`
@@ -38,7 +38,7 @@
 - **Provider-defined tools**: 20 tools across 5 providers: Anthropic (10), OpenAI (4), Google (3), Groq (1), xAI (2). All E2E tested.
 - **E2E validated** - 103 models across 7 providers tested with real API calls
 - **Benchmarks** - Go wins 5/5 comparable categories (schema is a tie) vs Vercel AI SDK: streaming 1.1x, TTFC 1.3x, cold start 24.4x, memory 3.1x, GenerateText 1.4x
-- **Documentation** - Full docs site, 22 provider pages, 24 runnable examples, API reference
+- **Documentation** - Full docs site, 22 provider pages, 25 runnable examples, API reference
 
 ---
 
@@ -52,19 +52,19 @@
 
 ## v0.5.2 - Current release
 
-| Feature              | Description                                                          |
-| -------------------- | -------------------------------------------------------------------- |
-| **RunPod provider**  | Serverless vLLM endpoint support                                     |
-| **Bedrock embeddings** | Embedding support for all Bedrock text embedding models            |
-| **Docs / accuracy**  | Deep-review audit fixes: docs accuracy, streaming metadata, provider capabilities |
+| Feature                | Description                                                                       |
+| ---------------------- | --------------------------------------------------------------------------------- |
+| **RunPod provider**    | Serverless vLLM endpoint support                                                  |
+| **Bedrock embeddings** | Embedding support for all Bedrock text embedding models                           |
+| **Docs / accuracy**    | Deep-review audit fixes: docs accuracy, streaming metadata, provider capabilities |
 
 ### Planned
 
-| Feature          | Description                                                        |
-| ---------------- | ------------------------------------------------------------------ |
-| Output.array     | Stream validated array elements incrementally                      |
-| Output.choice    | Convenience enum selection wrapper                                 |
-| `goai/otel`      | Pre-built OpenTelemetry integration (optional import)              |
+| Feature       | Description                                           |
+| ------------- | ----------------------------------------------------- |
+| Output.array  | Stream validated array elements incrementally         |
+| Output.choice | Convenience enum selection wrapper                    |
+| `goai/otel`   | Pre-built OpenTelemetry integration (optional import) |
 
 ### v1.0.0 - Stable API
 

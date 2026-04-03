@@ -97,7 +97,7 @@ The `ModelCapabilities` struct includes:
 
 ## Provider Configuration
 
-Every provider accepts options for authentication and customization:
+Providers expose authentication and customization options, but option names vary by provider:
 
 ```go
 // Explicit API key
@@ -110,7 +110,7 @@ model := openai.Chat("gpt-4o", openai.WithTokenSource(myTokenSource))
 model := openai.Chat("gpt-4o", openai.WithHTTPClient(myClient))
 ```
 
-If no API key or token source is provided, providers read from environment variables (e.g., `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`).
+Many providers read credentials from environment variables when explicit auth options are omitted (for example `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`). Some providers use provider-specific auth options (for example Bedrock uses AWS credential options instead of `WithAPIKey`/`WithTokenSource`).
 
 ## Provider List
 

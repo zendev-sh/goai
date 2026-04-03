@@ -17,7 +17,7 @@ go get github.com/zendev-sh/goai@latest
 import "github.com/zendev-sh/goai/provider/together"
 ```
 
-Set the `TOGETHER_AI_API_KEY` environment variable, or pass `WithAPIKey()` directly.
+Set `TOGETHER_AI_API_KEY` (or fallback `TOGETHER_API_KEY`) in the environment, or pass `WithAPIKey()` directly.
 
 ## Models
 
@@ -45,13 +45,13 @@ fmt.Println(result.Text)
 
 ## Options
 
-| Option | Type | Description |
-|--------|------|-------------|
-| `WithAPIKey(key)` | `string` | Set a static API key |
-| `WithTokenSource(ts)` | `provider.TokenSource` | Set a dynamic token source |
-| `WithBaseURL(url)` | `string` | Override the default `https://api.together.xyz/v1` endpoint |
-| `WithHeaders(h)` | `map[string]string` | Set additional HTTP headers |
-| `WithHTTPClient(c)` | `*http.Client` | Set a custom `*http.Client` |
+| Option                | Type                   | Description                                                 |
+| --------------------- | ---------------------- | ----------------------------------------------------------- |
+| `WithAPIKey(key)`     | `string`               | Set a static API key                                        |
+| `WithTokenSource(ts)` | `provider.TokenSource` | Set a dynamic token source                                  |
+| `WithBaseURL(url)`    | `string`               | Override the default `https://api.together.xyz/v1` endpoint |
+| `WithHeaders(h)`      | `map[string]string`    | Set additional HTTP headers                                 |
+| `WithHTTPClient(c)`   | `*http.Client`         | Set a custom `*http.Client`                                 |
 
 ## Notes
 

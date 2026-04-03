@@ -8,7 +8,7 @@
 // Usage:
 //
 //	export GITHUB_TOKEN=ghp_...
-//	go run ./examples/mcp-github
+//	go run ./examples/mcp-github/main.go
 package main
 
 import (

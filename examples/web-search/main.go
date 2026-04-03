@@ -28,6 +28,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log"
@@ -85,8 +86,9 @@ func main() {
 
 	// --- Google via Gemini API key ---
 	case "google":
+		geminiKey := cmp.Or(os.Getenv("GOOGLE_GENERATIVE_AI_API_KEY"), os.Getenv("GEMINI_API_KEY"))
 		model = google.Chat("gemini-2.5-flash",
-			google.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
+			google.WithAPIKey(geminiKey))
 		def := google.Tools.GoogleSearch()
 		tools = toolsFromDef(def)
 

@@ -11,7 +11,7 @@
 // Usage:
 //
 //	export GEMINI_API_KEY=...
-//	go run ./examples/mcp-tools
+//	go run ./examples/mcp-tools/main.go
 package main
 
 import (
@@ -34,10 +34,20 @@ func main() {
 	ctx := context.Background()
 	model := google.Chat("gemini-2.0-flash", google.WithAPIKey(apiKey))
 
-	// Connect to the testserver via stdio and discover its tools.
+	// Prefer the local MCP test server if present; otherwise fall back to the
+	// public filesystem MCP server so this example still runs in OSS checkouts.
+	transport := mcp.NewStdioTransport("go", []string{"run", "./mcp/testserver", "--mode=stdio"})
+	prompt := "First echo the message 'Hello from GoAI', then calculate 1234 + 5678. Report both results."
+	if _, err := os.Stat("./mcp/testserver"); err != nil {
+		cwd, _ := os.Getwd()
+		transport = mcp.NewStdioTransport("npx", []string{"-y", "@modelcontextprotocol/server-filesystem", cwd})
+		prompt = fmt.Sprintf("List up to 5 files in %s and explain what this server can do.", cwd)
+		fmt.Println("./mcp/testserver not found; using @modelcontextprotocol/server-filesystem")
+	}
+
+	// Connect via stdio and discover tools.
 	// In a real application, you might connect to multiple servers
 	// (filesystem, database, API) and aggregate their tools.
-	transport := mcp.NewStdioTransport("go", []string{"run", "./mcp/testserver", "--mode=stdio"})
 	client := mcp.NewClient("tool-server", "1.0.0", mcp.WithTransport(transport))
 	if err := client.Connect(ctx); err != nil {
 		log.Fatal(err)
@@ -63,8 +73,7 @@ func main() {
 	fmt.Printf("MCP server %q: %d tools\n\n", client.ServerInfo().Name, len(allTools))
 
 	// Use all MCP tools in a single GenerateText call.
-	// The model will call echo and add tools as needed to answer the question.
-	prompt := "First echo the message 'Hello from GoAI', then calculate 1234 + 5678. Report both results."
+	// The model calls tools as needed to answer the prompt.
 	fmt.Printf("Prompt: %s\n\n", prompt)
 
 	result, err := goai.GenerateText(ctx, model,

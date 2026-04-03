@@ -44,11 +44,11 @@ fmt.Println(mcp.FormatContent(callResult.Content, callResult.IsError))
 
 The client communicates with MCP servers through a `Transport` interface. Three built-in transports cover the common deployment patterns.
 
-| Transport | Constructor | Use Case |
-| --- | --- | --- |
-| **Stdio** | `NewStdioTransport(cmd, args, opts...)` | Local servers run as child processes |
-| **HTTP** | `NewHTTPTransport(url, opts...)` | Remote servers (Streamable HTTP, MCP 2025-03-26) |
-| **SSE** | `NewSSETransport(url, opts...)` | Remote servers (legacy SSE, MCP 2024-11-05) |
+| Transport | Constructor                             | Use Case                                         |
+| --------- | --------------------------------------- | ------------------------------------------------ |
+| **Stdio** | `NewStdioTransport(cmd, args, opts...)` | Local servers run as child processes             |
+| **HTTP**  | `NewHTTPTransport(url, opts...)`        | Remote servers (Streamable HTTP, MCP 2025-03-26) |
+| **SSE**   | `NewSSETransport(url, opts...)`         | Remote servers (legacy SSE, MCP 2024-11-05)      |
 
 ### Stdio
 
@@ -178,23 +178,32 @@ if err != nil {
 
 Standard error codes:
 
-| Code | Constant | Meaning |
-| --- | --- | --- |
-| `-32700` | `ErrCodeParseError` | Invalid JSON received |
+| Code     | Constant                | Meaning                      |
+| -------- | ----------------------- | ---------------------------- |
+| `-32700` | `ErrCodeParseError`     | Invalid JSON received        |
 | `-32600` | `ErrCodeInvalidRequest` | Not a valid JSON-RPC request |
-| `-32601` | `ErrCodeMethodNotFound` | Method does not exist |
-| `-32602` | `ErrCodeInvalidParams` | Invalid method parameters |
-| `-32603` | `ErrCodeInternalError` | Internal server error |
-| `-32000` | `ErrCodeServerError` | MCP-specific server error |
+| `-32601` | `ErrCodeMethodNotFound` | Method does not exist        |
+| `-32602` | `ErrCodeInvalidParams`  | Invalid method parameters    |
+| `-32603` | `ErrCodeInternalError`  | Internal server error        |
+| `-32000` | `ErrCodeServerError`    | MCP-specific server error    |
 
 ## Examples
 
-| Example | Description |
-| --- | --- |
-| [`mcp-local`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-local) | Connect to a local stdio MCP server |
-| [`mcp-remote`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-remote) | Connect to a remote HTTP MCP server |
-| [`mcp-sse`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-sse) | Connect via legacy SSE transport |
-| [`mcp-tools`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-tools) | Convert MCP tools for use with GenerateText |
-| [`mcp-filesystem`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-filesystem) | File operations via MCP filesystem server |
-| [`mcp-github`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-github) | GitHub operations via MCP |
+| Example                                                                                 | Description                                  |
+| --------------------------------------------------------------------------------------- | -------------------------------------------- |
+| [`mcp-local`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-local)           | Connect to a local stdio MCP server          |
+| [`mcp-remote`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-remote)         | Connect to a remote HTTP MCP server          |
+| [`mcp-sse`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-sse)               | Connect via legacy SSE transport             |
+| [`mcp-tools`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-tools)           | Convert MCP tools for use with GenerateText  |
+| [`mcp-filesystem`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-filesystem) | File operations via MCP filesystem server    |
+| [`mcp-github`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-github)         | GitHub operations via MCP                    |
 | [`mcp-playwright`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-playwright) | Browser automation via Playwright MCP server |
+
+> **Note:** Some MCP examples are marked with `//go:build ignore` and must be run by targeting the file directly (e.g. `go run ./examples/mcp-local/main.go`).
+
+> **Note:** The `mcp-local`, `mcp-remote`, and `mcp-tools` examples use a local MCP test server command in each example (`go run ./mcp/testserver ...`). Ensure your local setup includes a compatible test server implementation.
+
+> **Requirements:**
+>
+> - `mcp-github` requires `GITHUB_TOKEN` and Node.js (`npx`) before running.
+> - `mcp-playwright` requires Node.js (`npx`) and may download browser binaries on first run.

@@ -55,6 +55,25 @@ func WithPromptCaching(b bool) Option
 
 **Default:** `false`.
 
+### WithOptions
+
+Combines multiple `Option` values into a single `Option`. Useful for helper libraries that want to return one reusable option bundle.
+
+```go
+func WithOptions(opts ...Option) Option
+```
+
+**Default:** empty.
+
+**Example:**
+
+```go
+base := goai.WithOptions(
+    goai.WithSystem("You are concise."),
+    goai.WithMaxOutputTokens(200),
+)
+```
+
 ---
 
 ## Tool Options
@@ -77,11 +96,13 @@ Sets the maximum number of auto tool loop iterations. Step 1 is the initial gene
 func WithMaxSteps(n int) Option
 ```
 
-**Default:** `1` (no tool loop - the model generates once and returns, even if it requests tool calls).
+**Default:** `1` (single model step).
 
 Values below 1 are silently clamped to 1.
 
-Set to 2 or higher to enable automatic tool execution. For example, `WithMaxSteps(2)` allows: step 1 = model calls tool, step 2 = model uses tool result to generate final answer.
+Set to 2 or higher to enable multi-step auto loops. For example, `WithMaxSteps(2)` allows: step 1 = model calls tool, step 2 = model uses tool result to generate final answer.
+
+With `GenerateText`, tools with `Execute` can still be executed at step 1 if the model requests them. With `MaxSteps(1)`, GoAI executes those tools and returns without a follow-up generation step.
 
 ### WithToolChoice
 
@@ -101,6 +122,12 @@ func WithToolChoice(tc string) Option
 | `"<tool_name>"` | Model must use the specified tool.                                   |
 
 **Default:** provider-dependent (typically `"auto"` when tools are present).
+
+**Constants:**
+
+- `goai.ToolChoiceAuto`
+- `goai.ToolChoiceNone`
+- `goai.ToolChoiceRequired`
 
 ---
 
@@ -230,6 +257,8 @@ func WithProviderOptions(opts map[string]any) Option
 
 **Default:** empty. Consult provider documentation for supported keys.
 
+> **Note:** `WithProviderOptions` validates values eagerly and panics for non-JSON-serializable values (for example: channels, functions, unsafe pointers, cyclic values, or excessive nesting).
+
 ---
 
 ## Telemetry Hooks
@@ -272,7 +301,7 @@ Sets a callback invoked before each tool execution. Fires from the tool's gorout
 func WithOnToolCallStart(fn func(ToolCallStartInfo)) Option
 ```
 
-**Default:** `nil`. Only relevant when tools with `Execute` are provided and `MaxSteps > 1`.
+**Default:** `nil`. Relevant when tools with `Execute` are provided.
 
 ### WithOnToolCall
 
@@ -282,7 +311,7 @@ Sets a callback invoked after each tool execution.
 func WithOnToolCall(fn func(ToolCallInfo)) Option
 ```
 
-**Default:** `nil`. Only relevant when tools with `Execute` are provided and `MaxSteps > 1`.
+**Default:** `nil`. Relevant when tools with `Execute` are provided.
 
 > **Note:** When multiple tools execute in a single step, OnToolCall callbacks fire concurrently from separate goroutines. Order is non-deterministic.
 
@@ -326,7 +355,7 @@ Sets the maximum number of concurrent API calls when `EmbedMany` auto-chunks a l
 func WithMaxParallelCalls(n int) Option
 ```
 
-**Default:** `0` (applied at runtime in `embed.go:121-123` as `4`).
+**Default:** `4` (when `n <= 0`).
 
 ### WithEmbeddingProviderOptions
 
@@ -337,6 +366,8 @@ func WithEmbeddingProviderOptions(opts map[string]any) Option
 ```
 
 **Default:** empty.
+
+> **Note:** `WithEmbeddingProviderOptions` uses the same validation as `WithProviderOptions` and panics for non-JSON-serializable values.
 
 ---
 

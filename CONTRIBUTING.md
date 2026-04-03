@@ -84,7 +84,7 @@ For non-OpenAI-compatible providers (like Anthropic, Google, Cohere), implement 
 - [ ] `WithAPIKey(key)` option
 - [ ] `WithHTTPClient(c)` option
 - [ ] `WithTokenSource(ts)` option
-- [ ] `WithBaseURL(url)` option
+- [ ] Base URL/endpoint option (`WithBaseURL(url)` or provider-specific equivalent like `WithEndpoint(url)`)
 - [ ] `WithHeaders(h)` option
 - [ ] Streaming support (`DoStream`)
 - [ ] Error handling (`ParseHTTPError`)

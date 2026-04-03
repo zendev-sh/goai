@@ -5,7 +5,7 @@ description: "Handle API errors and context overflow in GoAI. Learn about automa
 
 # Error Handling
 
-GoAI returns two error types from generation calls. Use `errors.As` to inspect them.
+GoAI generation calls primarily return `*APIError` and `*ContextOverflowError`. Use `errors.As` to inspect them. Note that when retries are enabled (`WithMaxRetries > 0`), a retryable `*APIError` may be wrapped when the retry budget is exhausted.
 
 ## APIError
 
@@ -61,6 +61,71 @@ if goai.IsOverflow(someErrorMessage) {
 }
 ```
 
+## ErrUnknownTool
+
+Sentinel error returned when a tool call references a tool not in the tool map during auto tool loop execution.
+
+```go
+var overflow *goai.ContextOverflowError
+if errors.As(err, &overflow) {
+    // Truncate messages and retry, or switch to a model with a larger context.
+    fmt.Println("Context overflow:", overflow.Message)
+}
+
+// Check for unknown tool
+if errors.Is(err, goai.ErrUnknownTool) {
+    // Tool was called that wasn't registered
+}
+```
+
+## Stream Errors
+
+GoAI provides types for handling streaming errors:
+
+```go
+// StreamErrorType classifies the type of stream error
+type StreamErrorType string
+
+const (
+    StreamErrorContextOverflow StreamErrorType = "context_overflow"
+    StreamErrorAPI             StreamErrorType = "api_error"
+)
+
+// ParsedStreamError represents a parsed streaming error
+type ParsedStreamError struct {
+    Type         StreamErrorType
+    Message      string
+    IsRetryable  bool
+    ResponseBody string
+}
+
+// Parse a stream error from SSE data
+parsed := goai.ParseStreamError(sseData)
+if parsed != nil {
+    if parsed.Type == goai.StreamErrorContextOverflow {
+        // Handle context overflow mid-stream
+    }
+}
+
+// Classify a raw error for handling
+err := goai.ClassifyStreamError(body)
+```
+
+## HTTP Error Parsing
+
+GoAI provides helper functions for parsing HTTP errors:
+
+```go
+// Parse a raw HTTP error response
+err := goai.ParseHTTPError("openai", statusCode, body)
+
+// Parse with response headers (for retry-after handling)
+err := goai.ParseHTTPErrorWithHeaders("openai", statusCode, body, headers)
+
+// Classify a stream error from SSE data
+err := goai.ClassifyStreamError(sseBody)
+```
+
 ## Retry Behavior
 
 GoAI automatically retries on transient errors. Control this with `WithMaxRetries` (default: 2).
@@ -95,7 +160,7 @@ Retries use exponential backoff with jitter:
 
 - Base delay: 2s, 4s, 8s, 16s, ... capped at 60s
 - Jitter: 0.5x to 1.5x of the base delay (max ~90s)
-- Respects `Retry-After` / `Retry-After-ms` headers (capped at 60s)
+- Respects `retry-after` / `retry-after-ms` headers (capped at 60s)
 - Respects context cancellation during the wait
 
 ### Disabling retries

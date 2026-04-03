@@ -108,7 +108,7 @@ The function extracts human-readable error messages from two common API formats:
 
 ## ParseHTTPErrorWithHeaders
 
-Like `ParseHTTPError` but preserves retry-related response headers (`Retry-After`, `Retry-After-ms`) on the returned `*APIError`. Used by providers to support header-based backoff.
+Like `ParseHTTPError` but preserves retry-related response headers (`retry-after`, `retry-after-ms`) on the returned `*APIError`. Used by providers to support header-based backoff.
 
 ```go
 func ParseHTTPErrorWithHeaders(providerID string, statusCode int, body []byte, headers http.Header) error

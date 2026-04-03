@@ -7,7 +7,7 @@
 //
 // Usage:
 //
-//	go run ./examples/mcp-local
+//	go run ./examples/mcp-local/main.go
 package main
 
 import (
@@ -21,8 +21,10 @@ import (
 func main() {
 	ctx := context.Background()
 
-	// Launch the built-in testserver as a stdio subprocess.
-	// "go run" compiles and executes it  - works when run from the module root.
+	// This example expects an MCP server binary at ./mcp/testserver.
+	// If you don't have one, use the filesystem MCP example instead:
+	//
+	//	go run ./examples/mcp-filesystem/main.go /tmp
 	transport := mcp.NewStdioTransport("go", []string{
 		"run", "./mcp/testserver", "--mode=stdio",
 	})

@@ -42,24 +42,25 @@ goai/
 │   ├── vertex/             # Vertex AI
 │   ├── azure/              # Azure OpenAI
 │   ├── cohere/             # Cohere (Chat v2 + Embed)
+│   ├── minimax/            # MiniMax (Anthropic-compat, delegates to anthropic/)
 │   ├── compat/             # Generic OpenAI-compatible
-│   └── <14 more>/          # OpenAI-compat via internal/openaicompat (incl. RunPod)
-│   # tools.go files: anthropic/ (10), openai/ (4), google/ (3), xai/ (2), groq/ (1)
+│   └── <13 more>/          # Mostly OpenAI-compat (some via compat/ or anthropic/ wrappers)
+│ # tools.go files: 5 files with provider-defined tools: anthropic/ (10 tools), openai/ (4 tools), google/ (3 tools), xai/ (2 tools), groq/ (1 tool)
 ├── internal/
 │   ├── openaicompat/       # Shared codec for 13+ providers
 │   ├── gemini/             # Schema sanitization (Vertex, Google)
 │   ├── sse/                # SSE parser
 │   └── httpc/              # HTTP helpers + ParseDataURL
-├── examples/               # 24 runnable examples (including 7 MCP examples)
+├── examples/               # 25 runnable examples (including 7 MCP examples)
 └── bench/                  # Performance benchmarks (GoAI vs Vercel AI SDK)
 ```
 
 ## Key Rules
 
-1. **No external dependencies** beyond `golang.org/x/oauth2` (Vertex ADC only)
+1. **Keep dependencies minimal** - currently direct `golang.org/x/oauth2`, plus indirect `cloud.google.com/go/compute/metadata` for ADC
 2. **Vercel AI SDK is the reference** - check Vercel source before modifying provider behavior
 3. **90% test coverage** per package - mock HTTP servers, not internals
-4. **Interface compliance checks** - every provider struct must have `var _ provider.LanguageModel = (*chatModel)(nil)`
+4. **Interface compliance checks** - provider structs should include compile-time checks (type name may vary, e.g. `*chatCompletionsModel`)
 5. **errors.As, not type assertion** - always `errors.As(err, &apiErr)`, never `err.(*APIError)`
 6. **No input mutation** - functions must copy slices/maps before modifying (see `applyCaching`)
 7. **Lock-free network calls** - never hold a mutex during I/O (see `CachedTokenSource`)
@@ -77,4 +78,4 @@ func (m *chatModel) DoGenerate(ctx, params) (*provider.GenerateResult, error) { 
 func (m *chatModel) DoStream(ctx, params) (*provider.StreamResult, error) { ... }
 ```
 
-Every provider must support: `WithAPIKey`, `WithTokenSource`, `WithBaseURL`, `WithHTTPClient`, `WithHeaders`.
+Provider options should be idiomatic and consistent where applicable. Common options are `WithAPIKey`, `WithTokenSource`, `WithBaseURL`, `WithHTTPClient`, `WithHeaders`; provider-specific exceptions are acceptable (for example `azure.WithEndpoint`, `ollama` without auth options).
