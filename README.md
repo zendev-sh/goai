@@ -29,7 +29,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 
 ## What's New
 
-> **v0.5.2** - RunPod provider, Bedrock embeddings, and docs accuracy improvements. [Changelog →](https://github.com/zendev-sh/goai/releases)
+> **v0.5.8** - RunPod provider, Bedrock embeddings, and docs accuracy improvements. [Changelog →](https://github.com/zendev-sh/goai/releases)
 >
 > **v0.5.1** - MCP (Model Context Protocol) client plus MiniMax provider support. [Docs →](https://goai.sh/concepts/mcp)
 >

@@ -1,53 +1,99 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted } from "vue";
 
-const ready = ref(false)
-const installCopied = ref(false)
+const ready = ref(false);
+const installCopied = ref(false);
 
 const providers = [
-  { name: 'OpenAI', icon: '/providers/openai.svg', link: '/providers/openai' },
-  { name: 'Anthropic', icon: '/providers/anthropic.svg', link: '/providers/anthropic' },
-  { name: 'Google', icon: '/providers/google.svg', link: '/providers/google' },
-  { name: 'Bedrock', icon: '/providers/aws.svg', link: '/providers/bedrock' },
-  { name: 'Azure', icon: '/providers/azure.svg', link: '/providers/azure' },
-  { name: 'Vertex', icon: '/providers/vertex.svg', link: '/providers/vertex' },
-  { name: 'Mistral', icon: '/providers/mistral.svg', link: '/providers/mistral' },
-  { name: 'xAI', icon: '/providers/xai.svg', link: '/providers/xai' },
-  { name: 'Groq', icon: '/providers/groq.svg', link: '/providers/groq' },
-  { name: 'Cohere', icon: '/providers/cohere.svg', link: '/providers/cohere' },
-  { name: 'DeepSeek', icon: '/providers/deepseek.svg', link: '/providers/deepseek' },
-  { name: 'MiniMax', icon: '/providers/minimax.svg', link: '/providers/minimax' },
-  { name: 'Ollama', icon: '/providers/ollama.svg', link: '/providers/ollama' },
-  { name: 'Fireworks', icon: '/providers/fireworks.svg', link: '/providers/fireworks' },
-  { name: 'Together', icon: '/providers/together.svg', link: '/providers/together' },
-  { name: 'DeepInfra', icon: '/providers/deepinfra.svg', link: '/providers/deepinfra' },
-  { name: 'OpenRouter', icon: '/providers/openrouter.svg', link: '/providers/openrouter' },
-  { name: 'Perplexity', icon: '/providers/perplexity.svg', link: '/providers/perplexity' },
-  { name: 'Cerebras', icon: '/providers/cerebras.svg', link: '/providers/cerebras' },
-  { name: 'vLLM', icon: '/providers/vllm.svg', link: '/providers/vllm' },
-  { name: 'Compatible', icon: '/providers/compatible.svg', link: '/providers/compat' },
-]
+  { name: "OpenAI", icon: "/providers/openai.svg", link: "/providers/openai" },
+  {
+    name: "Anthropic",
+    icon: "/providers/anthropic.svg",
+    link: "/providers/anthropic",
+  },
+  { name: "Google", icon: "/providers/google.svg", link: "/providers/google" },
+  { name: "Bedrock", icon: "/providers/aws.svg", link: "/providers/bedrock" },
+  { name: "Azure", icon: "/providers/azure.svg", link: "/providers/azure" },
+  { name: "Vertex", icon: "/providers/vertex.svg", link: "/providers/vertex" },
+  {
+    name: "Mistral",
+    icon: "/providers/mistral.svg",
+    link: "/providers/mistral",
+  },
+  { name: "xAI", icon: "/providers/xai.svg", link: "/providers/xai" },
+  { name: "Groq", icon: "/providers/groq.svg", link: "/providers/groq" },
+  { name: "Cohere", icon: "/providers/cohere.svg", link: "/providers/cohere" },
+  {
+    name: "DeepSeek",
+    icon: "/providers/deepseek.svg",
+    link: "/providers/deepseek",
+  },
+  {
+    name: "MiniMax",
+    icon: "/providers/minimax.svg",
+    link: "/providers/minimax",
+  },
+  { name: "Ollama", icon: "/providers/ollama.svg", link: "/providers/ollama" },
+  {
+    name: "Fireworks",
+    icon: "/providers/fireworks.svg",
+    link: "/providers/fireworks",
+  },
+  {
+    name: "Together",
+    icon: "/providers/together.svg",
+    link: "/providers/together",
+  },
+  {
+    name: "DeepInfra",
+    icon: "/providers/deepinfra.svg",
+    link: "/providers/deepinfra",
+  },
+  {
+    name: "OpenRouter",
+    icon: "/providers/openrouter.svg",
+    link: "/providers/openrouter",
+  },
+  {
+    name: "Perplexity",
+    icon: "/providers/perplexity.svg",
+    link: "/providers/perplexity",
+  },
+  {
+    name: "Cerebras",
+    icon: "/providers/cerebras.svg",
+    link: "/providers/cerebras",
+  },
+  { name: "vLLM", icon: "/providers/vllm.svg", link: "/providers/vllm" },
+  {
+    name: "Compatible",
+    icon: "/providers/compatible.svg",
+    link: "/providers/compat",
+  },
+];
 
 function copyInstall() {
-  navigator.clipboard.writeText('go get github.com/zendev-sh/goai@latest')
-  installCopied.value = true
-  setTimeout(() => { installCopied.value = false }, 2000)
+  navigator.clipboard.writeText("go get github.com/zendev-sh/goai@latest");
+  installCopied.value = true;
+  setTimeout(() => {
+    installCopied.value = false;
+  }, 2000);
 }
 
 onMounted(() => {
   requestAnimationFrame(() => {
-    requestAnimationFrame(() => { ready.value = true })
-  })
-})
+    requestAnimationFrame(() => {
+      ready.value = true;
+    });
+  });
+});
 </script>
 
 <template>
   <div class="rh" :class="{ ready }">
-
     <!-- ▸ HERO -->
     <section class="rh-hero">
       <div class="rh-hero-inner">
-
         <div class="rh-hero-left">
           <p class="rh-eyebrow anim a1">Open-source Go SDK</p>
           <h1 class="rh-title anim a2">GoAI</h1>
@@ -60,22 +106,31 @@ onMounted(() => {
           <div class="rh-install anim a5" @click="copyInstall">
             <span class="rh-prompt">$</span>
             <code>go get github.com/zendev-sh/goai@latest</code>
-            <span class="rh-copy-state">{{ installCopied ? 'copied!' : 'copy' }}</span>
+            <span class="rh-copy-state">{{
+              installCopied ? "copied!" : "copy"
+            }}</span>
           </div>
 
           <div class="rh-cta anim a6">
-            <a href="/getting-started/installation" class="rh-btn-fill">Get Started</a>
-            <a href="https://github.com/zendev-sh/goai" class="rh-btn-line">GitHub</a>
+            <a href="/getting-started/installation" class="rh-btn-fill"
+              >Get Started</a
+            >
+            <a href="https://github.com/zendev-sh/goai" class="rh-btn-line"
+              >GitHub</a
+            >
           </div>
         </div>
 
         <div class="rh-hero-right anim a4">
           <div class="rh-window">
             <div class="rh-window-bar">
-              <span class="rh-dot"></span><span class="rh-dot"></span><span class="rh-dot"></span>
+              <span class="rh-dot"></span><span class="rh-dot"></span
+              ><span class="rh-dot"></span>
               <span class="rh-window-title">main.go</span>
             </div>
-            <pre class="rh-code"><code><span class="ln"> 1</span>  <span class="kw">package</span> main
+            <pre
+              class="rh-code"
+            ><code><span class="ln"> 1</span>  <span class="kw">package</span> main
 <span class="ln"> 2</span>
 <span class="ln"> 3</span>  <span class="kw">import</span> (
 <span class="ln"> 4</span>      <span class="st">"context"</span>
@@ -95,7 +150,6 @@ onMounted(() => {
 <span class="ln">18</span>  }</code></pre>
           </div>
         </div>
-
       </div>
     </section>
 
@@ -104,7 +158,12 @@ onMounted(() => {
       <div class="rh-providers-inner">
         <p class="rh-section-label">Works with</p>
         <div class="rh-provider-grid">
-          <a v-for="p in providers" :key="p.name" :href="p.link" class="rh-ptag">
+          <a
+            v-for="p in providers"
+            :key="p.name"
+            :href="p.link"
+            class="rh-ptag"
+          >
             <img :src="p.icon" :alt="p.name" class="rh-ptag-icon" />
             {{ p.name }}
           </a>
@@ -117,17 +176,30 @@ onMounted(() => {
       <div class="rh-whatsnew-inner">
         <p class="rh-section-label">What's new</p>
         <div class="rh-release-list">
+          <a
+            href="https://github.com/zendev-sh/goai/releases"
+            class="rh-release"
+          >
+            <span class="rh-release-tag">v0.5.8</span>
+            <span class="rh-release-text"
+              ><strong>RunPod provider</strong> — Serverless vLLM support.
+              Bedrock embeddings. Docs accuracy improvements.</span
+            >
+          </a>
           <a href="/providers/minimax" class="rh-release">
             <span class="rh-release-tag">v0.5.1</span>
-            <span class="rh-release-text"><strong>MiniMax provider</strong> — M2.7, M2.5, M2.1, M2 via Anthropic-compatible API. Thinking/reasoning, tool calling, streaming.</span>
+            <span class="rh-release-text"
+              ><strong>MiniMax provider</strong> — M2.7, M2.5, M2.1, M2 via
+              Anthropic-compatible API. Thinking/reasoning, tool calling,
+              streaming.</span
+            >
           </a>
           <a href="/concepts/mcp" class="rh-release">
             <span class="rh-release-tag">v0.5.0</span>
-            <span class="rh-release-text"><strong>MCP Client</strong> — Connect to any MCP server (stdio, HTTP, SSE). Auto-convert tools for GenerateText.</span>
-          </a>
-          <a href="https://github.com/zendev-sh/goai/releases" class="rh-release">
-            <span class="rh-release-tag">v0.4.4</span>
-            <span class="rh-release-text"><strong>Provider tools</strong> — 20 tools: computer use, web search, code execution across Anthropic, OpenAI, Google, Groq, xAI.</span>
+            <span class="rh-release-text"
+              ><strong>MCP Client</strong> — Connect to any MCP server (stdio,
+              HTTP, SSE). Auto-convert tools for GenerateText.</span
+            >
           </a>
         </div>
       </div>
@@ -136,13 +208,14 @@ onMounted(() => {
     <!-- ▸ THREE EXAMPLES -->
     <section class="rh-trio anim a9">
       <div class="rh-trio-inner">
-
         <a href="/api/core-functions" class="rh-trio-card">
           <div class="rh-trio-head">
             <span class="rh-trio-badge">01</span>
             <span class="rh-trio-name">GenerateText</span>
           </div>
-          <pre class="rh-trio-code"><code>result, _ := goai.<span class="fn">GenerateText</span>(ctx,
+          <pre
+            class="rh-trio-code"
+          ><code>result, _ := goai.<span class="fn">GenerateText</span>(ctx,
     openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>),
     goai.<span class="fn">WithPrompt</span>(<span class="st">"Hello."</span>),
 )
@@ -154,7 +227,9 @@ fmt.<span class="fn">Println</span>(result.Text)</code></pre>
             <span class="rh-trio-badge">02</span>
             <span class="rh-trio-name">StreamText</span>
           </div>
-          <pre class="rh-trio-code"><code>stream, _ := goai.<span class="fn">StreamText</span>(ctx,
+          <pre
+            class="rh-trio-code"
+          ><code>stream, _ := goai.<span class="fn">StreamText</span>(ctx,
     anthropic.<span class="fn">Chat</span>(<span class="st">"claude-sonnet-4-6"</span>),
     goai.<span class="fn">WithMessages</span>(msgs...),
 )
@@ -168,7 +243,9 @@ fmt.<span class="fn">Println</span>(result.Text)</code></pre>
             <span class="rh-trio-badge">03</span>
             <span class="rh-trio-name">GenerateObject[T]</span>
           </div>
-          <pre class="rh-trio-code"><code><span class="kw">type</span> <span class="fn">Recipe</span> <span class="kw">struct</span> {
+          <pre
+            class="rh-trio-code"
+          ><code><span class="kw">type</span> <span class="fn">Recipe</span> <span class="kw">struct</span> {
     Name   <span class="kw">string</span>   <span class="st">`json:"name"`</span>
     Steps  []<span class="kw">string</span> <span class="st">`json:"steps"`</span>
 }
@@ -177,12 +254,10 @@ recipe, _ := goai.<span class="fn">GenerateObject</span>[Recipe](ctx,
     goai.<span class="fn">WithPrompt</span>(<span class="st">"Pho recipe"</span>),
 )</code></pre>
         </a>
-
       </div>
 
       <!-- Row 2: Tools + MCP + TokenSource -->
       <div class="rh-trio-inner">
-
         <a href="/concepts/tools" class="rh-trio-card">
           <div class="rh-trio-head">
             <span class="rh-trio-badge">04</span>
@@ -204,7 +279,9 @@ result, _ := goai.<span class="fn">GenerateText</span>(ctx, model,
             <span class="rh-trio-badge">05</span>
             <span class="rh-trio-name">MCP Client</span>
           </div>
-          <pre class="rh-trio-code"><code><span class="cm">// Any MCP server → GoAI tools</span>
+          <pre
+            class="rh-trio-code"
+          ><code><span class="cm">// Any MCP server → GoAI tools</span>
 c := mcp.<span class="fn">NewClient</span>(<span class="st">"app"</span>, <span class="st">"1.0"</span>,
     mcp.<span class="fn">WithTransport</span>(
         mcp.<span class="fn">NewStdioTransport</span>(
@@ -221,7 +298,9 @@ mcp.<span class="fn">ConvertTools</span>(c, r.Tools)</code></pre>
             <span class="rh-trio-badge">06</span>
             <span class="rh-trio-name">TokenSource</span>
           </div>
-          <pre class="rh-trio-code"><code><span class="cm">// Auto-refresh OAuth tokens</span>
+          <pre
+            class="rh-trio-code"
+          ><code><span class="cm">// Auto-refresh OAuth tokens</span>
 ts := provider.<span class="fn">CachedTokenSource</span>(
     <span class="kw">func</span>(ctx) (*provider.Token, <span class="kw">error</span>) {
         tok, _ := oauth.<span class="fn">Exchange</span>(ctx, code)
@@ -233,7 +312,6 @@ ts := provider.<span class="fn">CachedTokenSource</span>(
 openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
     openai.<span class="fn">WithTokenSource</span>(ts))</code></pre>
         </a>
-
       </div>
     </section>
 
@@ -246,7 +324,6 @@ openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
         <div class="rh-num"><em>0</em><span>third-party deps</span></div>
       </div>
     </section>
-
   </div>
 </template>
 
@@ -255,28 +332,52 @@ openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
 .anim {
   opacity: 0;
   transform: translateY(18px);
-  transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1),
-              transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  transition:
+    opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.ready .anim { opacity: 1; transform: translateY(0); }
-.a1 { transition-delay: 0.05s; }
-.a2 { transition-delay: 0.1s; }
-.a3 { transition-delay: 0.18s; }
-.a4 { transition-delay: 0.24s; }
-.a5 { transition-delay: 0.32s; }
-.a6 { transition-delay: 0.38s; }
-.a7 { transition-delay: 0.48s; }
-.a8 { transition-delay: 0.58s; }
-.a9 { transition-delay: 0.68s; }
-.a10 { transition-delay: 0.78s; }
+.ready .anim {
+  opacity: 1;
+  transform: translateY(0);
+}
+.a1 {
+  transition-delay: 0.05s;
+}
+.a2 {
+  transition-delay: 0.1s;
+}
+.a3 {
+  transition-delay: 0.18s;
+}
+.a4 {
+  transition-delay: 0.24s;
+}
+.a5 {
+  transition-delay: 0.32s;
+}
+.a6 {
+  transition-delay: 0.38s;
+}
+.a7 {
+  transition-delay: 0.48s;
+}
+.a8 {
+  transition-delay: 0.58s;
+}
+.a9 {
+  transition-delay: 0.68s;
+}
+.a10 {
+  transition-delay: 0.78s;
+}
 
 /* ======= TOKENS ======= */
 .rh {
-  --rh-fg:   #111;
-  --rh-fg2:  #555;
-  --rh-fg3:  #999;
-  --rh-bg:   #fcfcfc;
-  --rh-bg2:  #f3f3f3;
+  --rh-fg: #111;
+  --rh-fg2: #555;
+  --rh-fg3: #999;
+  --rh-bg: #fcfcfc;
+  --rh-bg2: #f3f3f3;
   --rh-line: #e2e2e2;
   --rh-code-bg: #f7f7f7;
   /* syntax - warm muted tones in light */
@@ -288,11 +389,11 @@ openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
 
 :root.dark .rh,
 .dark .rh {
-  --rh-fg:   #e0e0e0;
-  --rh-fg2:  #8a8a8a;
-  --rh-fg3:  #555;
-  --rh-bg:   #0a0a0a;
-  --rh-bg2:  #141414;
+  --rh-fg: #e0e0e0;
+  --rh-fg2: #8a8a8a;
+  --rh-fg3: #555;
+  --rh-bg: #0a0a0a;
+  --rh-bg2: #141414;
   --rh-line: #222;
   --rh-code-bg: #111;
   --rh-kw: #c678dd;
@@ -316,7 +417,7 @@ openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
 }
 
 .rh-eyebrow {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: "IBM Plex Mono", monospace;
   font-size: 0.72rem;
   font-weight: 500;
   letter-spacing: 0.12em;
@@ -326,7 +427,7 @@ openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
 }
 
 .rh-title {
-  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-family: "Space Grotesk", system-ui, sans-serif;
   font-weight: 700;
   font-size: 6rem;
   letter-spacing: -0.07em;
@@ -336,7 +437,7 @@ openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
 }
 
 .rh-slogan {
-  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-family: "Space Grotesk", system-ui, sans-serif;
   font-weight: 500;
   font-size: 1.5rem;
   letter-spacing: -0.03em;
@@ -345,7 +446,7 @@ openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
 }
 
 .rh-tagline {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: "IBM Plex Mono", monospace;
   font-size: 0.82rem;
   line-height: 1.7;
   color: var(--rh-fg2);
@@ -366,32 +467,38 @@ openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
   transition: border-color 0.15s;
 }
 
-.rh-install:hover { border-color: var(--rh-fg3); }
+.rh-install:hover {
+  border-color: var(--rh-fg3);
+}
 
 .rh-prompt {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: "IBM Plex Mono", monospace;
   color: var(--rh-fg3);
   user-select: none;
 }
 
 .rh-install code {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: "IBM Plex Mono", monospace;
   font-size: 0.82rem;
   font-weight: 500;
   color: var(--rh-fg);
 }
 
 .rh-copy-state {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: "IBM Plex Mono", monospace;
   font-size: 0.62rem;
   color: var(--rh-fg3);
 }
 
 /* CTA */
-.rh-cta { display: flex; gap: 10px; }
+.rh-cta {
+  display: flex;
+  gap: 10px;
+}
 
-.rh-btn-fill, .rh-btn-line {
-  font-family: 'IBM Plex Mono', monospace;
+.rh-btn-fill,
+.rh-btn-line {
+  font-family: "IBM Plex Mono", monospace;
   font-size: 0.78rem;
   font-weight: 600;
   padding: 10px 22px;
@@ -403,14 +510,18 @@ openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
   background: var(--rh-fg);
   color: var(--rh-bg);
 }
-.rh-btn-fill:hover { opacity: 0.8; }
+.rh-btn-fill:hover {
+  opacity: 0.8;
+}
 
 .rh-btn-line {
   border: 1px solid var(--rh-line);
   color: var(--rh-fg);
   background: transparent;
 }
-.rh-btn-line:hover { border-color: var(--rh-fg3); }
+.rh-btn-line:hover {
+  border-color: var(--rh-fg3);
+}
 
 /* ======= CODE WINDOW ======= */
 .rh-window {
@@ -437,7 +548,7 @@ openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
 }
 
 .rh-window-title {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: "IBM Plex Mono", monospace;
   font-size: 0.68rem;
   font-weight: 500;
   color: var(--rh-fg3);
@@ -451,16 +562,25 @@ openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
 }
 
 .rh-code code {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: "IBM Plex Mono", monospace;
   font-size: 0.8rem;
   line-height: 1.65;
   color: var(--rh-fg);
 }
 
-.rh-code .ln { color: var(--rh-ln); user-select: none; }
-.rh-code .kw { color: var(--rh-kw); }
-.rh-code .fn { color: var(--rh-fn); }
-.rh-code .st { color: var(--rh-st); }
+.rh-code .ln {
+  color: var(--rh-ln);
+  user-select: none;
+}
+.rh-code .kw {
+  color: var(--rh-kw);
+}
+.rh-code .fn {
+  color: var(--rh-fn);
+}
+.rh-code .st {
+  color: var(--rh-st);
+}
 
 /* ======= PROVIDERS ======= */
 .rh-providers {
@@ -475,7 +595,7 @@ openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
 }
 
 .rh-section-label {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: "IBM Plex Mono", monospace;
   font-size: 0.65rem;
   font-weight: 600;
   letter-spacing: 0.12em;
@@ -501,7 +621,7 @@ a.rh-ptag {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: "IBM Plex Mono", monospace;
   font-size: 0.72rem;
   font-weight: 500;
   padding: 6px 12px;
@@ -570,7 +690,7 @@ a.rh-release {
 }
 
 .rh-release-tag {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: "IBM Plex Mono", monospace;
   font-size: 0.72rem;
   font-weight: 700;
   color: var(--rh-fn);
@@ -579,7 +699,7 @@ a.rh-release {
 }
 
 .rh-release-text {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: "IBM Plex Mono", monospace;
   font-size: 0.78rem;
   line-height: 1.5;
   color: var(--rh-fg2);
@@ -637,14 +757,14 @@ a.rh-trio-card {
 }
 
 .rh-trio-badge {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: "IBM Plex Mono", monospace;
   font-size: 0.6rem;
   font-weight: 700;
   color: var(--rh-fg3);
 }
 
 .rh-trio-name {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: "IBM Plex Mono", monospace;
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--rh-fg);
@@ -658,7 +778,7 @@ a.rh-trio-card {
 }
 
 .rh-trio-code code {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: "IBM Plex Mono", monospace;
   font-size: 0.76rem;
   line-height: 1.55;
   color: var(--rh-fg);
@@ -667,10 +787,19 @@ a.rh-trio-card {
   overflow: hidden;
 }
 
-.rh-trio-code .kw { color: var(--rh-kw); }
-.rh-trio-code .fn { color: var(--rh-fn); }
-.rh-trio-code .st { color: var(--rh-st); }
-.rh-trio-code .cm { color: var(--rh-ln); font-style: italic; }
+.rh-trio-code .kw {
+  color: var(--rh-kw);
+}
+.rh-trio-code .fn {
+  color: var(--rh-fn);
+}
+.rh-trio-code .st {
+  color: var(--rh-st);
+}
+.rh-trio-code .cm {
+  color: var(--rh-ln);
+  font-style: italic;
+}
 
 /* Second trio row: remove double border between rows */
 .rh-trio-inner + .rh-trio-inner {
@@ -702,7 +831,7 @@ a.rh-trio-card {
 
 .rh-num em {
   display: block;
-  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-family: "Space Grotesk", system-ui, sans-serif;
   font-style: normal;
   font-size: 3rem;
   font-weight: 700;
@@ -713,7 +842,7 @@ a.rh-trio-card {
 
 .rh-num span {
   display: block;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: "IBM Plex Mono", monospace;
   font-size: 0.68rem;
   font-weight: 500;
   color: var(--rh-fg3);
@@ -727,20 +856,44 @@ a.rh-trio-card {
   .rh-hero-inner {
     grid-template-columns: 1fr;
   }
-  .rh-hero-right { order: -1; }
-  .rh-title { font-size: 4rem; }
-  .rh-window { box-shadow: 16px 16px 0 var(--rh-line); }
-  .rh-trio-inner { grid-template-columns: 1fr; }
-  .rh-numbers-inner { grid-template-columns: repeat(2, 1fr); }
+  .rh-hero-right {
+    order: -1;
+  }
+  .rh-title {
+    font-size: 4rem;
+  }
+  .rh-window {
+    box-shadow: 16px 16px 0 var(--rh-line);
+  }
+  .rh-trio-inner {
+    grid-template-columns: 1fr;
+  }
+  .rh-numbers-inner {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 @media (max-width: 640px) {
-  .rh-hero { padding: 3rem 1.5rem 2rem; }
-  .rh-title { font-size: 3rem; }
-  .rh-slogan { font-size: 1.15rem; }
-  .rh-window { box-shadow: 10px 10px 0 var(--rh-line); }
-  .rh-trio { padding: 2rem 1.5rem; }
-  .rh-providers { padding: 2rem 1.5rem; }
-  .rh-num em { font-size: 2.2rem; }
+  .rh-hero {
+    padding: 3rem 1.5rem 2rem;
+  }
+  .rh-title {
+    font-size: 3rem;
+  }
+  .rh-slogan {
+    font-size: 1.15rem;
+  }
+  .rh-window {
+    box-shadow: 10px 10px 0 var(--rh-line);
+  }
+  .rh-trio {
+    padding: 2rem 1.5rem;
+  }
+  .rh-providers {
+    padding: 2rem 1.5rem;
+  }
+  .rh-num em {
+    font-size: 2.2rem;
+  }
 }
 </style>

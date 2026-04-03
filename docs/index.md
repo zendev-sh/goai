@@ -9,9 +9,9 @@ description: "Open-source Go SDK for AI applications. One unified API for OpenAI
 
 ## What's New
 
-> **v0.5.1** — MiniMax provider: M2.7, M2.5, M2.1, M2 via Anthropic-compatible API. Thinking/reasoning, tool calling, streaming. [Docs →](/providers/minimax)
+> **v0.5.8** — RunPod provider (serverless vLLM), Bedrock embeddings, and docs accuracy improvements. [Changelog →](https://github.com/zendev-sh/goai/releases)
 >
-> **v0.5.0** — MCP (Model Context Protocol) client. Connect to any MCP server with 3 transports (stdio, HTTP, SSE). Auto-convert MCP tools for use with `GenerateText`. [Docs →](/concepts/mcp)
+> **v0.5.1** — MiniMax provider: M2.7, M2.5, M2.1, M2 via Anthropic-compatible API. Thinking/reasoning, tool calling, streaming. [Docs →](/providers/minimax)
 
 ## What is GoAI SDK?
 

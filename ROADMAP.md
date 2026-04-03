@@ -50,7 +50,7 @@
 | xAI tools      | Provider-defined tools (web_search, x_search) via `/chat/completions`              |
 | MiniMax        | M2.7, M2.5, M2.1, M2 models                                                        |
 
-## v0.5.2 - Current release
+## v0.5.8 - Current release
 
 | Feature                | Description                                                                       |
 | ---------------------- | --------------------------------------------------------------------------------- |
