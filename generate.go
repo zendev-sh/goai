@@ -689,7 +689,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			toolMsgs := executeToolsParallel(ctx, ds.toolCalls, toolMap, step, o.OnToolCallStart, o.OnToolCall)
 
 			// --- Append messages for next step ---
-			params.Messages = appendToolRoundTrip(params.Messages, ds.text, ds.toolCalls, toolMsgs)
+			params.Messages = appendToolRoundTrip(params.Messages, ds.text, ds.reasoning, ds.toolCalls, toolMsgs)
 			// Clear ToolChoice so model can freely respond on subsequent steps (matches generate.go:471).
 			// Set on every iteration for simplicity; idempotent after step 1.
 			params.ToolChoice = ""
@@ -888,7 +888,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		toolMessages := executeToolsParallel(ctx, result.ToolCalls, toolMap, step, o.OnToolCallStart, o.OnToolCall)
 
 		// Append assistant message with tool calls + tool result messages.
-		params.Messages = appendToolRoundTrip(params.Messages, result.Text, result.ToolCalls, toolMessages)
+		params.Messages = appendToolRoundTrip(params.Messages, result.Text, nil, result.ToolCalls, toolMessages)
 	}
 
 	// MaxSteps reached.
@@ -1101,13 +1101,18 @@ func buildToolMessages(calls []provider.ToolCall, results []toolOutput) []provid
 
 // appendToolRoundTrip appends an assistant message (with tool_use parts)
 // and tool result messages for the streaming tool loop.
+// reasoning parts are placed first so providers that require thinking blocks
+// (e.g. Bedrock with extended thinking) see them before tool_use content.
 func appendToolRoundTrip(
 	msgs []provider.Message,
 	text string,
+	reasoning []provider.Part,
 	toolCalls []provider.ToolCall,
 	toolMsgs []provider.Message,
 ) []provider.Message {
 	var parts []provider.Part
+	// Reasoning first (before text and tool_use).
+	parts = append(parts, reasoning...)
 	if text != "" {
 		parts = append(parts, provider.Part{Type: provider.PartText, Text: text})
 	}
@@ -1156,10 +1161,9 @@ func buildTextResult(steps []StepResult, totalUsage provider.Usage) *TextResult 
 }
 
 type drainResult struct {
-	text string // text-only (ChunkText), used for appendToolRoundTrip
-	// Note: ChunkReasoning is forwarded to consumer but NOT accumulated here.
-	// Reasoning is visible via Stream()/TextStream() but not echoed back to the model.
-	toolCalls        []provider.ToolCall
+	text      string          // text-only (ChunkText), used for appendToolRoundTrip
+	reasoning []provider.Part // reasoning/thinking parts, echoed back for providers that require it (e.g. Bedrock)
+	toolCalls []provider.ToolCall
 	usage            provider.Usage
 	finishReason     provider.FinishReason
 	sources          []provider.Source
@@ -1174,8 +1178,10 @@ func drainStep(
 	out chan<- provider.StreamChunk,
 ) drainResult {
 	var (
-		textBuf strings.Builder // ChunkText only (reasoning excluded)
-		dr      drainResult
+		textBuf      strings.Builder // ChunkText only (reasoning excluded)
+		reasoningBuf strings.Builder // accumulated reasoning text
+		reasoningMeta map[string]any // last metadata (contains signature)
+		dr           drainResult
 	)
 
 	for chunk := range source {
@@ -1206,7 +1212,20 @@ func drainStep(
 				dr.sources = append(dr.sources, s)
 			}
 		case provider.ChunkReasoning:
-			// Forwarded but not accumulated in text (reasoning excluded from tool round-trip).
+			// Accumulate into a single buffer. The final chunk carries the
+			// signature (text="", metadata={"signature":"..."}); earlier chunks
+			// carry text fragments. Consolidating produces one complete part.
+			if chunk.Text != "" {
+				reasoningBuf.WriteString(chunk.Text)
+			}
+			if chunk.Metadata != nil {
+				if reasoningMeta == nil {
+					reasoningMeta = make(map[string]any)
+				}
+				for k, v := range chunk.Metadata {
+					reasoningMeta[k] = v
+				}
+			}
 			if s, ok := chunk.Metadata["source"].(provider.Source); ok {
 				dr.sources = append(dr.sources, s)
 			}
@@ -1277,6 +1296,17 @@ func drainStep(
 	}
 
 	dr.text = textBuf.String()
+
+	// Consolidate reasoning fragments into one Part (text + signature metadata)
+	// so the codec serializes a single complete block.
+	if reasoningBuf.Len() > 0 || len(reasoningMeta) > 0 {
+		dr.reasoning = []provider.Part{{
+			Type:            provider.PartReasoning,
+			Text:            reasoningBuf.String(),
+			ProviderOptions: reasoningMeta,
+		}}
+	}
+
 	return dr
 }
 

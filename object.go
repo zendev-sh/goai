@@ -371,7 +371,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 		// produce structured output on subsequent steps.
 		params.ToolChoice = ""
 		toolMessages := executeToolsParallel(ctx, result.ToolCalls, toolMap, step, o.OnToolCallStart, o.OnToolCall)
-		params.Messages = appendToolRoundTrip(params.Messages, result.Text, result.ToolCalls, toolMessages)
+		params.Messages = appendToolRoundTrip(params.Messages, result.Text, nil, result.ToolCalls, toolMessages)
 	}
 
 	// MaxSteps exhausted with tool calls still pending — no structured output produced.
