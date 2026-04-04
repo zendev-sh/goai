@@ -9,7 +9,6 @@
 package google
 
 import (
-	"bufio"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -25,6 +24,7 @@ import (
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/internal/gemini"
 	"github.com/zendev-sh/goai/internal/httpc"
+	"github.com/zendev-sh/goai/internal/sse"
 	"github.com/zendev-sh/goai/provider"
 )
 
@@ -572,19 +572,13 @@ type geminiResponse struct {
 func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChunk) {
 	defer close(out)
 
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	sseScanner := sse.NewScanner(body)
 
 	var usage provider.Usage
 	var responseMeta provider.ResponseMetadata
 	var callIndex int
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
+	for data, ok := sseScanner.Next(); ok; data, ok = sseScanner.Next() {
 
 		var resp geminiResponse
 		if err := json.Unmarshal([]byte(data), &resp); err != nil {
@@ -710,7 +704,7 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
+	if err := sseScanner.Err(); err != nil {
 		provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: fmt.Errorf("reading stream: %w", err)}) // terminal send
 		return
 	}

@@ -12,7 +12,6 @@
 package cohere
 
 import (
-	"bufio"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -22,9 +21,11 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/internal/httpc"
+	"github.com/zendev-sh/goai/internal/sse"
 	"github.com/zendev-sh/goai/provider"
 )
 
@@ -169,7 +170,9 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 
 	out := make(chan provider.StreamChunk, 64)
 	go func() {
-		defer func() { _ = resp.Body.Close() }()
+		var closeOnce sync.Once
+		closeBody := func() { closeOnce.Do(func() { _ = resp.Body.Close() }) }
+		defer closeBody()
 		// Close body on context cancellation to unblock parseChatStream.
 		// Without this, the goroutine leaks if the server stalls mid-stream.
 		done := make(chan struct{})
@@ -177,7 +180,7 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 		go func() {
 			select {
 			case <-ctx.Done():
-				_ = resp.Body.Close()
+				closeBody()
 			case <-done:
 			}
 		}()
@@ -616,8 +619,7 @@ type pendingToolCall struct {
 func parseChatStream(ctx context.Context, body io.Reader, out chan<- provider.StreamChunk) {
 	defer close(out)
 
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	sseScanner := sse.NewScanner(body)
 
 	var pending *pendingToolCall
 	var isReasoning bool
@@ -638,15 +640,7 @@ func parseChatStream(ctx context.Context, body io.Reader, out chan<- provider.St
 		}
 	}()
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "[DONE]" {
-			break
-		}
+	for data, ok := sseScanner.Next(); ok; data, ok = sseScanner.Next() {
 
 		var event struct {
 			Type  string `json:"type"`
@@ -656,7 +650,7 @@ func parseChatStream(ctx context.Context, body io.Reader, out chan<- provider.St
 			Model string `json:"model"`
 			Delta struct {
 				Message struct {
-					Content json.RawMessage `json:"content"`
+					Content   json.RawMessage `json:"content"`
 					ToolCalls struct {
 						ID       string `json:"id"`
 						Type     string `json:"type"`
@@ -837,7 +831,7 @@ func parseChatStream(ctx context.Context, body io.Reader, out chan<- provider.St
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
+	if err := sseScanner.Err(); err != nil {
 		provider.TrySend(ctx, out, provider.StreamChunk{ // terminal send
 			Type:  provider.ChunkError,
 			Error: fmt.Errorf("reading stream: %w", err),

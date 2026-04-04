@@ -9,7 +9,6 @@
 package anthropic
 
 import (
-	"bufio"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/internal/httpc"
+	"github.com/zendev-sh/goai/internal/sse"
 	"github.com/zendev-sh/goai/provider"
 )
 
@@ -325,7 +325,7 @@ func (m *chatModel) buildRequest(params provider.GenerateParams, streaming bool)
 			} else if len(params.Tools) > 0 && params.ToolChoice == "" {
 				// Default tool_choice is auto when tools are present.
 				body["tool_choice"] = map[string]any{
-					"type":                       "auto",
+					"type":                      "auto",
 					"disable_parallel_tool_use": true,
 				}
 			}
@@ -700,25 +700,19 @@ func extractResponseFormatResult(result *provider.GenerateResult) {
 func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChunk, isRFMode bool) {
 	defer close(out)
 
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	sseScanner := sse.NewScanner(body)
 
 	var currentToolCallID string
 	var currentToolName string
 	var currentToolArgs strings.Builder // accumulate partial JSON fragments
 	var isRFBlock bool                  // true when current tool_use block is the synthetic response format tool
-	var isFirstDelta bool              // true for first input_json_delta of a tool_use block
-	var isServerTool bool              // true when current block is server_tool_use
+	var isFirstDelta bool               // true for first input_json_delta of a tool_use block
+	var isServerTool bool               // true when current block is server_tool_use
 	var usage provider.Usage
 	var responseMeta provider.ResponseMetadata
-	var finishMeta map[string]any      // metadata accumulated for ChunkFinish
+	var finishMeta map[string]any // metadata accumulated for ChunkFinish
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
+	for data, ok := sseScanner.Next(); ok; data, ok = sseScanner.Next() {
 
 		var event map[string]any
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
@@ -970,7 +964,7 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
+	if err := sseScanner.Err(); err != nil {
 		if !provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: fmt.Errorf("reading stream: %w", err)}) {
 			return
 		}
@@ -1045,17 +1039,17 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 			Signature string          `json:"signature,omitempty"`
 			Data      string          `json:"data,omitempty"` // redacted_thinking
 			Citations []struct {
-				Type           string `json:"type"`
-				CitedText      string `json:"cited_text"`
-				URL            string `json:"url,omitempty"`
-				Title          string `json:"title,omitempty"`
-				EncryptedIndex string `json:"encrypted_index,omitempty"`
-				DocumentIndex  int    `json:"document_index,omitempty"`
-				DocumentTitle  *string `json:"document_title,omitempty"`
-				StartPageNumber int   `json:"start_page_number,omitempty"`
-				EndPageNumber   int   `json:"end_page_number,omitempty"`
-				StartCharIndex  int   `json:"start_char_index,omitempty"`
-				EndCharIndex    int   `json:"end_char_index,omitempty"`
+				Type            string  `json:"type"`
+				CitedText       string  `json:"cited_text"`
+				URL             string  `json:"url,omitempty"`
+				Title           string  `json:"title,omitempty"`
+				EncryptedIndex  string  `json:"encrypted_index,omitempty"`
+				DocumentIndex   int     `json:"document_index,omitempty"`
+				DocumentTitle   *string `json:"document_title,omitempty"`
+				StartPageNumber int     `json:"start_page_number,omitempty"`
+				EndPageNumber   int     `json:"end_page_number,omitempty"`
+				StartCharIndex  int     `json:"start_char_index,omitempty"`
+				EndCharIndex    int     `json:"end_char_index,omitempty"`
 			} `json:"citations,omitempty"`
 		} `json:"content"`
 		StopReason string `json:"stop_reason"`

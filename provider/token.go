@@ -63,18 +63,18 @@ var _ InvalidatingTokenSource = (*cachedTokenSource)(nil)
 
 type cachedTokenSource struct {
 	fetch  TokenFetchFunc
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	cached *Token
 }
 
 func (c *cachedTokenSource) Token(ctx context.Context) (string, error) {
-	c.mu.Lock()
+	c.mu.RLock()
 	if c.cached != nil && (c.cached.ExpiresAt.IsZero() || time.Now().Before(c.cached.ExpiresAt)) {
 		val := c.cached.Value
-		c.mu.Unlock()
+		c.mu.RUnlock()
 		return val, nil
 	}
-	c.mu.Unlock()
+	c.mu.RUnlock()
 
 	// Fetch outside lock to avoid blocking concurrent callers during network calls.
 	// Brief double-fetch is acceptable for token refresh.

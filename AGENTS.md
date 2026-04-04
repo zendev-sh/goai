@@ -27,7 +27,7 @@ goai/
 ├── errors.go               # APIError, ContextOverflowError
 ├── retry.go                # Exponential backoff (errors.As, not type assertion)
 ├── caching.go              # Prompt cache control (copies msgs, no mutation)
-├── types.go                # Result/Option types
+├── types.go                # Tool struct
 ├── messages.go             # Message builders
 ├── hooks.go                # Telemetry hooks
 ├── partial_json.go         # Partial JSON parser for streaming

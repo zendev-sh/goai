@@ -24,10 +24,13 @@ goai/
 ├── image.go                # GenerateImage
 ├── options.go              # WithPrompt, WithTools, etc.
 ├── schema.go               # SchemaFrom[T] - JSON Schema from Go structs
-├── hooks.go                # RequestInfo, ResponseInfo, ToolCallInfo, ToolCallStartInfo, hook options
 ├── errors.go               # APIError, ContextOverflowError
 ├── retry.go                # Exponential backoff (errors.As, not type assertion)
 ├── caching.go              # Prompt cache control (copies msgs, no mutation)
+├── types.go                # Tool struct
+├── messages.go             # Message builders
+├── hooks.go                # Telemetry hooks
+├── partial_json.go         # Partial JSON parser for streaming
 ├── provider/
 │   ├── provider.go         # LanguageModel, EmbeddingModel, ImageModel interfaces
 │   ├── types.go            # Message, Part, Usage, StreamChunk
@@ -42,13 +45,16 @@ goai/
 │   ├── minimax/            # MiniMax (Anthropic-compat, delegates to anthropic/)
 │   ├── compat/             # Generic OpenAI-compatible
 │   └── <13 more>/          # Mostly OpenAI-compat (some via compat/ or anthropic/ wrappers)
-│   # tools.go files: anthropic/ (10), openai/ (4), google/ (3), xai/ (2), groq/ (1)
+│ # tools.go files: 5 files with provider-defined tools: anthropic/ (10 tools), openai/ (4 tools), google/ (3 tools), xai/ (2 tools), groq/ (1 tool)
 ├── internal/
 │   ├── openaicompat/       # Shared codec for 13+ providers
 │   ├── gemini/             # Schema sanitization (Vertex, Google)
 │   ├── sse/                # SSE parser
 │   └── httpc/              # HTTP helpers + ParseDataURL
-├── examples/               # 25 runnable examples
+├── mcp/                    # MCP (Model Context Protocol) client
+├── observability/
+│   └── langfuse/           # Langfuse observability integration
+├── examples/               # 25 runnable examples (including 7 MCP examples)
 └── bench/                  # Performance benchmarks (GoAI vs Vercel AI SDK)
 ```
 
