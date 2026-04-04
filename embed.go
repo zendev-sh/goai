@@ -161,9 +161,8 @@ func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []stri
 		var wg sync.WaitGroup
 
 		for i, chunk := range chunks {
-			wg.Add(1)
-			go func(i int, chunk []string) {
-				defer wg.Done()
+			wg.Go(func() {
+				i, chunk := i, chunk
 				// Use select to avoid blocking forever if ctx is cancelled
 				// while waiting for the semaphore.
 				select {
@@ -178,7 +177,7 @@ func EmbedMany(ctx context.Context, model provider.EmbeddingModel, values []stri
 					return model.DoEmbed(ctx, chunk, embedParams)
 				})
 				results[i] = embedChunkResult{result: r, err: err}
-			}(i, chunk)
+			})
 		}
 		wg.Wait()
 	}
@@ -230,7 +229,7 @@ type embedChunkResult struct {
 }
 
 // mergeProviderMetadata merges ProviderMetadata from all chunk results.
-// When multiple chunks set the same namespace key, later chunks (by slice index) win ; 
+// When multiple chunks set the same namespace key, later chunks (by slice index) win ;
 // this is intentional last-write-wins semantics, not accumulation.
 // The returned outer map and each namespace's inner map are newly allocated.
 // Values stored within the inner maps are not deep-copied: if a value is a reference

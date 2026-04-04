@@ -263,6 +263,11 @@ func WithProviderOptions(opts map[string]any) Option
 
 ## Telemetry Hooks
 
+> **Panic handling:** Hooks use two panic strategies depending on execution context:
+>
+> - **Caller goroutine** (`OnRequest`, `OnResponse`): panics propagate to the caller (not recovered).
+> - **Worker goroutines** (`OnStepFinish`, `OnToolCallStart`, `OnToolCall`): panics are recovered, logged to stderr, and do not propagate.
+
 ### WithOnRequest
 
 Sets a callback invoked before each model API call.
@@ -272,6 +277,8 @@ func WithOnRequest(fn func(RequestInfo)) Option
 ```
 
 **Default:** `nil`.
+
+> **Panic behavior:** Panics in `OnRequest` callbacks propagate to the caller and are not recovered.
 
 ### WithOnResponse
 
@@ -283,6 +290,8 @@ func WithOnResponse(fn func(ResponseInfo)) Option
 
 **Default:** `nil`.
 
+> **Panic behavior:** Panics in `OnResponse` callbacks propagate to the caller and are not recovered.
+
 ### WithOnStepFinish
 
 Sets a callback invoked after each generation step completes, including after tool execution.
@@ -293,15 +302,19 @@ func WithOnStepFinish(fn func(StepResult)) Option
 
 **Default:** `nil`. Only relevant when `MaxSteps > 1`.
 
+> **Panic behavior:** Panics are recovered and logged to stderr.
+
 ### WithOnToolCallStart
 
-Sets a callback invoked before each tool execution. Fires from the tool's goroutine in `executeToolsParallel`.
+Sets a callback invoked before each tool execution. Fires from the tool's goroutine in `executeToolsParallel`. Also fires during `StreamText` when tools are executed in multi-step loops.
 
 ```go
 func WithOnToolCallStart(fn func(ToolCallStartInfo)) Option
 ```
 
 **Default:** `nil`. Relevant when tools with `Execute` are provided.
+
+> **Panic behavior:** If the callback panics, the tool does not execute and the panic is recovered and logged to stderr.
 
 ### WithOnToolCall
 
@@ -314,6 +327,8 @@ func WithOnToolCall(fn func(ToolCallInfo)) Option
 **Default:** `nil`. Relevant when tools with `Execute` are provided.
 
 > **Note:** When multiple tools execute in a single step, OnToolCall callbacks fire concurrently from separate goroutines. Order is non-deterministic.
+
+> **Panic behavior:** Panics are recovered and logged to stderr.
 
 ---
 

@@ -67,7 +67,7 @@ GoAI detects context overflow from error messages across all supported providers
 - MiniMax ("context window exceeds limit")
 - Kimi / Moonshot ("exceeded model token limit")
 - Cerebras / Mistral (400/413 status with no body)
-- Generic fallback ("context_length_exceeded", "context length exceeded")
+- Generic fallback (regex: `(?i)context[_ ]length[_ ]exceeded`)
 
 ---
 
@@ -104,7 +104,7 @@ func ParseHTTPError(providerID string, statusCode int, body []byte) error
 The function extracts human-readable error messages from two common API formats:
 
 - Chat Completions format: `{"error": {"message": "..."}}`
-- Responses API format: `{"message": "...", "code": "...", "type": "..."}`
+- Responses API format: `{"message": "...", "code": "...", "type": "..."}` — goai extracts only the `message` field.
 
 ## ParseHTTPErrorWithHeaders
 
@@ -144,9 +144,9 @@ type ParsedStreamError struct {
 
 Recognized stream error codes:
 
-| Code                      | Type               | Retryable |
-| ------------------------- | ------------------ | --------- |
-| `context_length_exceeded` | `context_overflow` | No        |
+| Code                      | Type               | Retryable | Message                                        |
+| ------------------------- | ------------------ | --------- | ---------------------------------------------- |
+| `context_length_exceeded` | `context_overflow` | No        | `"Input exceeds context window of this model"` |
 | `insufficient_quota`      | `api_error`        | No        |
 | `usage_not_included`      | `api_error`        | No        |
 | `invalid_prompt`          | `api_error`        | No        |
@@ -165,7 +165,7 @@ func ClassifyStreamError(body []byte) error
 
 ## ErrUnknownTool
 
-Sentinel error set on `ToolCallInfo.Error` when a tool call references a tool not in the tool map during auto tool loop execution. Defined in the `goai` package.
+Sentinel error set on `ToolCallInfo.Error` when a tool call references a tool not in the tool map during auto tool loop execution. Defined in `generate.go`.
 
 ```go
 var ErrUnknownTool = errors.New("goai: unknown tool")

@@ -124,6 +124,44 @@ type ImageResult struct {
 }
 ```
 
+### SchemaFrom
+
+Generates a JSON Schema from a Go struct type `T`. Used by `GenerateObject` and `StreamObject` to describe the expected output structure, and compatible with OpenAI strict-mode schemas.
+
+```go
+func SchemaFrom[T any]() json.RawMessage
+```
+
+**Supported struct tags:**
+
+| Tag                            | Example                                     | Description                                            |
+| ------------------------------ | ------------------------------------------- | ------------------------------------------------------ |
+| `json:"name"`                  | `json:"firstName"`                          | Field name in JSON output; `json:"-"` to skip a field. |
+| `jsonschema:"description=..."` | `jsonschema:"description=User's full name"` | Adds a description to the field in the schema.         |
+| `jsonschema:"enum=a\|b\|c"`    | `jsonschema:"enum=easy\|medium\|hard"`      | Restricts the field to enumerated values.              |
+
+**Example:**
+
+```go
+type Recipe struct {
+    Name        string   `json:"name" jsonschema:"description=Recipe name"`
+    Ingredients []string `json:"ingredients" jsonschema:"description=List of ingredients"`
+    Steps       []string `json:"steps" jsonschema:"description=Cooking steps"`
+    Difficulty  string   `json:"difficulty" jsonschema:"enum=easy|medium|hard"`
+}
+
+schema := goai.SchemaFrom[Recipe]()
+```
+
+**Edge cases:**
+
+- `time.Time` is converted to `{"type": "string", "format": "date-time"}`.
+- Self-referential named slice types (e.g. `type Foo []Foo`) are detected and produce a schema with `{"type": "array"}` (no items) to avoid infinite recursion.
+- Mutually recursive named slice types (e.g. `type A []B; type B []A`) are not detected and will cause a stack overflow. Use struct wrappers instead of raw named-slice mutual recursion.
+- Pointer types are unwrapped and marked nullable in the schema.
+
+See [Structured Output](../getting-started/structured-output.md) for full usage.
+
 ### Tool
 
 Defines a tool that can be called by the model during generation. Includes an optional `Execute` function for automatic tool loop execution.
@@ -368,7 +406,7 @@ const (
     ChunkToolCall            StreamChunkType = "tool_call"
     ChunkToolCallDelta       StreamChunkType = "tool_call_delta"
     ChunkToolCallStreamStart StreamChunkType = "tool_call_streaming_start"
-    ChunkToolResult          StreamChunkType = "tool_result"
+    ChunkToolResult          StreamChunkType = "tool_result" // reserved for future use; not currently emitted by any provider
     ChunkStepFinish          StreamChunkType = "step_finish"
     ChunkFinish              StreamChunkType = "finish"
     ChunkError               StreamChunkType = "error"
@@ -582,10 +620,10 @@ Response from image generation at the provider level.
 
 ```go
 type ImageResult struct {
-    Images           []ImageData                   // Generated images.
-    ProviderMetadata map[string]map[string]any     // Provider-specific data.
-    Usage            Usage                         // Token/operation usage.
-    Response         ResponseMetadata              // Provider metadata.
+    Images           []ImageData                 // Generated images.
+    ProviderMetadata map[string]map[string]any   // Provider-specific data.
+    Usage            Usage                       // Token/operation usage.
+    Response         ResponseMetadata            // Provider metadata.
 }
 ```
 
@@ -616,8 +654,10 @@ Response from embedding generation at the provider level.
 
 ```go
 type EmbedResult struct {
-    Embeddings [][]float64   // Generated vectors.
-    Usage      Usage         // Token consumption.
+    Embeddings       [][]float64              // Generated vectors.
+    Usage            Usage                   // Token consumption.
+    ProviderMetadata map[string]map[string]any // Provider-specific response data.
+    Response         ResponseMetadata         // Provider metadata.
 }
 ```
 

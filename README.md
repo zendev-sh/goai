@@ -323,15 +323,12 @@ Built-in [Langfuse](https://langfuse.com) integration for tracing generations, t
 ```go
 import "github.com/zendev-sh/goai/observability/langfuse"
 
-lf := langfuse.New(langfuse.WithBaseURL("https://cloud.langfuse.com"))
-trace := lf.Trace("my-trace")
-
+// Credentials from env: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
+// Or override via langfuse.PublicKey(), langfuse.SecretKey(), langfuse.Host().
 result, err := goai.GenerateText(ctx, model,
     goai.WithPrompt("Hello"),
-    trace.Hooks()...,  // wires OnRequest, OnResponse, OnStepFinish, OnToolCall
+    langfuse.WithTracing(), // wires OnRequest, OnResponse, OnStepFinish, OnToolCall
 )
-trace.End(result.Text)
-lf.Flush(ctx)
 ```
 
 See [examples/langfuse](examples/langfuse/) and [observability docs](https://goai.dev/concepts/observability) for details.

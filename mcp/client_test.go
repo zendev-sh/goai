@@ -48,7 +48,7 @@ func newMockTransport() *mockTransport {
 }
 
 func (m *mockTransport) Start(_ context.Context) error { return m.startErr }
-func (m *mockTransport) Close() error                   { return m.closeErr }
+func (m *mockTransport) Close() error                  { return m.closeErr }
 
 func (m *mockTransport) OnMessage(fn func(JSONRPCMessage)) {
 	m.mu.Lock()
@@ -386,7 +386,9 @@ func TestCallTool_Success(t *testing.T) {
 				Name      string         `json:"name"`
 				Arguments map[string]any `json:"arguments"`
 			}
-			json.Unmarshal(msg.Params, &p)
+			if err := json.Unmarshal(msg.Params, &p); err != nil {
+				t.Fatalf("unmarshal params: %v", err)
+			}
 			if p.Name != "calc" {
 				t.Errorf("tool name = %q, want %q", p.Name, "calc")
 			}
@@ -475,7 +477,9 @@ func TestGetPrompt_Success(t *testing.T) {
 		Name      string            `json:"name"`
 		Arguments map[string]string `json:"arguments"`
 	}
-	json.Unmarshal(sentParams, &p)
+	if err := json.Unmarshal(sentParams, &p); err != nil {
+		t.Fatalf("unmarshal params: %v", err)
+	}
 	if p.Name != "greeting" || p.Arguments["name"] != "Alice" {
 		t.Errorf("params = %+v, want name=greeting args={name:Alice}", p)
 	}
@@ -543,7 +547,9 @@ func TestReadResource_Success(t *testing.T) {
 	var p struct {
 		URI string `json:"uri"`
 	}
-	json.Unmarshal(sentParams, &p)
+	if err := json.Unmarshal(sentParams, &p); err != nil {
+		t.Fatalf("unmarshal params: %v", err)
+	}
 	if p.URI != "file:///a.txt" {
 		t.Errorf("uri = %q, want %q", p.URI, "file:///a.txt")
 	}

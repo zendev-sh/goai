@@ -968,7 +968,7 @@ func executeToolsParallel(
 							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
 						}
 					}()
-					f(ToolCallStartInfo{ToolCallID: tc.ID, ToolName: tc.Name, Step: step, Input: tc.Input})
+					f(ToolCallStartInfo{ToolCallID: tc.ID, ToolName: tc.Name, Step: step + 1, Input: tc.Input})
 				}(fn)
 			}
 			for _, fn := range onToolCall {
