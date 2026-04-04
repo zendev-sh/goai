@@ -612,14 +612,6 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			// any meaningful chunks, e.g., after a ChunkError). Prevents emitting
 			// a phantom empty StepResult and ChunkStepFinish.
 			if ds.text == "" && len(ds.toolCalls) == 0 && ds.finishReason == "" {
-				// Empty step on step 1 with caching enabled may indicate the
-				// provider silently rejected cachePoint (Bedrock returns HTTP 200
-				// + empty stream for unsupported models). Disable caching and re-run.
-				if step == 1 && params.PromptCaching {
-					params.PromptCaching = false
-					step--
-					continue
-				}
 				break
 			}
 

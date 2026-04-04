@@ -17,7 +17,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -465,14 +464,6 @@ func (m *chatModel) buildAndSend(ctx context.Context, params provider.GeneratePa
 	id, _ := m.readIDRegion()
 	body := buildConverseRequest(params, id)
 	m.applyBedrockOptions(body, params.Tools, params.ProviderOptions)
-
-	// Debug: append request body for diagnosis
-	if f, err2 := os.OpenFile("/tmp/bedrock-requests.jsonl", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err2 == nil {
-		raw, _ := json.Marshal(body["messages"])
-		_, _ = fmt.Fprintf(f, "REQUEST model=%s msgs=%s\n", id, string(raw))
-		_ = f.Close()
-	}
-
 	if len(params.Tools) == 0 {
 		delete(body, "toolConfig")
 		// Bedrock Converse API requires toolConfig whenever messages contain

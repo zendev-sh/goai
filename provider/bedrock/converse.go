@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -75,29 +74,6 @@ func buildConverseRequest(params provider.GenerateParams, modelID string) map[st
 
 	// Messages.
 	convMsgs := convertMessages(params.Messages)
-	// Debug: dump ALL messages for pairing diagnosis.
-	if f, err := os.OpenFile("/tmp/bedrock-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
-		_, _ = fmt.Fprintf(f, "--- REQUEST (model=%s, msgs=%d) ---\n", modelID, len(convMsgs))
-		for mi, m := range convMsgs {
-			role, _ := m["role"].(string)
-			content, _ := m["content"].([]map[string]any)
-			var uses, results, texts int
-			for _, block := range content {
-				if _, ok := block["toolUse"]; ok {
-					uses++
-				}
-				if _, ok := block["toolResult"]; ok {
-					results++
-				}
-				if _, ok := block["text"]; ok {
-					texts++
-				}
-			}
-			_, _ = fmt.Fprintf(f, "  msg[%d] role=%s text=%d toolUse=%d toolResult=%d\n",
-				mi, role, texts, uses, results)
-		}
-		_ = f.Close()
-	}
 	body["messages"] = convMsgs
 
 	// Inference config.
