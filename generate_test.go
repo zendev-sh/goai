@@ -1271,8 +1271,8 @@ func TestAddUsage(t *testing.T) {
 	}
 }
 
-func TestStreamText_WithTimeout_ErrorCancelsContext(t *testing.T) {
-	// StreamText with Timeout: when DoStream fails, timeoutCancel must be called.
+func TestStreamText_WithTimeout_ErrorReturnsAPIError(t *testing.T) {
+	// StreamText with Timeout: when DoStream fails, error propagates correctly.
 	model := &mockModel{
 		id: "test",
 		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
@@ -1803,9 +1803,15 @@ func TestConsume_ContextCancelledResultPath(t *testing.T) {
 	close(ch)
 
 	result := stream.Result()
-	// Result should have at most the text sent before cancel.
+	// Context was cancelled, so consume must exit early via ctx.Err().
+	// Either the text chunk was drained before cancel (result.Text == "hello")
+	// or the context error short-circuited before draining.
 	if result.Text != "" && result.Text != "hello" {
 		t.Errorf("Result.Text = %q, want either empty or %q (partial text before cancel)", result.Text, "hello")
+	}
+	// stream.Err() must reflect context cancellation.
+	if err := stream.Err(); err == nil {
+		t.Error("expected Err() to return context error, got nil")
 	}
 }
 

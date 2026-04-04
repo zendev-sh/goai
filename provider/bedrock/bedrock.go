@@ -601,9 +601,9 @@ func (m *chatModel) tryCrossRegionFallback(err error) bool {
 		m.opts.region = "us-east-1"
 		m.fallbackDone = true
 	})
-	m.mu.Lock()
+	m.mu.RLock()
 	done := m.fallbackDone
-	m.mu.Unlock()
+	m.mu.RUnlock()
 	return done
 }
 

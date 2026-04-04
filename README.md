@@ -331,7 +331,7 @@ result, err := goai.GenerateText(ctx, model,
 )
 ```
 
-See [examples/langfuse](examples/langfuse/) and [observability docs](https://goai.dev/concepts/observability) for details.
+See [examples/langfuse](examples/langfuse/) and [observability docs](https://goai.sh/concepts/observability) for details.
 
 ## Providers
 
@@ -767,7 +767,7 @@ goai/                       # Core SDK
 │   ├── cohere/             # Cohere (Chat v2 + Embed)
 │   ├── minimax/            # MiniMax (Anthropic-compatible API)
 │   ├── compat/             # Generic OpenAI-compatible
-│   └── ...                 # 12 more OpenAI-compatible providers
+│   	└── ...                 # 13 more OpenAI-compatible providers
 ├── internal/
 │   ├── openaicompat/       # Shared codec for 13 OpenAI-compat providers
 │   ├── gemini/             # Schema sanitization (Vertex, Google)

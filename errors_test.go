@@ -460,10 +460,6 @@ func TestParseHTTPErrorWithHeaders_RetryAfter(t *testing.T) {
 		{
 			name: "no retry headers",
 		},
-		{
-			name:    "nil headers",
-			headers: nil,
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

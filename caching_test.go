@@ -81,7 +81,7 @@ func TestApplyCaching_MultipleSystemMessages(t *testing.T) {
 	if result[0].Content[0].CacheControl != cacheControlEphemeral {
 		t.Errorf("first system CacheControl = %q", result[0].Content[0].CacheControl)
 	}
-	if result[1].Content[0].CacheControl != "ephemeral" {
+	if result[1].Content[0].CacheControl != cacheControlEphemeral {
 		t.Errorf("second system CacheControl = %q", result[1].Content[0].CacheControl)
 	}
 }

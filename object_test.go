@@ -1174,8 +1174,8 @@ func TestStreamObject_WithTimeout(t *testing.T) {
 	}
 }
 
-func TestStreamObject_WithTimeout_ErrorCancelsContext(t *testing.T) {
-	// StreamObject with Timeout: when DoStream fails, timeoutCancel must be called.
+func TestStreamObject_WithTimeout_ErrorReturnsAPIError(t *testing.T) {
+	// StreamObject with Timeout: when DoStream fails, error propagates correctly.
 	model := &mockModel{
 		id: "test",
 		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
