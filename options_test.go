@@ -292,7 +292,7 @@ func TestWithProviderOptions_MapWithNonStringKey(t *testing.T) {
 func TestWithProviderOptions_StructWithJSONDashChan(t *testing.T) {
 	// A field tagged json:"-" is excluded by json.Marshal; must NOT panic.
 	type structWithIgnored struct {
-		Name string  `json:"name"`
+		Name string   `json:"name"`
 		Skip chan int `json:"-"`
 	}
 	applyOptions(WithProviderOptions(map[string]any{
@@ -309,7 +309,7 @@ func TestWithProviderOptions_StructWithJSONDashComma_Panics(t *testing.T) {
 		}
 	}()
 	type structWithDashName struct {
-		Ch chan int `json:"-,"`
+		Ch chan int `json:"'-',"` //nolint:staticcheck // intentional: tests that this tag causes marshaling to fail
 	}
 	applyOptions(WithProviderOptions(map[string]any{
 		"x": structWithDashName{Ch: make(chan int)},

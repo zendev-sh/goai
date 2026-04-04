@@ -51,6 +51,9 @@ goai/
 │   ├── gemini/             # Schema sanitization (Vertex, Google)
 │   ├── sse/                # SSE parser
 │   └── httpc/              # HTTP helpers + ParseDataURL
+├── mcp/                    # MCP (Model Context Protocol) client
+├── observability/
+│   └── langfuse/           # Langfuse observability integration
 ├── examples/               # 25 runnable examples (including 7 MCP examples)
 └── bench/                  # Performance benchmarks (GoAI vs Vercel AI SDK)
 ```

@@ -196,7 +196,7 @@ func (t *StdioTransport) Close() error {
 	t.cmd = nil
 	t.writeMu.Unlock()
 	if stdin != nil {
-		stdin.Close()
+		_ = stdin.Close()
 	}
 	if cmd != nil && cmd.Process != nil {
 		cmd.Process.Kill() //nolint:errcheck
@@ -355,13 +355,13 @@ func (t *HTTPTransport) Start(ctx context.Context) error {
 		return fmt.Errorf("mcp: SSE connection: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		cancel()
 		return fmt.Errorf("mcp: SSE connection failed: HTTP %d", resp.StatusCode)
 	}
 	ct := resp.Header.Get("Content-Type")
 	if !strings.HasPrefix(ct, "text/event-stream") {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		cancel()
 		return fmt.Errorf("mcp: expected text/event-stream, got %q", ct)
 	}
@@ -385,7 +385,7 @@ func (t *HTTPTransport) Start(ctx context.Context) error {
 // readSSEBody reads SSE events from an open response body until EOF or error.
 // It takes ownership of the body and closes it when done.
 func (t *HTTPTransport) readSSEBody(body io.ReadCloser) {
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 
 	reader := bufio.NewReader(body)
 	for {
@@ -449,7 +449,7 @@ func (t *HTTPTransport) Send(ctx context.Context, msg JSONRPCMessage) error {
 
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return fmt.Errorf("mcp: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
@@ -473,7 +473,7 @@ func (t *HTTPTransport) Send(ctx context.Context, msg JSONRPCMessage) error {
 		if err := json.NewDecoder(resp.Body).Decode(&respMsg); err == nil && respMsg.JSONRPC == "2.0" {
 			t.dispatchMessage(respMsg)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	case strings.HasPrefix(ct, "text/event-stream"):
 		// Read SSE events from POST response in a background goroutine
 		// to avoid blocking the caller. Goroutine owns the body.
@@ -483,7 +483,7 @@ func (t *HTTPTransport) Send(ctx context.Context, msg JSONRPCMessage) error {
 		t.mu.Unlock()
 		go t.readSSEBodyCancellable(postCtx, resp.Body)
 	default:
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 
 	return nil
@@ -499,8 +499,8 @@ func (t *HTTPTransport) readSSEBodyCancellable(ctx context.Context, body io.Read
 	}()
 	select {
 	case <-ctx.Done():
-		body.Close() // force the reader to exit
-		<-done        // wait for goroutine to finish
+		_ = body.Close() // force the reader to exit
+		<-done           // wait for goroutine to finish
 	case <-done:
 		// natural exit
 	}
@@ -648,12 +648,12 @@ func (t *SSETransport) Start(ctx context.Context) error {
 		return fmt.Errorf("mcp: SSE connection: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return fmt.Errorf("mcp: SSE connection failed: HTTP %d", resp.StatusCode)
 	}
 	ct := resp.Header.Get("Content-Type")
 	if !strings.HasPrefix(ct, "text/event-stream") {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return fmt.Errorf("mcp: expected text/event-stream, got %q", ct)
 	}
 	t.respBody = resp.Body
@@ -745,7 +745,7 @@ func (t *SSETransport) Send(ctx context.Context, msg JSONRPCMessage) error {
 	if err != nil {
 		return fmt.Errorf("mcp: send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("mcp: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -769,7 +769,7 @@ func (t *SSETransport) Close() error {
 	t.respBody = nil
 	t.mu.Unlock()
 	if body != nil {
-		body.Close()
+		_ = body.Close()
 	}
 	return nil
 }

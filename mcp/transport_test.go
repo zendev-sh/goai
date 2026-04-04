@@ -243,7 +243,7 @@ func TestStdioTransport_SendWritesJSON(t *testing.T) {
 		t.Fatal("timed out waiting for echoed message")
 	}
 
-	st.Close()
+	_ = st.Close()
 }
 
 func TestStdioTransport_CloseMultipleTimes(t *testing.T) {
@@ -252,8 +252,8 @@ func TestStdioTransport_CloseMultipleTimes(t *testing.T) {
 	if err := st.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	st.Close()
-	st.Close()
+	_ = st.Close()
+	_ = st.Close()
 }
 
 func TestStdioTransport_OnClose(t *testing.T) {
@@ -274,7 +274,7 @@ func TestStdioTransport_OnClose(t *testing.T) {
 	if !closeCalled.Load() {
 		t.Error("OnClose not called after subprocess exit")
 	}
-	st.Close()
+	_ = st.Close()
 }
 
 func TestStdioTransport_OnError(t *testing.T) {
@@ -294,7 +294,7 @@ func TestStdioTransport_OnError(t *testing.T) {
 	// echo outputs invalid JSON followed by EOF. The json.Decoder may see
 	// a decode error or EOF depending on timing. Either way should not panic.
 	time.Sleep(500 * time.Millisecond)
-	st.Close()
+	_ = st.Close()
 }
 
 // --- HTTPTransport tests ---
@@ -323,7 +323,7 @@ func TestHTTPTransport_Send_ContentTypeAndBody(t *testing.T) {
 		gotContentType = r.Header.Get("Content-Type")
 		gotBody, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"jsonrpc":"2.0","id":"1","result":{}}`))
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"1","result":{}}`))
 	}))
 	defer srv.Close()
 
@@ -390,7 +390,7 @@ func TestHTTPTransport_Send_ExtractsEndpoint(t *testing.T) {
 func TestHTTPTransport_Send_JSONResponseDispatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"jsonrpc":"2.0","id":"1","result":{"value":42}}`))
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"1","result":{"value":42}}`))
 	}))
 	defer srv.Close()
 
@@ -427,7 +427,7 @@ func TestHTTPTransport_Send_SessionIDSent(t *testing.T) {
 	ht.SessionID = "my-session"
 
 	msg := JSONRPCMessage{JSONRPC: "2.0", Method: "test", ID: "1"}
-	ht.Send(context.Background(), msg)
+	_ = ht.Send(context.Background(), msg)
 
 	if gotSessionID != "my-session" {
 		t.Errorf("session id = %q, want %q", gotSessionID, "my-session")
@@ -445,7 +445,7 @@ func TestHTTPTransport_Send_CustomHeaders(t *testing.T) {
 	ht := NewHTTPTransport(srv.URL, WithHTTPHeaders(map[string]string{"X-Custom": "value"}))
 
 	msg := JSONRPCMessage{JSONRPC: "2.0", Method: "test", ID: "1"}
-	ht.Send(context.Background(), msg)
+	_ = ht.Send(context.Background(), msg)
 
 	if gotHeader != "value" {
 		t.Errorf("custom header = %q, want %q", gotHeader, "value")
@@ -462,7 +462,7 @@ func TestHTTPTransport_Start_SSEConnection(t *testing.T) {
 		if !ok {
 			return
 		}
-		fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n")
+		_, _ = fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n")
 		flusher.Flush()
 		time.Sleep(100 * time.Millisecond)
 	}))
@@ -502,7 +502,7 @@ func TestHTTPTransport_Start_SSEConnection(t *testing.T) {
 		t.Errorf("accept = %q, want text/event-stream", gotAccept)
 	}
 
-	ht.Close()
+	_ = ht.Close()
 }
 
 func TestHTTPTransport_Close(t *testing.T) {
@@ -529,10 +529,10 @@ func TestHTTPTransport_Send_UsesEndpoint(t *testing.T) {
 	ht := NewHTTPTransport(srv1.URL)
 
 	msg := JSONRPCMessage{JSONRPC: "2.0", Method: "init", ID: "1"}
-	ht.Send(context.Background(), msg)
+	_ = ht.Send(context.Background(), msg)
 
 	// Second send should go to srv2
-	ht.Send(context.Background(), msg)
+	_ = ht.Send(context.Background(), msg)
 
 	if !secondHit.Load() {
 		t.Error("second request should have gone to discovered endpoint")
@@ -559,10 +559,10 @@ func TestSSETransport_StartAndReadEvents(t *testing.T) {
 			return
 		}
 		// Send endpoint event first
-		fmt.Fprintf(w, "event: endpoint\ndata: %s/post\n\n", r.Host)
+		_, _ = fmt.Fprintf(w, "event: endpoint\ndata: %s/post\n\n", r.Host)
 		flusher.Flush()
 		// Send a JSON-RPC message
-		fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"ping\"}\n\n")
+		_, _ = fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"ping\"}\n\n")
 		flusher.Flush()
 		time.Sleep(100 * time.Millisecond)
 	}))
@@ -598,14 +598,14 @@ func TestSSETransport_StartAndReadEvents(t *testing.T) {
 		t.Fatal("timed out waiting for SSE message")
 	}
 
-	st.Close()
+	_ = st.Close()
 }
 
 func TestSSETransport_ReadSSE_DiscoverEndpoint(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, _ := w.(http.Flusher)
-		fmt.Fprintf(w, "event: endpoint\ndata: http://localhost:8080/messages\n\n")
+		_, _ = fmt.Fprintf(w, "event: endpoint\ndata: http://localhost:8080/messages\n\n")
 		flusher.Flush()
 		time.Sleep(100 * time.Millisecond)
 	}))
@@ -627,7 +627,7 @@ func TestSSETransport_ReadSSE_DiscoverEndpoint(t *testing.T) {
 		t.Errorf("endpoint = %q, want %q", ep, "http://localhost:8080/messages")
 	}
 
-	st.Close()
+	_ = st.Close()
 }
 
 func TestSSETransport_Send_NoEndpoint(t *testing.T) {
@@ -680,7 +680,7 @@ func TestSSETransport_Send_CustomHeaders(t *testing.T) {
 	st.Headers = map[string]string{"Authorization": "Bearer token123"}
 
 	msg := JSONRPCMessage{JSONRPC: "2.0", Method: "test", ID: "1"}
-	st.Send(context.Background(), msg)
+	_ = st.Send(context.Background(), msg)
 
 	if gotHeader != "Bearer token123" {
 		t.Errorf("authorization = %q, want %q", gotHeader, "Bearer token123")
@@ -689,8 +689,8 @@ func TestSSETransport_Send_CustomHeaders(t *testing.T) {
 
 func TestSSETransport_Close_MultipleTimes(t *testing.T) {
 	st := NewSSETransport("http://example.com/sse")
-	st.Close()
-	st.Close()
+	_ = st.Close()
+	_ = st.Close()
 }
 
 func TestSSETransport_OnClose(t *testing.T) {
@@ -722,7 +722,7 @@ func TestSSETransport_OnError_InvalidJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, _ := w.(http.Flusher)
-		fmt.Fprintf(w, "data: not-json\n\n")
+		_, _ = fmt.Fprintf(w, "data: not-json\n\n")
 		flusher.Flush()
 		time.Sleep(100 * time.Millisecond)
 	}))
@@ -745,7 +745,7 @@ func TestSSETransport_OnError_InvalidJSON(t *testing.T) {
 		t.Error("OnError not called for invalid JSON")
 	}
 
-	st.Close()
+	_ = st.Close()
 }
 
 func TestHTTPTransport_SSE_SessionIDFromResponse(t *testing.T) {
@@ -753,7 +753,7 @@ func TestHTTPTransport_SSE_SessionIDFromResponse(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("MCP-Session-ID", "from-sse")
 		flusher, _ := w.(http.Flusher)
-		fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"test\"}\n\n")
+		_, _ = fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"test\"}\n\n")
 		flusher.Flush()
 		time.Sleep(100 * time.Millisecond)
 	}))
@@ -775,7 +775,7 @@ func TestHTTPTransport_SSE_SessionIDFromResponse(t *testing.T) {
 		t.Errorf("session id = %q, want %q", sid, "from-sse")
 	}
 
-	ht.Close()
+	_ = ht.Close()
 }
 
 func TestHTTPTransport_OnClose_Callback(t *testing.T) {
@@ -801,7 +801,7 @@ func TestHTTPTransport_OnClose_Callback(t *testing.T) {
 	if !closeCalled.Load() {
 		t.Error("OnClose not called after SSE connection closed")
 	}
-	ht.Close()
+	_ = ht.Close()
 }
 
 func TestHTTPTransport_Start_ConnectionError(t *testing.T) {
@@ -811,7 +811,7 @@ func TestHTTPTransport_Start_ConnectionError(t *testing.T) {
 
 	err := ht.Start(context.Background())
 	if err == nil {
-		ht.Close()
+		_ = ht.Close()
 		t.Fatal("expected connection error from Start")
 	}
 	if !strings.Contains(err.Error(), "mcp: SSE connection") {
@@ -822,7 +822,7 @@ func TestHTTPTransport_Start_ConnectionError(t *testing.T) {
 func TestHTTPTransport_Send_NonJSONResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("not json"))
+		_, _ = w.Write([]byte("not json"))
 	}))
 	defer srv.Close()
 
@@ -861,7 +861,7 @@ func TestSSETransport_Start_CustomHeaders(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for header")
 	}
-	st.Close()
+	_ = st.Close()
 }
 
 func TestHTTPTransport_Start_SessionIDSentOnSSE(t *testing.T) {
@@ -888,7 +888,7 @@ func TestHTTPTransport_Start_SessionIDSentOnSSE(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for session ID")
 	}
-	ht.Close()
+	_ = ht.Close()
 }
 
 func TestHTTPTransport_Start_CustomHeaders(t *testing.T) {
@@ -914,7 +914,7 @@ func TestHTTPTransport_Start_CustomHeaders(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for header")
 	}
-	ht.Close()
+	_ = ht.Close()
 }
 
 func TestHTTPTransport_Send_SSEResponseDispatch(t *testing.T) {
@@ -924,8 +924,8 @@ func TestHTTPTransport_Send_SSEResponseDispatch(t *testing.T) {
 		if !ok {
 			return
 		}
-		fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":{\"value\":1}}\n\n")
-		fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":\"2\",\"result\":{\"value\":2}}\n\n")
+		_, _ = fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":{\"value\":1}}\n\n")
+		_, _ = fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":\"2\",\"result\":{\"value\":2}}\n\n")
 		flusher.Flush()
 	}))
 	defer srv.Close()
@@ -965,7 +965,7 @@ func TestHTTPTransport_Send_SSEResponseDispatch(t *testing.T) {
 func TestHTTPTransport_Send_HTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
-		w.Write([]byte("internal server error"))
+		_, _ = w.Write([]byte("internal server error"))
 	}))
 	defer srv.Close()
 
@@ -983,7 +983,7 @@ func TestHTTPTransport_Send_HTTPError(t *testing.T) {
 func TestSSETransport_Start_HTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)
-		w.Write([]byte("unauthorized"))
+		_, _ = w.Write([]byte("unauthorized"))
 	}))
 	defer srv.Close()
 
@@ -1002,7 +1002,7 @@ func TestSSETransport_Start_HTTPError(t *testing.T) {
 func TestSSETransport_Send_HTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
-		w.Write([]byte("server error"))
+		_, _ = w.Write([]byte("server error"))
 	}))
 	defer srv.Close()
 
@@ -1066,7 +1066,7 @@ func TestStdioTransport_SendAfterClose(t *testing.T) {
 	if err := st.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	st.Close()
+	_ = st.Close()
 
 	// Send after close should return error about transport closed
 	err := st.Send(ctx, JSONRPCMessage{JSONRPC: "2.0", Method: "test"})
@@ -1082,7 +1082,7 @@ func TestHTTPTransport_Start_ContentTypeError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		w.Write([]byte("{}"))
+		_, _ = w.Write([]byte("{}"))
 	}))
 	defer srv.Close()
 
@@ -1091,7 +1091,7 @@ func TestHTTPTransport_Start_ContentTypeError(t *testing.T) {
 
 	err := ht.Start(context.Background())
 	if err == nil {
-		ht.Close()
+		_ = ht.Close()
 		t.Fatal("expected content type error")
 	}
 	if !strings.Contains(err.Error(), "expected text/event-stream") {
@@ -1107,7 +1107,7 @@ func TestReadSSEBody_InvalidJSONDispatch(t *testing.T) {
 		if !ok {
 			return
 		}
-		fmt.Fprintf(w, "data: {invalid json}\n\n")
+		_, _ = fmt.Fprintf(w, "data: {invalid json}\n\n")
 		flusher.Flush()
 		time.Sleep(100 * time.Millisecond)
 	}))
@@ -1131,7 +1131,7 @@ func TestReadSSEBody_InvalidJSONDispatch(t *testing.T) {
 	if !errCalled.Load() {
 		t.Error("OnError not called for invalid JSON in SSE data")
 	}
-	ht.Close()
+	_ = ht.Close()
 }
 
 func TestReadSSEBodyCancellable_ContextCancel(t *testing.T) {
@@ -1143,7 +1143,7 @@ func TestReadSSEBodyCancellable_ContextCancel(t *testing.T) {
 			return
 		}
 		// Send one event, then keep connection open
-		fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":{}}\n\n")
+		_, _ = fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":{}}\n\n")
 		flusher.Flush()
 		// Keep alive long enough to be cancelled
 		time.Sleep(5 * time.Second)
@@ -1169,7 +1169,7 @@ func TestReadSSEBodyCancellable_ContextCancel(t *testing.T) {
 	}
 
 	// Close the transport which should cancel the postCancels context
-	ht.Close()
+	_ = ht.Close()
 	// If we get here without hanging, the context cancellation worked
 }
 
@@ -1214,7 +1214,7 @@ func TestSSETransport_Start_ContentTypeError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		w.Write([]byte("{}"))
+		_, _ = w.Write([]byte("{}"))
 	}))
 	defer srv.Close()
 
@@ -1223,7 +1223,7 @@ func TestSSETransport_Start_ContentTypeError(t *testing.T) {
 
 	err := st.Start(context.Background())
 	if err == nil {
-		st.Close()
+		_ = st.Close()
 		t.Fatal("expected content type error")
 	}
 	if !strings.Contains(err.Error(), "expected text/event-stream") {
@@ -1234,7 +1234,7 @@ func TestSSETransport_Start_ContentTypeError(t *testing.T) {
 func TestSSETransport_Send_JSONResponseDispatch(t *testing.T) {
 	postSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"jsonrpc":"2.0","id":"1","result":{"value":99}}`))
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"1","result":{"value":99}}`))
 	}))
 	defer postSrv.Close()
 
@@ -1306,7 +1306,7 @@ func TestHTTPTransport_Send_SSEResponseFromPost(t *testing.T) {
 		if !ok {
 			return
 		}
-		fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":\"99\",\"result\":{\"ok\":true}}\n\n")
+		_, _ = fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":\"99\",\"result\":{\"ok\":true}}\n\n")
 		flusher.Flush()
 	}))
 	defer srv.Close()
@@ -1341,14 +1341,14 @@ func TestHTTPTransport_Send_SSEResponseFromPost(t *testing.T) {
 		t.Fatal("timed out waiting for SSE response from POST")
 	}
 
-	ht.Close()
+	_ = ht.Close()
 }
 
 func TestSSETransport_Send_NonJSONResponse(t *testing.T) {
 	// Verify that non-JSON response body doesn't dispatch
 	postSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	}))
 	defer postSrv.Close()
 
@@ -1371,7 +1371,7 @@ func TestSSETransport_Start_ConnectionError(t *testing.T) {
 
 	err := st.Start(context.Background())
 	if err == nil {
-		st.Close()
+		_ = st.Close()
 		t.Fatal("expected connection error")
 	}
 	if !strings.Contains(err.Error(), "SSE connection") {
@@ -1385,10 +1385,10 @@ func TestSSETransport_ReadSSE_JSONParseError(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, _ := w.(http.Flusher)
 		// First send an endpoint event
-		fmt.Fprintf(w, "event: endpoint\ndata: http://localhost:9999/post\n\n")
+		_, _ = fmt.Fprintf(w, "event: endpoint\ndata: http://localhost:9999/post\n\n")
 		flusher.Flush()
 		// Then send a message event with invalid JSON
-		fmt.Fprintf(w, "event: message\ndata: {bad json}\n\n")
+		_, _ = fmt.Fprintf(w, "event: message\ndata: {bad json}\n\n")
 		flusher.Flush()
 		time.Sleep(100 * time.Millisecond)
 	}))
@@ -1410,7 +1410,7 @@ func TestSSETransport_ReadSSE_JSONParseError(t *testing.T) {
 	if !errCalled.Load() {
 		t.Error("OnError not called for JSON parse error in readSSE")
 	}
-	st.Close()
+	_ = st.Close()
 }
 
 func TestSSETransport_WithCustomHTTPClient(t *testing.T) {
@@ -1418,7 +1418,7 @@ func TestSSETransport_WithCustomHTTPClient(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, _ := w.(http.Flusher)
-		fmt.Fprintf(w, "event: endpoint\ndata: http://localhost:9999/post\n\n")
+		_, _ = fmt.Fprintf(w, "event: endpoint\ndata: http://localhost:9999/post\n\n")
 		flusher.Flush()
 		time.Sleep(100 * time.Millisecond)
 	}))
@@ -1433,14 +1433,14 @@ func TestSSETransport_WithCustomHTTPClient(t *testing.T) {
 	}
 
 	time.Sleep(200 * time.Millisecond)
-	st.Close()
+	_ = st.Close()
 }
 
 func TestStdioTransport_StartNonExistentBinary(t *testing.T) {
 	st := NewStdioTransport("/nonexistent/binary/that/does/not/exist", nil)
 	err := st.Start(t.Context())
 	if err == nil {
-		st.Close()
+		_ = st.Close()
 		t.Fatal("expected error starting non-existent binary")
 	}
 	if !strings.Contains(err.Error(), "start process") {
@@ -1452,9 +1452,9 @@ func TestStdioTransport_StartNonExistentBinary(t *testing.T) {
 // whose key contains a newline character, preventing env-variable injection.
 func TestMergeEnv_RejectsNewlineKeys(t *testing.T) {
 	env := map[string]string{
-		"VALID_KEY":         "valid_value",
-		"INJECT\nED_KEY":    "bad_value",
-		"ALSO_VALID":        "also_valid_value",
+		"VALID_KEY":      "valid_value",
+		"INJECT\nED_KEY": "bad_value",
+		"ALSO_VALID":     "also_valid_value",
 	}
 	result := mergeEnv(env)
 
@@ -1485,7 +1485,7 @@ func TestMergeEnv_RejectsNewlineKeys(t *testing.T) {
 func TestHTTPTransport_ErrorResponseBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
-		w.Write([]byte("custom error message"))
+		_, _ = w.Write([]byte("custom error message"))
 	}))
 	defer srv.Close()
 

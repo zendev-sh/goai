@@ -12,11 +12,12 @@
 package bedrock
 
 import (
-	"context"
 	"cmp"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -78,14 +79,14 @@ type ReasoningConfig struct {
 type Option func(*options)
 
 type options struct {
-	region                        string
-	accessKey                     string
-	secretKey                     string
-	sessionToken                  string
-	bearerToken                   string
-	baseURL                       string
-	headers                       map[string]string
-	httpClient                    *http.Client
+	region                       string
+	accessKey                    string
+	secretKey                    string
+	sessionToken                 string
+	bearerToken                  string
+	baseURL                      string
+	headers                      map[string]string
+	httpClient                   *http.Client
 	additionalModelRequestFields map[string]any
 	reasoningConfig              *ReasoningConfig
 	anthropicBeta                []string
@@ -201,10 +202,10 @@ func Chat(modelID string, opts ...Option) provider.LanguageModel {
 }
 
 type chatModel struct {
-	mu              sync.RWMutex // protects id and opts.region (mutated by fallback)
-	id              string
-	originalID      string // preserved for bare-ID-from-US fallback
-	opts            options
+	mu                sync.RWMutex // protects id and opts.region (mutated by fallback)
+	id                string
+	originalID        string // preserved for bare-ID-from-US fallback
+	opts              options
 	fallbackAttempted sync.Once
 	fallbackDone      bool
 }
@@ -228,7 +229,7 @@ func (m *chatModel) Capabilities() provider.ModelCapabilities {
 		Temperature: true,
 		ToolCall:    modelSupportsTools(id),
 		Reasoning:   bedrockSupportsThinking(id),
-		Attachment: true,
+		Attachment:  true,
 		InputModalities: provider.ModalitySet{
 			Text:  true,
 			Image: true,
@@ -441,6 +442,9 @@ func (m *chatModel) doRequest(ctx context.Context, params provider.GenerateParam
 			params.Tools = nil
 			params.ToolChoice = ""
 		}},
+		{"prompt-caching", func() bool { return isPromptCachingError(err) && params.PromptCaching }, func() {
+			params.PromptCaching = false
+		}},
 	}
 
 	for _, fb := range fallbacks {
@@ -461,6 +465,14 @@ func (m *chatModel) buildAndSend(ctx context.Context, params provider.GeneratePa
 	id, _ := m.readIDRegion()
 	body := buildConverseRequest(params, id)
 	m.applyBedrockOptions(body, params.Tools, params.ProviderOptions)
+
+	// Debug: append request body for diagnosis
+	if f, err2 := os.OpenFile("/tmp/bedrock-requests.jsonl", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err2 == nil {
+		raw, _ := json.Marshal(body["messages"])
+		_, _ = fmt.Fprintf(f, "REQUEST model=%s msgs=%s\n", id, string(raw))
+		_ = f.Close()
+	}
+
 	if len(params.Tools) == 0 {
 		delete(body, "toolConfig")
 		// Bedrock Converse API requires toolConfig whenever messages contain
@@ -481,6 +493,17 @@ func isMaxTokensError(err error) bool {
 	}
 	return strings.Contains(apiErr.Message, "maximum tokens") &&
 		strings.Contains(apiErr.Message, "exceeds")
+}
+
+// isPromptCachingError checks if the error indicates the model doesn't support prompt caching.
+func isPromptCachingError(err error) bool {
+	var apiErr *goai.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	msg := strings.ToLower(apiErr.Message)
+	return strings.Contains(msg, "prompt caching") ||
+		(strings.Contains(msg, "unsupported model") && strings.Contains(msg, "cach"))
 }
 
 // parseReasoningConfig extracts a ReasoningConfig from dynamic ProviderOptions.
@@ -858,7 +881,6 @@ func uriEncodePath(path string) string {
 	return buf.String()
 }
 
-
 // geoRegions maps cross-region inference profile prefixes to default regions.
 // "us." → must call from us-* endpoint, "eu." → eu-*, "ap." → ap-*, "global." → any.
 var geoRegions = []struct {
@@ -897,8 +919,6 @@ func regionMatchesGeo(region, modelID string) bool {
 	return true // no geo prefix → any region is fine
 }
 
-// toolBetaForType returns the anthropic-beta value for a provider-defined tool.
-// Keep in sync with provider/anthropic/tools.go betaForTool.
 // toolBetaForType maps provider-defined tool types to Anthropic beta header values.
 // Keep in sync with provider/anthropic/tools.go betaForTool.
 func toolBetaForType(toolType string) string {

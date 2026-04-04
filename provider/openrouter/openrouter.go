@@ -19,7 +19,6 @@ import (
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/internal/httpc"
 	"github.com/zendev-sh/goai/internal/openaicompat"
-	"github.com/zendev-sh/goai/internal/sse"
 	"github.com/zendev-sh/goai/provider"
 )
 
@@ -124,7 +123,7 @@ func (m *chatModel) DoGenerate(ctx context.Context, params provider.GeneratePara
 		ExtraBody: map[string]any{"usage": map[string]any{"include": true}},
 	})
 
-	resp, err := m.doHTTP(ctx, body)
+	resp, err := m.doHTTP(ctx, m.opts.baseURL+"/chat/completions", body)
 	if err != nil {
 		return nil, err
 	}
@@ -147,75 +146,42 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 		ExtraBody:            map[string]any{"usage": map[string]any{"include": true}},
 	})
 
-	resp, err := m.doHTTP(ctx, body)
+	resp, err := m.doHTTP(ctx, m.opts.baseURL+"/chat/completions", body)
 	if err != nil {
 		return nil, err
 	}
 
-	out := make(chan provider.StreamChunk, 64)
-	scanner := sse.NewScanner(resp.Body)
-	go func() {
-		defer func() { _ = resp.Body.Close() }()
-		done := make(chan struct{})
-		go func() {
-			select {
-			case <-ctx.Done():
-				_ = resp.Body.Close()
-			case <-done:
-			}
-		}()
-		defer close(done)
-		openaicompat.ParseStream(ctx, scanner, out)
-	}()
-
-	return &provider.StreamResult{Stream: out}, nil
+	return openaicompat.NewSSEStream(ctx, resp.Body), nil
 }
 
 // --- HTTP helpers ---
 
-func (m *chatModel) doHTTP(ctx context.Context, body map[string]any) (*http.Response, error) {
+// mergedHeaders returns provider headers merged with OpenRouter-specific headers.
+func (m *chatModel) mergedHeaders() map[string]string {
+	h := map[string]string{
+		"HTTP-Referer": "https://github.com/zendev-sh/goai",
+		"X-Title":      "goai",
+	}
+	for k, v := range m.opts.headers {
+		h[k] = v
+	}
+	return h
+}
+
+func (m *chatModel) doHTTP(ctx context.Context, url string, body map[string]any) (*http.Response, error) {
 	token, err := m.resolveToken(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("resolving auth token: %w", err)
 	}
 
-	// Extract per-request headers before marshaling.
-	reqHeaders, _ := body["_headers"].(map[string]string)
-	delete(body, "_headers")
-
-	jsonBody := httpc.MustMarshalJSON(body)
-	req := httpc.MustNewRequest(ctx, "POST", m.opts.baseURL+"/chat/completions", jsonBody)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("HTTP-Referer", "https://github.com/zendev-sh/goai")
-	req.Header.Set("X-Title", "goai")
-
-	for k, v := range m.opts.headers {
-		req.Header.Set(k, v)
-	}
-	for k, v := range reqHeaders {
-		req.Header.Set(k, v)
-	}
-
-	resp, err := m.httpClient().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("sending request: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		return nil, goai.ParseHTTPErrorWithHeaders("openrouter", resp.StatusCode, respBody, resp.Header)
-	}
-
-	return resp, nil
-}
-
-func (m *chatModel) httpClient() *http.Client {
-	if m.opts.httpClient != nil {
-		return m.opts.httpClient
-	}
-	return http.DefaultClient
+	return httpc.DoJSONRequest(ctx, httpc.RequestConfig{
+		URL:        url,
+		Token:      token,
+		Body:       body,
+		Headers:    m.mergedHeaders(),
+		HTTPClient: m.opts.httpClient,
+		ProviderID: "openrouter",
+	}, goai.ParseHTTPErrorWithHeaders)
 }
 
 func (m *chatModel) resolveToken(ctx context.Context) (string, error) {

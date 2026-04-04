@@ -1913,8 +1913,8 @@ func TestBuildRequest_ContextManagementAllSubFields(t *testing.T) {
 						"clearToolInputs": map[string]any{
 							"type": "tool_input_clear_20250919",
 						},
-						"excludeTools":         []any{"bash"},
-						"customUnknownField":    "passthrough",
+						"excludeTools":       []any{"bash"},
+						"customUnknownField": "passthrough",
 					},
 				},
 			},
@@ -2305,32 +2305,32 @@ func TestParseSSE_ContextCancel_AllBranches(t *testing.T) {
 	}{
 		{
 			// tool_use start (line 696)
-			name: "tool_use_start",
+			name:  "tool_use_start",
 			input: "data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"fn\"}}\n",
 		},
 		{
 			// server_tool_use start (line 710)
-			name: "server_tool_use_start",
+			name:  "server_tool_use_start",
 			input: "data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"server_tool_use\",\"id\":\"t2\",\"name\":\"bash_code_execution\"}}\n",
 		},
 		{
 			// text_delta (line 727)
-			name: "text_delta",
+			name:  "text_delta",
 			input: "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n",
 		},
 		{
 			// thinking_delta (line 734)
-			name: "thinking_delta",
+			name:  "thinking_delta",
 			input: "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hmm\"}}\n",
 		},
 		{
 			// signature_delta (line 741)
-			name: "signature_delta",
+			name:  "signature_delta",
 			input: "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig123\"}}\n",
 		},
 		{
 			// citations_delta (line 753)
-			name: "citations_delta",
+			name:  "citations_delta",
 			input: "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"citations_delta\",\"citation\":{\"url\":\"http://x\"}}}\n",
 		},
 		{
@@ -2339,27 +2339,27 @@ func TestParseSSE_ContextCancel_AllBranches(t *testing.T) {
 			// For pre-cancel: use isRFBlock=true path -- but parseSSE is called with isRFMode.
 			// For RF mode text: just set isRFMode=true and the text TrySend at 768 fires.
 			// But we can't control isRFMode here. Skip -- use a separate sub-test below.
-			name: "message_stop",
+			name:  "message_stop",
 			input: "data: {\"type\":\"message_stop\"}\n",
 		},
 		{
 			// message_delta stop_reason (line 828)
-			name: "message_delta",
+			name:  "message_delta",
 			input: "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\n",
 		},
 		{
 			// error - overflow via ClassifyStreamError (line 916)
-			name: "error_overflow",
+			name:  "error_overflow",
 			input: "data: {\"type\":\"error\",\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"too long\"}}\n",
 		},
 		{
 			// error - overflow via IsOverflow (line 937)
-			name: "error_overflow_msg",
+			name:  "error_overflow_msg",
 			input: "data: {\"type\":\"error\",\"error\":{\"message\":\"prompt is too long\"}}\n",
 		},
 		{
 			// error - generic (line 945)
-			name: "error_generic",
+			name:  "error_generic",
 			input: "data: {\"type\":\"error\",\"error\":{\"message\":\"some error\"}}\n",
 		},
 	}
@@ -2434,7 +2434,7 @@ func TestParseSSE_ContextCancel_AllBranches(t *testing.T) {
 		// In RF mode, tool_use with name=responseFormatTool doesn't emit start,
 		// and input_json_delta emits ChunkText instead.
 		ctx, cancel := context.WithCancel(t.Context())
-		cancel() // cancel before parsing
+		cancel()                               // cancel before parsing
 		out := make(chan provider.StreamChunk) // unbuffered
 
 		// content_block_start with tool_use named "json_response" sets isRFBlock=true,
@@ -2609,7 +2609,7 @@ func TestParseSSE_ScannerError_EmitsChunkFinish(t *testing.T) {
 		t.Fatalf("expected at least 3 chunks (text, error, finish), got %d: %+v", len(chunks), chunks)
 	}
 
-	var errorIdx, finishIdx int = -1, -1
+	var errorIdx, finishIdx = -1, -1
 	for i, c := range chunks {
 		if c.Type == provider.ChunkError && errorIdx == -1 {
 			errorIdx = i

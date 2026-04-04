@@ -95,14 +95,7 @@ func (m JSONRPCMessage) MarshalJSON() ([]byte, error) {
 		RPCError *JSONRPCError   `json:"error,omitempty"`
 		ID       any             `json:"id"`
 	}
-	return json.Marshal(withID{
-		JSONRPC:  m.JSONRPC,
-		Method:   m.Method,
-		Params:   m.Params,
-		Result:   m.Result,
-		RPCError: m.RPCError,
-		ID:       m.ID,
-	})
+	return json.Marshal(withID(m))
 }
 
 // JSONRPCError represents an error object in a JSON-RPC 2.0 response.

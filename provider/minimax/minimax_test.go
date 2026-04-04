@@ -50,7 +50,7 @@ func TestChat_Generate(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, anthropicResponse("Hello world", "end_turn"))
+		_, _ = fmt.Fprint(w, anthropicResponse("Hello world", "end_turn"))
 	})
 	defer server.Close()
 
@@ -71,12 +71,12 @@ func TestChat_Generate(t *testing.T) {
 func TestChat_Stream(t *testing.T) {
 	server := mockAnthropicServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"MiniMax-M2.7\",\"content\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n")
-		fmt.Fprint(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
-		fmt.Fprint(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n")
-		fmt.Fprint(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
-		fmt.Fprint(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\n\n")
-		fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+		_, _ = fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"MiniMax-M2.7\",\"content\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n")
+		_, _ = fmt.Fprint(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
+		_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n")
+		_, _ = fmt.Fprint(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
+		_, _ = fmt.Fprint(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\n\n")
+		_, _ = fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
 	})
 	defer server.Close()
 
@@ -111,7 +111,7 @@ func TestChat_ToolCall(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"id": "msg_test",
 			"type": "message",
 			"role": "assistant",
@@ -149,7 +149,7 @@ func TestChat_ToolCall(t *testing.T) {
 func TestChat_HTTPError(t *testing.T) {
 	server := mockAnthropicServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
-		fmt.Fprint(w, `{"type":"error","error":{"type":"rate_limit_error","message":"Rate limited"}}`)
+		_, _ = fmt.Fprint(w, `{"type":"error","error":{"type":"rate_limit_error","message":"Rate limited"}}`)
 	})
 	defer server.Close()
 
@@ -217,7 +217,7 @@ func TestNoTokenSource(t *testing.T) {
 func TestWithHTTPClient(t *testing.T) {
 	server := mockAnthropicServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, anthropicResponse("ok", "end_turn"))
+		_, _ = fmt.Fprint(w, anthropicResponse("ok", "end_turn"))
 	})
 	defer server.Close()
 
@@ -242,7 +242,7 @@ func TestWithHeaders(t *testing.T) {
 			t.Error("missing custom header")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, anthropicResponse("ok", "end_turn"))
+		_, _ = fmt.Fprint(w, anthropicResponse("ok", "end_turn"))
 	})
 	defer server.Close()
 
@@ -266,7 +266,7 @@ func TestWithTokenSource(t *testing.T) {
 			t.Errorf("x-api-key = %q", r.Header.Get("x-api-key"))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, anthropicResponse("ok", "end_turn"))
+		_, _ = fmt.Fprint(w, anthropicResponse("ok", "end_turn"))
 	})
 	defer server.Close()
 
@@ -291,7 +291,7 @@ func TestChat_EnvVarResolution(t *testing.T) {
 			t.Errorf("x-api-key = %q, want 'env-key'", r.Header.Get("x-api-key"))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, anthropicResponse("ok", "end_turn"))
+		_, _ = fmt.Fprint(w, anthropicResponse("ok", "end_turn"))
 	})
 	defer server.Close()
 
@@ -310,7 +310,7 @@ func TestChat_EnvVarResolution(t *testing.T) {
 func TestChat_EnvVarBaseURL(t *testing.T) {
 	server := mockAnthropicServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, anthropicResponse("ok", "end_turn"))
+		_, _ = fmt.Fprint(w, anthropicResponse("ok", "end_turn"))
 	})
 	defer server.Close()
 
@@ -334,7 +334,7 @@ func TestChat_EnvVarNotOverrideExplicit(t *testing.T) {
 			t.Errorf("x-api-key = %q, want 'explicit'", r.Header.Get("x-api-key"))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, anthropicResponse("ok", "end_turn"))
+		_, _ = fmt.Fprint(w, anthropicResponse("ok", "end_turn"))
 	})
 	defer server.Close()
 

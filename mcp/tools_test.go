@@ -75,7 +75,7 @@ func TestConvertTools_ExecuteCallsTool(t *testing.T) {
 				Name      string         `json:"name"`
 				Arguments map[string]any `json:"arguments"`
 			}
-			json.Unmarshal(msg.Params, &p)
+			_ = json.Unmarshal(msg.Params, &p)
 			calledName = p.Name
 			calledArgs = p.Arguments
 
@@ -129,7 +129,7 @@ func TestConvertTools_MultipleDontShareClosure(t *testing.T) {
 			var p struct {
 				Name string `json:"name"`
 			}
-			json.Unmarshal(msg.Params, &p)
+			_ = json.Unmarshal(msg.Params, &p)
 			calledNames = append(calledNames, p.Name)
 
 			result, _ := json.Marshal(CallToolResult{
@@ -143,7 +143,7 @@ func TestConvertTools_MultipleDontShareClosure(t *testing.T) {
 	}
 
 	for _, tool := range goaiTools {
-		tool.Execute(context.Background(), json.RawMessage(`{}`))
+		_, _ = tool.Execute(context.Background(), json.RawMessage(`{}`))
 	}
 
 	if len(calledNames) != 3 {

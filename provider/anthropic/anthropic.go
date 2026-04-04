@@ -453,6 +453,10 @@ func (m *chatModel) maxTokens(params provider.GenerateParams) int {
 // --- Message conversion ---
 
 func convertMessages(msgs []provider.Message) []map[string]any {
+	// Pre-process: fix orphaned tool-calls, merge consecutive roles, reorder parts.
+	msgs = provider.NormalizeToolMessages(msgs)
+	msgs = provider.ReorderAssistantParts(msgs)
+
 	result := make([]map[string]any, 0, len(msgs))
 	for _, msg := range msgs {
 		if msg.Role == provider.RoleSystem {
@@ -582,6 +586,17 @@ func convertMessages(msgs []provider.Message) []map[string]any {
 		}
 
 		m["content"] = content
+
+		// Alternating user/assistant - safety net merge (NormalizeToolMessages
+		// already merged at provider.Message level).
+		if len(result) > 0 && result[len(result)-1]["role"] == role {
+			existing, ok := result[len(result)-1]["content"].([]map[string]any)
+			if ok {
+				result[len(result)-1]["content"] = append(existing, content...)
+				continue
+			}
+		}
+
 		result = append(result, m)
 	}
 	return result

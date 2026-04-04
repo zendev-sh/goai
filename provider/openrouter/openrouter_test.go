@@ -119,7 +119,7 @@ func TestWithHTTPClient(t *testing.T) {
 	c := &http.Client{}
 	model := Chat("model", WithAPIKey("key"), WithHTTPClient(c))
 	cm := model.(*chatModel)
-	if cm.httpClient() != c {
+	if cm.opts.httpClient != c {
 		t.Error("custom client not set")
 	}
 }

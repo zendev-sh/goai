@@ -193,41 +193,14 @@ func (m *chatModel) doHTTP(ctx context.Context, path string, body map[string]any
 		return nil, fmt.Errorf("resolving auth token: %w", err)
 	}
 
-	// Extract per-request headers before marshaling.
-	reqHeaders, _ := body["_headers"].(map[string]string)
-	delete(body, "_headers")
-
-	jsonBody := httpc.MustMarshalJSON(body)
-	req := httpc.MustNewRequest(ctx, "POST", m.opts.baseURL+path, jsonBody)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	for k, v := range m.opts.headers {
-		req.Header.Set(k, v)
-	}
-	for k, v := range reqHeaders {
-		req.Header.Set(k, v)
-	}
-
-	resp, err := m.httpClient().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("sending request: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		return nil, goai.ParseHTTPErrorWithHeaders("cohere", resp.StatusCode, respBody, resp.Header)
-	}
-
-	return resp, nil
-}
-
-func (m *chatModel) httpClient() *http.Client {
-	if m.opts.httpClient != nil {
-		return m.opts.httpClient
-	}
-	return http.DefaultClient
+	return httpc.DoJSONRequest(ctx, httpc.RequestConfig{
+		URL:        m.opts.baseURL + path,
+		Token:      token,
+		Body:       body,
+		Headers:    m.opts.headers,
+		HTTPClient: m.opts.httpClient,
+		ProviderID: "cohere",
+	}, goai.ParseHTTPErrorWithHeaders)
 }
 
 func (m *chatModel) resolveToken(ctx context.Context) (string, error) {

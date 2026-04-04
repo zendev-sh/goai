@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -73,7 +74,31 @@ func buildConverseRequest(params provider.GenerateParams, modelID string) map[st
 	}
 
 	// Messages.
-	body["messages"] = convertMessages(params.Messages)
+	convMsgs := convertMessages(params.Messages)
+	// Debug: dump ALL messages for pairing diagnosis.
+	if f, err := os.OpenFile("/tmp/bedrock-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+		_, _ = fmt.Fprintf(f, "--- REQUEST (model=%s, msgs=%d) ---\n", modelID, len(convMsgs))
+		for mi, m := range convMsgs {
+			role, _ := m["role"].(string)
+			content, _ := m["content"].([]map[string]any)
+			var uses, results, texts int
+			for _, block := range content {
+				if _, ok := block["toolUse"]; ok {
+					uses++
+				}
+				if _, ok := block["toolResult"]; ok {
+					results++
+				}
+				if _, ok := block["text"]; ok {
+					texts++
+				}
+			}
+			_, _ = fmt.Fprintf(f, "  msg[%d] role=%s text=%d toolUse=%d toolResult=%d\n",
+				mi, role, texts, uses, results)
+		}
+		_ = f.Close()
+	}
+	body["messages"] = convMsgs
 
 	// Inference config.
 	inferenceConfig := make(map[string]any)
@@ -205,6 +230,10 @@ func ensureToolConfigForHistory(body map[string]any, msgs []provider.Message) {
 // convertMessages maps provider.Message slice to Bedrock Converse format.
 // Tool-role messages are merged into user role per Bedrock convention.
 func convertMessages(msgs []provider.Message) []map[string]any {
+	// Pre-process: fix orphaned tool-calls, merge consecutive roles, reorder parts.
+	msgs = provider.NormalizeToolMessages(msgs)
+	msgs = provider.ReorderAssistantParts(msgs)
+
 	var result []map[string]any
 	// Track document names across the conversation. Bedrock requires
 	// unique names. Append "-N" suffix for duplicates.
@@ -223,8 +252,8 @@ func convertMessages(msgs []provider.Message) []map[string]any {
 			role = "user"
 		}
 
-		// Bedrock requires alternating user/assistant. If the last message has the same
-		// role, merge content into it.
+		// Bedrock requires alternating user/assistant. Merge consecutive same-role
+		// (safety net - NormalizeToolMessages already merged at provider.Message level).
 		if len(result) > 0 && result[len(result)-1]["role"] == role {
 			existing, ok := result[len(result)-1]["content"].([]map[string]any)
 			if ok {
@@ -779,3 +808,5 @@ func bedrockDocumentFormat(mimeType string) string {
 		return "txt"
 	}
 }
+
+// ensureToolResultPairing moved to provider.NormalizeToolMessages (provider/normalize.go).

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -1532,7 +1532,7 @@ func TestWithTracing_MissingCredentials(t *testing.T) {
 
 	opt := WithTracing()
 
-	w.Close()
+	_ = w.Close()
 	var buf bytes.Buffer
 	_, _ = buf.ReadFrom(r)
 	os.Stderr = oldStderr

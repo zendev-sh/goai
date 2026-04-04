@@ -119,16 +119,6 @@ func (m *mockTransport) inject(msg JSONRPCMessage) {
 	}
 }
 
-// lastSent returns the most recently sent message.
-func (m *mockTransport) lastSent() JSONRPCMessage {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if len(m.sent) == 0 {
-		return JSONRPCMessage{}
-	}
-	return m.sent[len(m.sent)-1]
-}
-
 // sentMessages returns a copy of all sent messages.
 func (m *mockTransport) sentMessages() []JSONRPCMessage {
 	m.mu.Lock()
@@ -1179,7 +1169,9 @@ func TestListPrompts_WithCursor(t *testing.T) {
 	}
 
 	var p ListParams
-	json.Unmarshal(sentParams, &p)
+	if err := json.Unmarshal(sentParams, &p); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
 	if p.Cursor != "cur1" {
 		t.Errorf("cursor = %q, want %q", p.Cursor, "cur1")
 	}
@@ -1208,7 +1200,9 @@ func TestListResources_WithCursor(t *testing.T) {
 	}
 
 	var p ListParams
-	json.Unmarshal(sentParams, &p)
+	if err := json.Unmarshal(sentParams, &p); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
 	if p.Cursor != "cur2" {
 		t.Errorf("cursor = %q, want %q", p.Cursor, "cur2")
 	}

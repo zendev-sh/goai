@@ -77,7 +77,7 @@ func (c *client) flush(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("langfuse: send batch: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode >= 400 {

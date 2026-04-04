@@ -61,9 +61,9 @@ type ObjectStream[T any] struct {
 	usage            provider.Usage
 	response         provider.ResponseMetadata
 	providerMetadata map[string]map[string]any
-	finalObject  *T
-	parseErr     error
-	streamErr    error
+	finalObject      *T
+	parseErr         error
+	streamErr        error
 }
 
 func newObjectStream[T any](ctx context.Context, source <-chan provider.StreamChunk) *ObjectStream[T] {
@@ -160,7 +160,7 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 				func() {
 					defer func() {
 						if r := recover(); r != nil {
-							fmt.Fprintf(osStderr, "goai: recovered panic in hook: %v\n", r)
+							_, _ = fmt.Fprintf(osStderr, "goai: recovered panic in hook: %v\n", r)
 						}
 					}()
 					fn(info)
@@ -334,7 +334,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 			func(f func(StepResult)) {
 				defer func() {
 					if r := recover(); r != nil {
-						fmt.Fprintf(osStderr, "goai: recovered panic in hook: %v\n", r)
+						_, _ = fmt.Fprintf(osStderr, "goai: recovered panic in hook: %v\n", r)
 					}
 				}()
 				f(stepResult)
