@@ -65,11 +65,32 @@ var anthropicProtectedKeys = map[string]bool{
 // Option configures the Anthropic provider.
 type Option func(*options)
 
+// AuthMode controls how the auth token is sent in HTTP requests.
+type AuthMode int
+
+const (
+	// AuthAPIKey sends the token as x-api-key header (default Anthropic).
+	AuthAPIKey AuthMode = iota
+	// AuthBearer sends the token as Authorization: Bearer header (for Vertex AI).
+	AuthBearer
+)
+
+// URLBuilder constructs the request URL from the base URL, model ID, and streaming flag.
+type URLBuilder func(baseURL, modelID string, streaming bool) string
+
+// BodyTransformer modifies the request body before it is sent.
+type BodyTransformer func(body map[string]any) map[string]any
+
 type options struct {
-	tokenSource provider.TokenSource
-	baseURL     string
-	headers     map[string]string
-	httpClient  *http.Client
+	tokenSource     provider.TokenSource
+	baseURL         string
+	headers         map[string]string
+	httpClient      *http.Client
+	authMode        AuthMode
+	urlBuilder      URLBuilder
+	bodyTransformer BodyTransformer
+	errorProvider   string // provider name for error parsing (default "anthropic")
+	skipEnvResolve  bool   // skip ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL env resolution
 }
 
 // WithAPIKey sets a static API key for authentication.
@@ -107,22 +128,62 @@ func WithHTTPClient(c *http.Client) Option {
 	}
 }
 
+// WithAuthMode sets how the auth token is sent (API key header vs Bearer token).
+func WithAuthMode(mode AuthMode) Option {
+	return func(o *options) {
+		o.authMode = mode
+	}
+}
+
+// WithURLBuilder overrides URL construction for each request.
+// The function receives the base URL, model ID, and whether this is a streaming request.
+func WithURLBuilder(fn URLBuilder) Option {
+	return func(o *options) {
+		o.urlBuilder = fn
+	}
+}
+
+// WithBodyTransformer sets a function to modify the request body before sending.
+// Used by Vertex Anthropic to remove "model" and add "anthropic_version".
+func WithBodyTransformer(fn BodyTransformer) Option {
+	return func(o *options) {
+		o.bodyTransformer = fn
+	}
+}
+
+// WithErrorProvider overrides the provider name used in error parsing (default "anthropic").
+func WithErrorProvider(name string) Option {
+	return func(o *options) {
+		o.errorProvider = name
+	}
+}
+
+// WithSkipEnvResolve disables automatic resolution of ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL
+// environment variables. Used by Vertex Anthropic which has its own auth and URL resolution.
+func WithSkipEnvResolve() Option {
+	return func(o *options) {
+		o.skipEnvResolve = true
+	}
+}
+
 // Chat creates an Anthropic language model for the given model ID.
 func Chat(modelID string, opts ...Option) provider.LanguageModel {
 	o := options{baseURL: defaultBaseURL}
 	for _, opt := range opts {
 		opt(&o)
 	}
-	// Resolve API key from env if not set.
-	if o.tokenSource == nil {
-		if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-			o.tokenSource = provider.StaticToken(key)
+	if !o.skipEnvResolve {
+		// Resolve API key from env if not set.
+		if o.tokenSource == nil {
+			if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+				o.tokenSource = provider.StaticToken(key)
+			}
 		}
-	}
-	// Resolve base URL from env if not overridden.
-	if o.baseURL == defaultBaseURL {
-		if base := os.Getenv("ANTHROPIC_BASE_URL"); base != "" {
-			o.baseURL = base
+		// Resolve base URL from env if not overridden.
+		if o.baseURL == defaultBaseURL {
+			if base := os.Getenv("ANTHROPIC_BASE_URL"); base != "" {
+				o.baseURL = base
+			}
 		}
 	}
 	return &chatModel{
@@ -1279,10 +1340,34 @@ func (m *chatModel) doHTTP(ctx context.Context, body map[string]any, toolBetas .
 	reqHeaders, _ := body["_headers"].(map[string]string)
 	delete(body, "_headers")
 
+	// Apply body transformer (e.g. Vertex removes "model", adds "anthropic_version").
+	if m.opts.bodyTransformer != nil {
+		body = m.opts.bodyTransformer(body)
+	}
+
+	// Determine streaming from the body (set by buildRequest).
+	streaming, _ := body["stream"].(bool)
+
+	// Build request URL.
+	var reqURL string
+	if m.opts.urlBuilder != nil {
+		reqURL = m.opts.urlBuilder(m.opts.baseURL, m.id, streaming)
+	} else {
+		reqURL = m.opts.baseURL + "/v1/messages"
+	}
+
 	jsonBody := httpc.MustMarshalJSON(body)
-	req := httpc.MustNewRequest(ctx, "POST", m.opts.baseURL+"/v1/messages", jsonBody)
+	req := httpc.MustNewRequest(ctx, "POST", reqURL, jsonBody)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", token)
+
+	// Set auth header based on mode.
+	switch m.opts.authMode {
+	case AuthBearer:
+		req.Header.Set("Authorization", "Bearer "+token)
+	default:
+		req.Header.Set("x-api-key", token)
+	}
+
 	req.Header.Set("anthropic-version", apiVersion)
 	// Merge base betas with tool-specific betas.
 	allBetas := betaFeatures
@@ -1315,7 +1400,8 @@ func (m *chatModel) doHTTP(ctx context.Context, body map[string]any, toolBetas .
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		return nil, goai.ParseHTTPErrorWithHeaders("anthropic", resp.StatusCode, respBody, resp.Header)
+		errProvider := cmp.Or(m.opts.errorProvider, "anthropic")
+		return nil, goai.ParseHTTPErrorWithHeaders(errProvider, resp.StatusCode, respBody, resp.Header)
 	}
 
 	return resp, nil
