@@ -2704,3 +2704,186 @@ func TestDoStream_ContextCancel_NoDoubleClose(t *testing.T) {
 	for range result.Stream {
 	}
 }
+
+// --- Hook option tests (used by Vertex Anthropic adapter) ---
+
+func TestWithAuthMode_Bearer(t *testing.T) {
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"msg-1","type":"message","model":"claude-sonnet-4-20250514","role":"assistant","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514",
+		WithAPIKey("my-token"),
+		WithBaseURL(server.URL),
+		WithAuthMode(AuthBearer),
+		WithSkipEnvResolve(),
+	)
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotAuth != "Bearer my-token" {
+		t.Errorf("Authorization = %q, want %q", gotAuth, "Bearer my-token")
+	}
+}
+
+func TestWithURLBuilder(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"msg-1","type":"message","model":"claude-sonnet-4-20250514","role":"assistant","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514",
+		WithAPIKey("k"),
+		WithBaseURL(server.URL),
+		WithURLBuilder(func(baseURL, modelID string, streaming bool) string {
+			if streaming {
+				return baseURL + "/models/" + modelID + ":streamRawPredict"
+			}
+			return baseURL + "/models/" + modelID + ":rawPredict"
+		}),
+		WithSkipEnvResolve(),
+	)
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/models/claude-sonnet-4-20250514:rawPredict" {
+		t.Errorf("path = %q, want /models/claude-sonnet-4-20250514:rawPredict", gotPath)
+	}
+}
+
+func TestWithURLBuilder_Streaming(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `data: {"type":"message_start","message":{"id":"msg-1","model":"claude-sonnet-4-20250514","usage":{"input_tokens":1}}}`+"\n\n")
+		fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`+"\n\n")
+		fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}`+"\n\n")
+		fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
+		fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}`+"\n\n")
+		fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514",
+		WithAPIKey("k"),
+		WithBaseURL(server.URL),
+		WithURLBuilder(func(baseURL, modelID string, streaming bool) string {
+			return baseURL + "/models/" + modelID + ":streamRawPredict"
+		}),
+		WithSkipEnvResolve(),
+	)
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range result.Stream {
+	}
+	if gotPath != "/models/claude-sonnet-4-20250514:streamRawPredict" {
+		t.Errorf("path = %q, want :streamRawPredict suffix", gotPath)
+	}
+}
+
+func TestWithBodyTransformer(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"msg-1","type":"message","model":"claude-sonnet-4-20250514","role":"assistant","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514",
+		WithAPIKey("k"),
+		WithBaseURL(server.URL),
+		WithBodyTransformer(func(body map[string]any) map[string]any {
+			delete(body, "model")
+			body["anthropic_version"] = "vertex-2023-10-16"
+			return body
+		}),
+		WithSkipEnvResolve(),
+	)
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := gotBody["model"]; ok {
+		t.Error("body should not contain 'model'")
+	}
+	if v := gotBody["anthropic_version"]; v != "vertex-2023-10-16" {
+		t.Errorf("anthropic_version = %v, want vertex-2023-10-16", v)
+	}
+}
+
+func TestWithErrorProvider(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"type":"error","error":{"type":"invalid_request_error","message":"bad request"}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514",
+		WithAPIKey("k"),
+		WithBaseURL(server.URL),
+		WithErrorProvider("vertex-anthropic"),
+		WithSkipEnvResolve(),
+	)
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	// Verify it's an API error with the right status.
+	var apiErr *goai.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *goai.APIError, got %T", err)
+	}
+	if apiErr.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", apiErr.StatusCode, http.StatusBadRequest)
+	}
+}
+
+func TestWithSkipEnvResolve(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "env-key-should-not-be-used")
+	t.Setenv("ANTHROPIC_BASE_URL", "http://env-url-should-not-be-used")
+
+	model := Chat("claude-sonnet-4-20250514", WithSkipEnvResolve()).(*chatModel)
+
+	// Should NOT have picked up env key.
+	if model.opts.tokenSource != nil {
+		t.Error("tokenSource should be nil when skipEnvResolve is set and no explicit key given")
+	}
+	// Should still have the default base URL, not the env one.
+	if model.opts.baseURL != defaultBaseURL {
+		t.Errorf("baseURL = %q, want %q", model.opts.baseURL, defaultBaseURL)
+	}
+}
