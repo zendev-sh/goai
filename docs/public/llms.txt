@@ -15,7 +15,7 @@ GoAI SDK is an open-source Go library inspired by the Vercel AI SDK, designed id
 go get github.com/zendev-sh/goai@latest
 ```
 
-Requires Go 1.25+. Stdlib only (except golang.org/x/oauth2 for Vertex AI).
+Requires Go 1.25+. Core depends on golang.org/x/oauth2 only. Optional OTel integration in separate submodule.
 
 ## Core Functions
 

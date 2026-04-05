@@ -432,6 +432,37 @@ func TestGenerateObject_ParamsPassThrough(t *testing.T) {
 
 // --- StreamObject tests ---
 
+func TestStreamObject_OnRequestCtx(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: `{"name":"test"}`},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 1, OutputTokens: 1}},
+			), nil
+		},
+	}
+
+	type Simple struct {
+		Name string `json:"name"`
+	}
+
+	var gotCtx context.Context
+	result, err := StreamObject[Simple](t.Context(), model,
+		WithPrompt("hi"),
+		WithOnRequest(func(info RequestInfo) {
+			gotCtx = info.Ctx
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = result.Result()
+	if gotCtx == nil {
+		t.Fatal("RequestInfo.Ctx was nil in StreamObject path")
+	}
+}
+
 func TestStreamObject_PartialObjectStream(t *testing.T) {
 	model := &mockModel{
 		id: "test",

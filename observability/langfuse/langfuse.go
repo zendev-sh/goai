@@ -211,14 +211,17 @@ func (h *Hooks) With(opts ...goai.Option) func() []goai.Option {
 
 // Run returns a fresh set of goai options scoped to a single agent run.
 // Safe to call concurrently — each call gets completely isolated state.
-// No locking is needed within a run because goai calls hooks sequentially.
+// OnToolCall may fire from parallel goroutines, so a mutex guards shared state.
 //
 // Deprecated: Use [WithTracing] instead.
 func (h *Hooks) Run() []goai.Option {
 	cfg := h.cfg
 	lc := h.client()
 
-	// Per-run state. Isolated per Run() call — no locking needed.
+	// Per-run state. Isolated per Run() call. Most hooks are called
+	// sequentially by goai, but OnToolCall may fire from parallel
+	// goroutines when multiple tool calls execute concurrently, so
+	// mu guards writes to obs and lastObsEnd.
 	var (
 		traceID     string
 		agentSpanID string
@@ -228,6 +231,7 @@ func (h *Hooks) Run() []goai.Option {
 		step        int
 		lastObsEnd  time.Time
 		obs         []ingestionEvent
+		mu          sync.Mutex
 	)
 
 	// end is declared before opts so WithOnStepFinish can reference it.
@@ -360,6 +364,7 @@ func (h *Hooks) Run() []goai.Option {
 				statusMsg = info.Error.Error()
 			}
 
+			mu.Lock()
 			obs = append(obs, ingestionEvent{
 				// ingestionEvent.ID is the deduplication key for the ingestion envelope;
 				// spanBody.ID is the observation ID used for parent-child relationships.
@@ -388,6 +393,7 @@ func (h *Hooks) Run() []goai.Option {
 			if endTime.After(lastObsEnd) {
 				lastObsEnd = endTime
 			}
+			mu.Unlock()
 		}),
 	}
 

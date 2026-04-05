@@ -9,7 +9,7 @@ GoAI is a Go SDK for AI applications. One unified API across 22+ LLM providers. 
 
 - **Package**: `github.com/zendev-sh/goai`
 - **Go version**: 1.25+
-- **Dependencies**: zero external (stdlib only, except `golang.org/x/oauth2` for Vertex AI)
+- **Dependencies**: stdlib + `golang.org/x/oauth2` for Vertex AI. Optional `observability/otel` submodule adds OTel SDK (separate go.mod, not pulled unless imported).
 - **Docs**: https://goai.sh
 - **GoDoc**: https://pkg.go.dev/github.com/zendev-sh/goai
 

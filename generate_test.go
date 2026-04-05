@@ -81,6 +81,33 @@ func TestStreamText_Stream(t *testing.T) {
 	}
 }
 
+func TestStreamText_OnRequestCtx(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "ok"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 1, OutputTokens: 1}},
+			), nil
+		},
+	}
+
+	var gotCtx context.Context
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("hi"),
+		WithOnRequest(func(info RequestInfo) {
+			gotCtx = info.Ctx
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = stream.Result()
+	if gotCtx == nil {
+		t.Fatal("RequestInfo.Ctx was nil in StreamText single-step path")
+	}
+}
+
 func TestStreamText_StreamThenResult(t *testing.T) {
 	model := &mockModel{
 		id: "test",

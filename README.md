@@ -50,10 +50,10 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 - **Computer use**: Anthropic computer, bash, text editor tools for autonomous desktop interaction
 - **20 provider-defined tools**: Web fetch, file search, image generation, X search, and more - [full list](#provider-defined-tools)
 - **MCP client**: Connect to any MCP server (stdio, HTTP, SSE), auto-convert tools for use with GoAI
-- **Observability**: Built-in Langfuse integration with hooks for request/response/step/tool tracing
+- **Observability**: Built-in Langfuse integration and optional OpenTelemetry (OTel) support, with hooks for request/response/step/tool tracing
 - **Telemetry hooks**: `OnRequest`, `OnResponse`, `OnStepFinish`, `OnToolCall`, `OnToolCallStart` callbacks
 - **Retry/backoff**: Automatic retry with exponential backoff on retryable HTTP errors (429/5xx)
-- **Minimal dependencies**: Direct dependency on `golang.org/x/oauth2`; one indirect module (`cloud.google.com/go/compute/metadata`) for ADC support
+- **Minimal dependencies**: Core depends on `golang.org/x/oauth2` + one indirect (`cloud.google.com/go/compute/metadata`). Optional `observability/otel` submodule uses separate `go.mod` with OTel SDK.
 
 ## Performance vs Vercel AI SDK
 

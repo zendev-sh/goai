@@ -359,7 +359,7 @@ When enabled via `WithPromptCaching(true)`, `applyCaching` copies messages (neve
 
 ## Design Principles
 
-1. **No external dependencies** — stdlib only, except `golang.org/x/oauth2` for Vertex AI ADC
+1. **Minimal dependencies** — core requires only `golang.org/x/oauth2` for Vertex AI ADC. Optional submodules (`observability/otel`) use separate `go.mod` files.
 2. **Vercel AI SDK is the reference** — wire formats, option names, and behaviors match Vercel
 3. **No input mutation** — all functions copy slices/maps before modifying
 4. **Mutex-free network calls** — never hold a mutex during I/O
@@ -418,6 +418,6 @@ goai/
 │   ├── sse/                # SSE line parser (data: prefix, [DONE] sentinel)
 │   └── httpc/              # HTTP helpers (MustMarshalJSON, MustNewRequest, ParseDataURL)
 │
-├── examples/               # 24 runnable examples (including 7 MCP examples)
+├── examples/               # 26 runnable examples (including 7 MCP examples)
 └── bench/                  # Performance benchmarks (GoAI vs Vercel AI SDK)
 ```
