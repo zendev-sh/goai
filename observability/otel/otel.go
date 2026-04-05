@@ -262,7 +262,10 @@ func run(cfg config) []goai.Option {
 				llmSpan.SetStatus(codes.Error, info.Error.Error())
 				llmSpan.End()
 				llmSpan = nil
-				// On error, also end the root span immediately.
+				// On error, mark root span with error status and end immediately.
+				if rootSpan != nil {
+					rootSpan.SetStatus(codes.Error, info.Error.Error())
+				}
 				end("", "")
 				return
 			}

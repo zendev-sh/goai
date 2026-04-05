@@ -322,6 +322,12 @@ func TestWithTracing_Error(t *testing.T) {
 	if llm.Status.Code != codes.Error {
 		t.Errorf("llm span status = %v, want Error", llm.Status.Code)
 	}
+
+	// Root span should also have error status.
+	root := spanByName(sr, "chat")
+	if root.Status.Code != codes.Error {
+		t.Errorf("root span status = %v, want Error", root.Status.Code)
+	}
 }
 
 func TestWithTracing_ToolError(t *testing.T) {
@@ -1078,10 +1084,13 @@ func TestWithTracing_StreamingError(t *testing.T) {
 		t.Errorf("llm span status = %v, want Error", llm.Status.Code)
 	}
 
-	// Root span should also be ended.
+	// Root span should also be ended with error status.
 	root := spanByName(sr, "chat")
 	if root.Name == "" {
 		t.Fatal("root span not found after streaming error")
+	}
+	if root.Status.Code != codes.Error {
+		t.Errorf("root span status = %v, want Error", root.Status.Code)
 	}
 }
 
