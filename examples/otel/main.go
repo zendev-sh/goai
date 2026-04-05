@@ -36,8 +36,22 @@ type WeatherReport struct {
 }
 
 func main() {
-	// Set up an OTLP stdout exporter for demonstration purposes.
-	// In production, use an OTLP gRPC/HTTP exporter pointing at your collector.
+	// --- Exporter setup ---
+	// This example uses stdout for local development.
+	// For production, use OTLP HTTP exporter:
+	//
+	//   import "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	//
+	//   exporter, err := otlptracehttp.New(ctx,
+	//       otlptracehttp.WithEndpoint("tempo.example.com:4318"),
+	//       otlptracehttp.WithHeaders(map[string]string{
+	//           "Authorization": "Bearer <API_KEY>",
+	//       }),
+	//   )
+	//
+	// Or set standard OTel env vars (SDK reads them automatically):
+	//   OTEL_EXPORTER_OTLP_ENDPOINT=https://tempo.example.com:4318
+	//   OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <API_KEY>"
 	exporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
 	if err != nil {
 		log.Fatal(err)

@@ -179,7 +179,7 @@ The `observability/otel` package provides OpenTelemetry tracing and metrics for 
 ```bash
 go get github.com/zendev-sh/goai/observability/otel
 # Plus your preferred exporter, e.g.:
-go get go.opentelemetry.io/otel/exporters/stdout/stdouttrace
+go get go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp
 go get go.opentelemetry.io/otel/sdk/trace
 ```
 
@@ -188,6 +188,33 @@ import goaiotel "github.com/zendev-sh/goai/observability/otel"
 ```
 
 By default, `WithTracing()` uses the global `TracerProvider` and `MeterProvider` registered via `otel.SetTracerProvider` / `otel.SetMeterProvider`. Override with explicit options if needed.
+
+**Production setup** with OTLP exporter:
+
+```go
+import (
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+    sdktrace "go.opentelemetry.io/otel/sdk/trace"
+)
+
+exporter, err := otlptracehttp.New(ctx,
+    otlptracehttp.WithEndpoint("tempo.example.com:4318"),
+    otlptracehttp.WithHeaders(map[string]string{
+        "Authorization": "Bearer <API_KEY>",
+    }),
+)
+tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter))
+defer tp.Shutdown(ctx)
+otel.SetTracerProvider(tp)
+```
+
+Or use standard OTel environment variables (the SDK reads them automatically):
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://tempo.example.com:4318
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <API_KEY>"
+```
 
 ### Span Hierarchy
 
