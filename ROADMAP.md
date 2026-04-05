@@ -72,7 +72,7 @@ GoAI reaches v1.0 when the API is complete enough that most Go+AI applications c
 
 - **Stable interfaces** - `LanguageModel`, `EmbeddingModel`, `ImageModel` finalized with no planned breaking changes
 - **Full provider coverage** - Every major AI provider works out of the box, including auth flows and regional endpoints
-- **Production observability** - First-class OpenTelemetry integration, structured logging hooks, usage tracking
+- **Production observability** - ~~First-class OpenTelemetry integration~~ (shipped), structured logging hooks, usage tracking
 - **Comprehensive documentation** - Every exported type and function documented with examples, migration guides for common patterns
 
 ### Future

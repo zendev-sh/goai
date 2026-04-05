@@ -211,7 +211,7 @@ func (h *Hooks) With(opts ...goai.Option) func() []goai.Option {
 
 // Run returns a fresh set of goai options scoped to a single agent run.
 // Safe to call concurrently — each call gets completely isolated state.
-// No locking is needed within a run because goai calls hooks sequentially.
+// OnToolCall may fire from parallel goroutines, so a mutex guards shared state.
 //
 // Deprecated: Use [WithTracing] instead.
 func (h *Hooks) Run() []goai.Option {

@@ -277,7 +277,7 @@ Spans are annotated with `gen_ai.*` attributes following the OpenTelemetry GenAI
 | `goai.usage.reasoning_tokens` | Reasoning/thinking token count (only if > 0) |
 | `gen_ai.usage.cache_read.input_tokens` | Prompt cache read tokens (only if > 0) |
 | `gen_ai.usage.cache_creation.input_tokens` | Prompt cache write tokens (only if > 0) |
-| `goai.step` | 1-based step index (on LLM call spans) |
+| `goai.step` | 1-based step index (on LLM call and tool spans) |
 | `gen_ai.tool.name` | Tool name (on tool spans) |
 | `gen_ai.tool.call.id` | Tool call ID (on tool spans) |
 | `http.response.status_code` | HTTP status code (only if > 0) |
