@@ -38,7 +38,7 @@
 - **Provider-defined tools**: 20 tools across 5 providers: Anthropic (10), OpenAI (4), Google (3), Groq (1), xAI (2). All E2E tested.
 - **E2E validated** - 103 models across 7 providers tested with real API calls
 - **Benchmarks** - Go wins 5/5 comparable categories (schema is a tie) vs Vercel AI SDK: streaming 1.1x, TTFC 1.3x, cold start 24.4x, memory 3.1x, GenerateText 1.4x
-- **Documentation** - Full docs site, 22 provider pages, 25 runnable examples, API reference
+- **Documentation** - Full docs site, 22 provider pages, 26 runnable examples, API reference
 
 ---
 
@@ -64,7 +64,7 @@
 | ------------- | ----------------------------------------------------- |
 | Output.array  | Stream validated array elements incrementally         |
 | Output.choice | Convenience enum selection wrapper                    |
-| `goai/otel`   | Pre-built OpenTelemetry integration (optional import) |
+| ~~`goai/otel`~~   | ~~Pre-built OpenTelemetry integration (optional import)~~ **Shipped** in `observability/otel` |
 
 ### v1.0.0 - Stable API
 
@@ -88,7 +88,7 @@ GoAI reaches v1.0 when the API is complete enough that most Go+AI applications c
 ## Design principles
 
 1. **Go-native API** - Functional options, interfaces, composition. No TypeScript transliterations.
-2. **Zero required dependencies** - Core GoAI depends only on stdlib. Providers import only what they need.
+2. **Minimal required dependencies** - Core GoAI depends on stdlib + `golang.org/x/oauth2`. Optional submodules (e.g. `observability/otel`) have their own `go.mod` and are not pulled unless imported.
 3. **Provider-agnostic** - Same code works across all providers. Switch models by changing one line.
 4. **Consumer flexibility** - `WithHTTPClient` + `TokenSource` let consumers handle auth, proxies, and custom endpoints without GoAI needing to know.
 5. **No middleware, no registry** - Go's interface composition is sufficient. We don't add abstractions until proven necessary.

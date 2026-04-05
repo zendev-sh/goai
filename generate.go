@@ -500,6 +500,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 	// fails, regardless of MaxSteps. Eliminates the split error contract.
 	for _, fn := range o.OnRequest {
 		fn(RequestInfo{
+			Ctx:          ctx,
 			Model:        model.ModelID(),
 			MessageCount: len(params.Messages),
 			ToolCount:    len(params.Tools),
@@ -563,6 +564,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 							}
 						}()
 						f(RequestInfo{
+							Ctx:          ctx,
 							Model:        model.ModelID(),
 							MessageCount: len(params.Messages),
 							ToolCount:    len(params.Tools),
@@ -739,6 +741,7 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 
 	for _, fn := range o.OnRequest {
 		fn(RequestInfo{
+			Ctx:          ctx,
 			Model:        model.ModelID(),
 			MessageCount: len(params.Messages),
 			ToolCount:    len(params.Tools),
@@ -805,6 +808,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 	for step := 1; step <= o.MaxSteps; step++ {
 		for _, fn := range o.OnRequest {
 			fn(RequestInfo{
+				Ctx:          ctx,
 				Model:        model.ModelID(),
 				MessageCount: len(params.Messages),
 				ToolCount:    len(params.Tools),

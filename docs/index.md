@@ -2,7 +2,7 @@
 layout: home
 title: GoAI SDK — Go SDK for AI Applications. One API, 22+ LLM Providers.
 titleTemplate: false
-description: "Open-source Go SDK for AI applications. One unified API for OpenAI, Anthropic, Google Gemini, AWS Bedrock, and 22+ LLM providers. Stdlib only."
+description: "Open-source Go SDK for AI applications. One unified API for OpenAI, Anthropic, Google Gemini, AWS Bedrock, and 22+ LLM providers. Minimal dependencies."
 ---
 
 <div class="vp-doc" style="max-width: 688px; margin: 0 auto; padding: 2rem 1.5rem;">
@@ -31,12 +31,12 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomat
 - **20 Provider-Defined Tools** — web search, code execution, computer use, file search
 - **[MCP Client](/concepts/mcp)** — connect to any MCP server (stdio, HTTP, SSE), auto-convert tools for GoAI
 - **Prompt Caching** — automatic cache control for Anthropic and OpenAI
-- **[Observability](/concepts/observability)** — built-in Langfuse integration for tracing generations, tools, and multi-step loops
+- **[Observability](/concepts/observability)** — built-in Langfuse and OpenTelemetry integrations for tracing generations, tools, and multi-step loops
 
 ## Why GoAI?
 
 - **One API, 22+ providers** — switch providers by changing one line of code
-- **Stdlib only** — no external dependencies (except `golang.org/x/oauth2` for Vertex AI)
+- **Minimal deps** — core requires only `golang.org/x/oauth2`; optional OTel integration in separate submodule
 - **Go-native design** — generics for type safety, channels for streaming, interfaces for extensibility
 - **24x faster cold start** than Vercel AI SDK (569μs vs 13.9ms)
 - **3.1x less memory** per request (220KB vs 676KB)

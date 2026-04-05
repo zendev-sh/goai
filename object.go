@@ -287,6 +287,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 	for step := 1; step <= o.MaxSteps; step++ {
 		for _, fn := range o.OnRequest {
 			fn(RequestInfo{
+				Ctx:          ctx,
 				Model:        model.ModelID(),
 				MessageCount: len(params.Messages),
 				ToolCount:    len(params.Tools),
@@ -417,6 +418,7 @@ func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts
 
 	for _, fn := range o.OnRequest {
 		fn(RequestInfo{
+			Ctx:          ctx,
 			Model:        model.ModelID(),
 			MessageCount: len(params.Messages),
 			ToolCount:    len(params.Tools),

@@ -50,7 +50,7 @@ const features = [
     icon: Rocket,
     title: 'Faster Than Vercel',
     link: '/getting-started/installation',
-    details: '1.4x faster generation, 24x faster cold start, 3.1x less memory. Single binary, zero npm, stdlib only.',
+    details: '1.4x faster generation, 24x faster cold start, 3.1x less memory. Single binary, zero npm, minimal deps.',
   },
 ]
 </script>

@@ -100,7 +100,7 @@ onMounted(() => {
           <p class="rh-slogan anim a3">AI SDK, the Go way.</p>
           <p class="rh-tagline anim a4">
             One unified API across 22+ providers. Streaming, structured output,
-            MCP support, stdlib only.
+            MCP support, minimal dependencies.
           </p>
 
           <div class="rh-install anim a5" @click="copyInstall">

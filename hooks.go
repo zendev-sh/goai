@@ -1,6 +1,7 @@
 package goai
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -9,6 +10,11 @@ import (
 
 // RequestInfo is passed to the OnRequest hook before a generation call.
 type RequestInfo struct {
+	// Ctx is the caller's context for this generation call.
+	// Observability hooks can use this for span parenting (e.g., creating
+	// child spans under the caller's existing trace context).
+	Ctx context.Context
+
 	// Model is the model ID.
 	Model string
 

@@ -20,7 +20,7 @@ GoAI SDK is a Go-native AI SDK supporting 22+ LLM providers with minimal depende
 | Prompt caching | ✅ auto | ❌ | ❌ | ❌ |
 | Embeddings | ✅ `Embed` / `EmbedMany` | ✅ | ✅ | ✅ |
 | Image generation | ✅ `GenerateImage` | ❌ | ❌ | ❌ |
-| Dependencies | **stdlib only** | Heavy | Medium | Minimal |
+| Dependencies | **Minimal** (stdlib + oauth2) | Heavy | Medium | Minimal |
 | Inspired by | Vercel AI SDK | LangChain (Python) | Google ADK | — |
 | License | MIT | MIT | Apache 2.0 | MIT |
 
@@ -29,7 +29,7 @@ GoAI SDK is a Go-native AI SDK supporting 22+ LLM providers with minimal depende
 - You need to support multiple LLM providers with minimal code changes — switch providers by changing one line
 - You want type-safe structured output with Go generics (`GenerateObject[T]`, `StreamObject[T]`)
 - You need provider-defined tools: web search, code execution, computer use, file search across OpenAI, Anthropic, and Google
-- You want minimal transitive dependencies (stdlib only, no heavy dependency tree)
+- You want minimal transitive dependencies (core uses stdlib + oauth2 only; optional OTel in separate module)
 - You're building production AI applications in Go from scratch
 - You need automatic prompt caching for cost optimization
 - You want the Vercel AI SDK experience in Go — same mental model, Go idioms
