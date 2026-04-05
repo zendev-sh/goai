@@ -50,13 +50,22 @@
 | xAI tools      | Provider-defined tools (web_search, x_search) via `/chat/completions`              |
 | MiniMax        | M2.7, M2.5, M2.1, M2 models                                                        |
 
-## v0.5.8 - Current release
+## v0.5.8
 
 | Feature                | Description                                                                       |
 | ---------------------- | --------------------------------------------------------------------------------- |
 | **RunPod provider**    | Serverless vLLM endpoint support                                                  |
 | **Bedrock embeddings** | Embedding support for all Bedrock text embedding models                           |
 | **Docs / accuracy**    | Deep-review audit fixes: docs accuracy, streaming metadata, provider capabilities |
+
+## v0.6.0 - Current release
+
+| Feature                    | Description                                                                       |
+| -------------------------- | --------------------------------------------------------------------------------- |
+| **OpenTelemetry tracing**  | Full tracing for generations, tool calls, and multi-step loops via `observability/otel` |
+| **OpenTelemetry metrics**  | Token usage, request duration, and error rate metrics with GenAI semantic conventions |
+| **Context propagation**    | `RequestInfo.Ctx` carries trace context through provider calls                    |
+| **Langfuse data race fix** | Fixed concurrent map access in Langfuse observability integration                 |
 
 ### Planned
 

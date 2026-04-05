@@ -180,6 +180,16 @@ onMounted(() => {
             href="https://github.com/zendev-sh/goai/releases"
             class="rh-release"
           >
+            <span class="rh-release-tag">v0.6.0</span>
+            <span class="rh-release-text"
+              ><strong>OpenTelemetry integration</strong> — Tracing, metrics,
+              GenAI semantic conventions.</span
+            >
+          </a>
+          <a
+            href="https://github.com/zendev-sh/goai/releases"
+            class="rh-release"
+          >
             <span class="rh-release-tag">v0.5.8</span>
             <span class="rh-release-text"
               ><strong>RunPod provider</strong> — Serverless vLLM support.
@@ -192,13 +202,6 @@ onMounted(() => {
               ><strong>MiniMax provider</strong> — M2.7, M2.5, M2.1, M2 via
               Anthropic-compatible API. Thinking/reasoning, tool calling,
               streaming.</span
-            >
-          </a>
-          <a href="/concepts/mcp" class="rh-release">
-            <span class="rh-release-tag">v0.5.0</span>
-            <span class="rh-release-text"
-              ><strong>MCP Client</strong> — Connect to any MCP server (stdio,
-              HTTP, SSE). Auto-convert tools for GenerateText.</span
             >
           </a>
         </div>

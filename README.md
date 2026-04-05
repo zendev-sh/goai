@@ -29,11 +29,11 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 
 ## What's New
 
+> **v0.6.0** - OpenTelemetry tracing + metrics, context propagation via RequestInfo.Ctx, Langfuse data race fix. [Changelog →](https://github.com/zendev-sh/goai/releases)
+>
 > **v0.5.8** - RunPod provider, Bedrock embeddings, and docs accuracy improvements. [Changelog →](https://github.com/zendev-sh/goai/releases)
 >
 > **v0.5.1** - MCP (Model Context Protocol) client plus MiniMax provider support. [Docs →](https://goai.sh/concepts/mcp)
->
-> **v0.4.4** - Provider-defined tools: 20 tools across Anthropic, OpenAI, Google, Groq, xAI. Computer use, web search, code execution. [Changelog →](https://github.com/zendev-sh/goai/releases)
 
 ## Features
 

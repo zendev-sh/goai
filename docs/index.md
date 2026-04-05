@@ -9,9 +9,9 @@ description: "Open-source Go SDK for AI applications. One unified API for OpenAI
 
 ## What's New
 
-> **v0.5.8** — RunPod provider (serverless vLLM), Bedrock embeddings, and docs accuracy improvements. [Changelog →](https://github.com/zendev-sh/goai/releases)
+> **v0.6.0** — OpenTelemetry tracing + metrics, context propagation via RequestInfo.Ctx, Langfuse data race fix. [Changelog →](https://github.com/zendev-sh/goai/releases)
 >
-> **v0.5.1** — MiniMax provider: M2.7, M2.5, M2.1, M2 via Anthropic-compatible API. Thinking/reasoning, tool calling, streaming. [Docs →](/providers/minimax)
+> **v0.5.8** — RunPod provider (serverless vLLM), Bedrock embeddings, and docs accuracy improvements. [Changelog →](https://github.com/zendev-sh/goai/releases)
 
 ## What is GoAI SDK?
 
