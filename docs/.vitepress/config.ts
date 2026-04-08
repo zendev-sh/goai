@@ -72,8 +72,8 @@ export default defineConfig({
 
   head: [
     ['link', { rel: 'icon', type: 'image/png', href: '/goai-icon.png' }],
-    ['script', { async: '', src: 'https://www.googletagmanager.com/gtag/js?id=G-0H3DYJ0C2H' }],
-    ['script', {}, "window.dataLayer = window.dataLayer || [];\nfunction gtag(){dataLayer.push(arguments);}\ngtag('js', new Date());\ngtag('config', 'G-0H3DYJ0C2H');"],
+    ['script', { async: '', src: 'https://www.googletagmanager.com/gtag/js?id=G-B07ZZ8DGZQ' }],
+    ['script', {}, "window.dataLayer = window.dataLayer || [];\nfunction gtag(){dataLayer.push(arguments);}\ngtag('js', new Date());\ngtag('config', 'G-B07ZZ8DGZQ');"],
   ],
 
   themeConfig: {
