@@ -120,6 +120,7 @@ export default defineConfig({
             { text: 'TokenSource', link: '/concepts/token-source' },
             { text: 'MCP Client', link: '/concepts/mcp' },
             { text: 'Error Handling', link: '/concepts/error-handling' },
+            { text: 'Multi-Turn Conversations', link: '/concepts/multi-turn' },
             { text: 'Prompt Caching', link: '/concepts/prompt-caching' },
             { text: 'Observability', link: '/concepts/observability' },
           ],
