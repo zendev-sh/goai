@@ -18,7 +18,7 @@ GoAI is a Go SDK for AI applications - one API across 22+ LLM providers. Inspire
 
 ```
 goai/
-├── generate.go             # GenerateText, StreamText
+├── generate.go             # GenerateText, StreamText, ResponseMessages
 ├── object.go               # GenerateObject[T], StreamObject[T]
 ├── embed.go                # Embed, EmbedMany
 ├── image.go                # GenerateImage
@@ -53,7 +53,7 @@ goai/
 │   └── httpc/              # HTTP helpers + ParseDataURL
 ├── mcp/                    # MCP (Model Context Protocol) client
 ├── observability/
-│   ├── langfuse/           # Langfuse observability integration
+│   ├── langfuse/           # Langfuse observability integration (separate go.mod)
 │   └── otel/               # OpenTelemetry tracing and metrics (separate go.mod)
 ├── examples/               # 26 runnable examples (including 7 MCP examples)
 └── bench/                  # Performance benchmarks (GoAI vs Vercel AI SDK)
@@ -61,7 +61,7 @@ goai/
 
 ## Key Rules
 
-1. **Keep dependencies minimal** - core: direct `golang.org/x/oauth2`, indirect `cloud.google.com/go/compute/metadata` for ADC. Optional submodules (`observability/otel`) use separate `go.mod`.
+1. **Keep dependencies minimal** - core: direct `golang.org/x/oauth2`, indirect `cloud.google.com/go/compute/metadata` for ADC. Optional submodules (`observability/langfuse`, `observability/otel`) use separate `go.mod`.
 2. **Vercel AI SDK is the reference** - check Vercel source before modifying provider behavior
 3. **90% test coverage** per package - mock HTTP servers, not internals
 4. **Interface compliance checks** - provider structs should include compile-time checks (type name may vary, e.g. `*chatCompletionsModel`)

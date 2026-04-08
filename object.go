@@ -35,6 +35,15 @@ type ObjectResult[T any] struct {
 	// ProviderMetadata contains provider-specific response data.
 	ProviderMetadata map[string]map[string]any
 
+	// ResponseMessages contains the assistant and tool messages from all generation steps.
+	// For multi-turn conversations, append these to your message history:
+	//   messages = append(messages, result.ResponseMessages...)
+	//
+	// Nil when the response has no content.
+	// Reasoning parts are not included (GenerateObject uses non-streaming DoGenerate,
+	// and StreamObject does not capture reasoning chunks).
+	ResponseMessages []provider.Message
+
 	// Steps contains results from each generation step (for multi-step tool loops).
 	// The final step is always the structured output step.
 	Steps []StepResult
@@ -108,12 +117,19 @@ func (os *ObjectStream[T]) Result() (*ObjectResult[T], error) {
 		return nil, fmt.Errorf("parsing structured output: %w (raw: %s)", os.parseErr, truncate(os.text.String(), 200))
 	}
 
+	text := os.text.String()
+	var responseMessages []provider.Message
+	if text != "" {
+		responseMessages = buildFinalAssistantMessages(text, nil, nil)
+	}
+
 	if os.finalObject == nil {
 		return &ObjectResult[T]{
 			Usage:            os.usage,
 			FinishReason:     os.finishReason,
 			Response:         os.response,
 			ProviderMetadata: os.providerMetadata,
+			ResponseMessages: responseMessages,
 		}, nil
 	}
 	return &ObjectResult[T]{
@@ -122,6 +138,7 @@ func (os *ObjectStream[T]) Result() (*ObjectResult[T], error) {
 		FinishReason:     os.finishReason,
 		Response:         os.response,
 		ProviderMetadata: os.providerMetadata,
+		ResponseMessages: responseMessages,
 	}, nil
 }
 
@@ -271,6 +288,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 	schemaName := cmp.Or(o.SchemaName, "response")
 
 	params := buildParams(o)
+	originalLen := len(params.Messages)
 	// ResponseFormat is set upfront and sent on every step — the model decides
 	// when to call tools vs return structured JSON. This mirrors Vercel AI SDK
 	// where output parsing happens only on the step with finishReason "stop".
@@ -363,6 +381,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 				FinishReason:     result.FinishReason,
 				Response:         result.Response,
 				ProviderMetadata: result.ProviderMetadata,
+				ResponseMessages: buildResponseMessages(params.Messages[originalLen:], steps, nil),
 				Steps:            steps,
 			}, nil
 		}
