@@ -4725,3 +4725,1207 @@ func TestToolCallIDFromContext_Empty(t *testing.T) {
 		t.Errorf("ToolCallIDFromContext = %q, want empty", id)
 	}
 }
+
+// --- ResponseMessages tests ---
+
+// TestGenerateText_ResponseMessages_SingleStep verifies that a simple text
+// generation (no tools) produces ResponseMessages with a single assistant
+// message containing the generated text.
+func TestGenerateText_ResponseMessages_SingleStep(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         "Hello, world!",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 5, OutputTokens: 3},
+			}, nil
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model, WithPrompt("hi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.ResponseMessages) != 1 {
+		t.Fatalf("ResponseMessages length = %d, want 1", len(result.ResponseMessages))
+	}
+
+	msg := result.ResponseMessages[0]
+	if msg.Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[0].Role = %q, want %q", msg.Role, provider.RoleAssistant)
+	}
+	if len(msg.Content) != 1 {
+		t.Fatalf("ResponseMessages[0].Content length = %d, want 1", len(msg.Content))
+	}
+	if msg.Content[0].Type != provider.PartText {
+		t.Errorf("ResponseMessages[0].Content[0].Type = %q, want %q", msg.Content[0].Type, provider.PartText)
+	}
+	if msg.Content[0].Text != "Hello, world!" {
+		t.Errorf("ResponseMessages[0].Content[0].Text = %q, want %q", msg.Content[0].Text, "Hello, world!")
+	}
+}
+
+// TestGenerateText_ResponseMessages_ToolLoop verifies that a two-step tool loop
+// produces the correct sequence of response messages: assistant (tool calls),
+// tool result, assistant (final text).
+func TestGenerateText_ResponseMessages_ToolLoop(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls: []provider.ToolCall{
+						{ID: "call-1", Name: "weather", Input: json.RawMessage(`{"city":"NYC"}`)},
+					},
+					FinishReason: provider.FinishToolCalls,
+					Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         "The weather in NYC is sunny.",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 20, OutputTokens: 10},
+			}, nil
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("What's the weather in NYC?"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:        "weather",
+			Description: "Get weather",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "Sunny, 72F", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Expected: assistant (tool call), tool result, assistant (final text) = 3 messages
+	if len(result.ResponseMessages) != 3 {
+		t.Fatalf("ResponseMessages length = %d, want 3", len(result.ResponseMessages))
+	}
+
+	// Message 0: assistant with tool call
+	assistantToolCall := result.ResponseMessages[0]
+	if assistantToolCall.Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[0].Role = %q, want %q", assistantToolCall.Role, provider.RoleAssistant)
+	}
+	hasToolCallPart := false
+	for _, part := range assistantToolCall.Content {
+		if part.Type == provider.PartToolCall {
+			hasToolCallPart = true
+			if part.ToolCallID != "call-1" {
+				t.Errorf("tool call part ToolCallID = %q, want %q", part.ToolCallID, "call-1")
+			}
+			if part.ToolName != "weather" {
+				t.Errorf("tool call part ToolName = %q, want %q", part.ToolName, "weather")
+			}
+			if string(part.ToolInput) != `{"city":"NYC"}` {
+				t.Errorf("tool call ToolInput = %s, want %s", part.ToolInput, `{"city":"NYC"}`)
+			}
+		}
+	}
+	if !hasToolCallPart {
+		t.Error("ResponseMessages[0] missing PartToolCall")
+	}
+	if len(assistantToolCall.Content) != 1 {
+		t.Fatalf("expected exactly 1 part in assistant tool call message, got %d", len(assistantToolCall.Content))
+	}
+
+	// Message 1: tool result
+	toolResult := result.ResponseMessages[1]
+	if toolResult.Role != provider.RoleTool {
+		t.Errorf("ResponseMessages[1].Role = %q, want %q", toolResult.Role, provider.RoleTool)
+	}
+	if len(toolResult.Content) < 1 {
+		t.Fatalf("ResponseMessages[1].Content length = %d, want >= 1", len(toolResult.Content))
+	}
+	toolResultPart := toolResult.Content[0]
+	if toolResultPart.Type != provider.PartToolResult {
+		t.Errorf("ResponseMessages[1].Content[0].Type = %q, want %q", toolResultPart.Type, provider.PartToolResult)
+	}
+	if toolResultPart.ToolCallID != "call-1" {
+		t.Errorf("tool result ToolCallID = %q, want %q", toolResultPart.ToolCallID, "call-1")
+	}
+	if toolResultPart.ToolName != "weather" {
+		t.Errorf("tool result ToolName = %q, want %q", toolResultPart.ToolName, "weather")
+	}
+	if toolResultPart.ToolOutput != "Sunny, 72F" {
+		t.Errorf("tool result ToolOutput = %q, want %q", toolResultPart.ToolOutput, "Sunny, 72F")
+	}
+
+	// Message 2: assistant with final text
+	finalAssistant := result.ResponseMessages[2]
+	if finalAssistant.Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[2].Role = %q, want %q", finalAssistant.Role, provider.RoleAssistant)
+	}
+	hasTextPart := false
+	for _, part := range finalAssistant.Content {
+		if part.Type == provider.PartText {
+			hasTextPart = true
+			if part.Text != "The weather in NYC is sunny." {
+				t.Errorf("final text part = %q, want %q", part.Text, "The weather in NYC is sunny.")
+			}
+		}
+	}
+	if !hasTextPart {
+		t.Error("ResponseMessages[2] missing PartText with final text")
+	}
+}
+
+// TestGenerateText_ResponseMessages_MultipleToolCalls verifies that when the
+// model returns multiple parallel tool calls in a single step, all calls and
+// their results appear in ResponseMessages.
+func TestGenerateText_ResponseMessages_MultipleToolCalls(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls: []provider.ToolCall{
+						{ID: "call-a", Name: "weather", Input: json.RawMessage(`{"city":"NYC"}`)},
+						{ID: "call-b", Name: "weather", Input: json.RawMessage(`{"city":"LA"}`)},
+					},
+					FinishReason: provider.FinishToolCalls,
+					Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         "NYC is sunny, LA is cloudy.",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 30, OutputTokens: 10},
+			}, nil
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("weather in NYC and LA?"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:        "weather",
+			Description: "Get weather",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
+			Execute: func(_ context.Context, input json.RawMessage) (string, error) {
+				var args struct{ City string }
+				if err := json.Unmarshal(input, &args); err != nil {
+					return "", err
+				}
+				if args.City == "NYC" {
+					return "Sunny", nil
+				}
+				return "Cloudy", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Expected: assistant (2 tool calls), tool results, assistant (final text) = 3 messages
+	if len(result.ResponseMessages) != 3 {
+		t.Fatalf("ResponseMessages length = %d, want 3", len(result.ResponseMessages))
+	}
+
+	// Message 0: assistant with both tool calls
+	assistantMsg := result.ResponseMessages[0]
+	if assistantMsg.Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[0].Role = %q, want %q", assistantMsg.Role, provider.RoleAssistant)
+	}
+	toolCallParts := 0
+	toolCallIDs := map[string]bool{}
+	for _, part := range assistantMsg.Content {
+		if part.Type == provider.PartToolCall {
+			toolCallParts++
+			toolCallIDs[part.ToolCallID] = true
+		}
+	}
+	if toolCallParts != 2 {
+		t.Errorf("assistant message has %d tool call parts, want 2", toolCallParts)
+	}
+	if !toolCallIDs["call-a"] || !toolCallIDs["call-b"] {
+		t.Errorf("tool call IDs = %v, want call-a and call-b", toolCallIDs)
+	}
+
+	// Message 1: tool results for both calls
+	toolMsg := result.ResponseMessages[1]
+	if toolMsg.Role != provider.RoleTool {
+		t.Errorf("ResponseMessages[1].Role = %q, want %q", toolMsg.Role, provider.RoleTool)
+	}
+	toolResultParts := 0
+	resultIDs := map[string]bool{}
+	resultOutputs := map[string]string{}
+	for _, part := range toolMsg.Content {
+		if part.Type == provider.PartToolResult {
+			toolResultParts++
+			resultIDs[part.ToolCallID] = true
+			resultOutputs[part.ToolCallID] = part.ToolOutput
+			if part.ToolName != "weather" {
+				t.Errorf("tool result ToolName = %q, want %q", part.ToolName, "weather")
+			}
+		}
+	}
+	if toolResultParts != 2 {
+		t.Errorf("tool message has %d tool result parts, want 2", toolResultParts)
+	}
+	if !resultIDs["call-a"] || !resultIDs["call-b"] {
+		t.Errorf("tool result IDs = %v, want call-a and call-b", resultIDs)
+	}
+	if resultOutputs["call-a"] != "Sunny" {
+		t.Errorf("tool result for call-a ToolOutput = %q, want %q", resultOutputs["call-a"], "Sunny")
+	}
+	if resultOutputs["call-b"] != "Cloudy" {
+		t.Errorf("tool result for call-b ToolOutput = %q, want %q", resultOutputs["call-b"], "Cloudy")
+	}
+
+	// Message 2: assistant with final text
+	finalMsg := result.ResponseMessages[2]
+	if finalMsg.Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[2].Role = %q, want %q", finalMsg.Role, provider.RoleAssistant)
+	}
+	hasText := false
+	for _, part := range finalMsg.Content {
+		if part.Type == provider.PartText && part.Text == "NYC is sunny, LA is cloudy." {
+			hasText = true
+		}
+	}
+	if !hasText {
+		t.Error("ResponseMessages[2] missing expected final text")
+	}
+}
+
+// TestStreamText_ResponseMessages_ToolLoop verifies that StreamText produces
+// the same ResponseMessages structure as GenerateText for a two-step tool loop.
+func TestStreamText_ResponseMessages_ToolLoop(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test-stream",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "get_weather", ToolInput: `{"city":"NYC"}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "Sunny in NYC"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 20, OutputTokens: 8}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("weather?"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:        "get_weather",
+			Description: "Get weather",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "Sunny", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Drain the stream.
+	for range stream.Stream() {
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("unexpected stream error: %v", err)
+	}
+
+	result := stream.Result()
+
+	// Expected: assistant (tool call), tool result, assistant (final text) = 3 messages
+	if len(result.ResponseMessages) != 3 {
+		t.Fatalf("ResponseMessages length = %d, want 3", len(result.ResponseMessages))
+	}
+
+	// Message 0: assistant with tool call
+	if result.ResponseMessages[0].Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[0].Role = %q, want %q", result.ResponseMessages[0].Role, provider.RoleAssistant)
+	}
+	hasToolCall := false
+	for _, part := range result.ResponseMessages[0].Content {
+		if part.Type == provider.PartToolCall {
+			hasToolCall = true
+			if part.ToolCallID != "tc1" {
+				t.Errorf("tool call ToolCallID = %q, want %q", part.ToolCallID, "tc1")
+			}
+			if part.ToolName != "get_weather" {
+				t.Errorf("tool call ToolName = %q, want %q", part.ToolName, "get_weather")
+			}
+			if string(part.ToolInput) != `{"city":"NYC"}` {
+				t.Errorf("tool call ToolInput = %s, want %s", part.ToolInput, `{"city":"NYC"}`)
+			}
+		}
+	}
+	if !hasToolCall {
+		t.Error("ResponseMessages[0] missing PartToolCall")
+	}
+	if len(result.ResponseMessages[0].Content) != 1 {
+		t.Fatalf("expected exactly 1 part in assistant tool call message, got %d", len(result.ResponseMessages[0].Content))
+	}
+
+	// Message 1: tool result
+	if result.ResponseMessages[1].Role != provider.RoleTool {
+		t.Errorf("ResponseMessages[1].Role = %q, want %q", result.ResponseMessages[1].Role, provider.RoleTool)
+	}
+	if len(result.ResponseMessages[1].Content) < 1 {
+		t.Fatalf("ResponseMessages[1].Content length = %d, want >= 1", len(result.ResponseMessages[1].Content))
+	}
+	trp := result.ResponseMessages[1].Content[0]
+	if trp.Type != provider.PartToolResult {
+		t.Errorf("tool result Type = %q, want %q", trp.Type, provider.PartToolResult)
+	}
+	if trp.ToolCallID != "tc1" {
+		t.Errorf("tool result ToolCallID = %q, want %q", trp.ToolCallID, "tc1")
+	}
+	if trp.ToolName != "get_weather" {
+		t.Errorf("tool result ToolName = %q, want %q", trp.ToolName, "get_weather")
+	}
+	if trp.ToolOutput != "Sunny" {
+		t.Errorf("tool result ToolOutput = %q, want %q", trp.ToolOutput, "Sunny")
+	}
+
+	// Message 2: assistant with final text
+	if result.ResponseMessages[2].Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[2].Role = %q, want %q", result.ResponseMessages[2].Role, provider.RoleAssistant)
+	}
+	hasText := false
+	for _, part := range result.ResponseMessages[2].Content {
+		if part.Type == provider.PartText && part.Text == "Sunny in NYC" {
+			hasText = true
+		}
+	}
+	if !hasText {
+		t.Error("ResponseMessages[2] missing expected final text 'Sunny in NYC'")
+	}
+}
+
+// TestGenerateText_ResponseMessages_NoToolExecute verifies that when tools are
+// provided without Execute functions, ResponseMessages contains a single
+// assistant message with both text and tool call parts.
+func TestGenerateText_ResponseMessages_NoToolExecute(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text: "I'll call the tool.",
+				ToolCalls: []provider.ToolCall{
+					{ID: "call-1", Name: "search", Input: json.RawMessage(`{"q":"golang"}`)},
+				},
+				FinishReason: provider.FinishToolCalls,
+				Usage:        provider.Usage{InputTokens: 10, OutputTokens: 8},
+			}, nil
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("search for golang"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:        "search",
+			Description: "Search the web",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`),
+			// No Execute function -- tool loop should not proceed.
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// With no Execute, the loop stops after one step. ResponseMessages should
+	// contain a single assistant message with both text and tool call parts.
+	if len(result.ResponseMessages) != 1 {
+		t.Fatalf("ResponseMessages length = %d, want 1", len(result.ResponseMessages))
+	}
+
+	msg := result.ResponseMessages[0]
+	if msg.Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[0].Role = %q, want %q", msg.Role, provider.RoleAssistant)
+	}
+
+	hasText := false
+	hasToolCall := false
+	for _, part := range msg.Content {
+		switch part.Type {
+		case provider.PartText:
+			hasText = true
+			if part.Text != "I'll call the tool." {
+				t.Errorf("text part = %q, want %q", part.Text, "I'll call the tool.")
+			}
+		case provider.PartToolCall:
+			hasToolCall = true
+			if part.ToolCallID != "call-1" {
+				t.Errorf("tool call ToolCallID = %q, want %q", part.ToolCallID, "call-1")
+			}
+			if part.ToolName != "search" {
+				t.Errorf("tool call ToolName = %q, want %q", part.ToolName, "search")
+			}
+		}
+	}
+	if !hasText {
+		t.Error("ResponseMessages[0] missing PartText")
+	}
+	if !hasToolCall {
+		t.Error("ResponseMessages[0] missing PartToolCall")
+	}
+}
+
+// TestGenerateText_ResponseMessages_ThreeStepToolLoop verifies that a three-step
+// tool loop (tool A -> tool B -> final text) produces the correct sequence of
+// response messages: assistant(A), tool(A), assistant(B), tool(B), assistant(text).
+func TestGenerateText_ResponseMessages_ThreeStepToolLoop(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			switch callCount {
+			case 1:
+				return &provider.GenerateResult{
+					ToolCalls: []provider.ToolCall{
+						{ID: "call-a", Name: "lookup", Input: json.RawMessage(`{"key":"alpha"}`)},
+					},
+					FinishReason: provider.FinishToolCalls,
+					Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+				}, nil
+			case 2:
+				return &provider.GenerateResult{
+					ToolCalls: []provider.ToolCall{
+						{ID: "call-b", Name: "lookup", Input: json.RawMessage(`{"key":"beta"}`)},
+					},
+					FinishReason: provider.FinishToolCalls,
+					Usage:        provider.Usage{InputTokens: 20, OutputTokens: 5},
+				}, nil
+			default:
+				return &provider.GenerateResult{
+					Text:         "Done with both lookups.",
+					FinishReason: provider.FinishStop,
+					Usage:        provider.Usage{InputTokens: 30, OutputTokens: 10},
+				}, nil
+			}
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("look up alpha then beta"),
+		WithMaxSteps(5),
+		WithTools(Tool{
+			Name:        "lookup",
+			Description: "Look up a key",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"}}}`),
+			Execute: func(_ context.Context, input json.RawMessage) (string, error) {
+				var args struct{ Key string }
+				if err := json.Unmarshal(input, &args); err != nil {
+					return "", err
+				}
+				return "result-" + args.Key, nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Expected: assistant(call-a), tool(result-a), assistant(call-b), tool(result-b), assistant(text) = 5 messages
+	if len(result.ResponseMessages) != 5 {
+		t.Fatalf("ResponseMessages length = %d, want 5", len(result.ResponseMessages))
+	}
+
+	// Message 0: assistant with tool call A
+	if result.ResponseMessages[0].Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[0].Role = %q, want %q", result.ResponseMessages[0].Role, provider.RoleAssistant)
+	}
+	if len(result.ResponseMessages[0].Content) == 0 {
+		t.Fatalf("ResponseMessages[0].Content is empty")
+	}
+	if result.ResponseMessages[0].Content[0].Type != provider.PartToolCall || result.ResponseMessages[0].Content[0].ToolCallID != "call-a" {
+		t.Errorf("ResponseMessages[0] should contain tool call A, got %+v", result.ResponseMessages[0].Content)
+	}
+
+	// Message 1: tool result for A
+	if result.ResponseMessages[1].Role != provider.RoleTool {
+		t.Errorf("ResponseMessages[1].Role = %q, want %q", result.ResponseMessages[1].Role, provider.RoleTool)
+	}
+	if len(result.ResponseMessages[1].Content) == 0 {
+		t.Fatalf("ResponseMessages[1].Content is empty")
+	}
+	if result.ResponseMessages[1].Content[0].ToolOutput != "result-alpha" {
+		t.Errorf("ResponseMessages[1] tool output = %q, want %q", result.ResponseMessages[1].Content[0].ToolOutput, "result-alpha")
+	}
+
+	// Message 2: assistant with tool call B
+	if result.ResponseMessages[2].Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[2].Role = %q, want %q", result.ResponseMessages[2].Role, provider.RoleAssistant)
+	}
+	if len(result.ResponseMessages[2].Content) == 0 {
+		t.Fatalf("ResponseMessages[2].Content is empty")
+	}
+	if result.ResponseMessages[2].Content[0].Type != provider.PartToolCall || result.ResponseMessages[2].Content[0].ToolCallID != "call-b" {
+		t.Errorf("ResponseMessages[2] should contain tool call B, got %+v", result.ResponseMessages[2].Content)
+	}
+
+	// Message 3: tool result for B
+	if result.ResponseMessages[3].Role != provider.RoleTool {
+		t.Errorf("ResponseMessages[3].Role = %q, want %q", result.ResponseMessages[3].Role, provider.RoleTool)
+	}
+	if len(result.ResponseMessages[3].Content) == 0 {
+		t.Fatalf("ResponseMessages[3].Content is empty")
+	}
+	if result.ResponseMessages[3].Content[0].ToolOutput != "result-beta" {
+		t.Errorf("ResponseMessages[3] tool output = %q, want %q", result.ResponseMessages[3].Content[0].ToolOutput, "result-beta")
+	}
+
+	// Message 4: assistant with final text
+	if result.ResponseMessages[4].Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[4].Role = %q, want %q", result.ResponseMessages[4].Role, provider.RoleAssistant)
+	}
+	hasText := false
+	for _, part := range result.ResponseMessages[4].Content {
+		if part.Type == provider.PartText && part.Text == "Done with both lookups." {
+			hasText = true
+		}
+	}
+	if !hasText {
+		t.Error("ResponseMessages[4] missing expected final text")
+	}
+}
+
+// TestGenerateText_ResponseMessages_ToolError verifies that when a tool's Execute
+// function returns an error, the error text still appears in ResponseMessages as
+// a tool result message.
+func TestGenerateText_ResponseMessages_ToolError(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls: []provider.ToolCall{
+						{ID: "call-err", Name: "flaky", Input: json.RawMessage(`{}`)},
+					},
+					FinishReason: provider.FinishToolCalls,
+					Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         "I see the tool failed.",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 20, OutputTokens: 8},
+			}, nil
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("try the flaky tool"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:        "flaky",
+			Description: "A tool that fails",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "", fmt.Errorf("something went wrong")
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Expected: assistant(tool call), tool(error result), assistant(final text) = 3 messages
+	if len(result.ResponseMessages) != 3 {
+		t.Fatalf("ResponseMessages length = %d, want 3", len(result.ResponseMessages))
+	}
+
+	// Message 0: assistant with tool call
+	if result.ResponseMessages[0].Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[0].Role = %q, want %q", result.ResponseMessages[0].Role, provider.RoleAssistant)
+	}
+	if len(result.ResponseMessages[0].Content) == 0 {
+		t.Fatalf("ResponseMessages[0].Content is empty")
+	}
+	if result.ResponseMessages[0].Content[0].Type != provider.PartToolCall {
+		t.Errorf("ResponseMessages[0].Content[0].Type = %q, want %q", result.ResponseMessages[0].Content[0].Type, provider.PartToolCall)
+	}
+	if result.ResponseMessages[0].Content[0].ToolCallID != "call-err" {
+		t.Errorf("ResponseMessages[0].Content[0].ToolCallID = %q, want %q", result.ResponseMessages[0].Content[0].ToolCallID, "call-err")
+	}
+	if result.ResponseMessages[0].Content[0].ToolName != "flaky" {
+		t.Errorf("ResponseMessages[0].Content[0].ToolName = %q, want %q", result.ResponseMessages[0].Content[0].ToolName, "flaky")
+	}
+
+	// Message 1: tool result with error text
+	toolResult := result.ResponseMessages[1]
+	if toolResult.Role != provider.RoleTool {
+		t.Errorf("ResponseMessages[1].Role = %q, want %q", toolResult.Role, provider.RoleTool)
+	}
+	if len(toolResult.Content) < 1 {
+		t.Fatalf("ResponseMessages[1].Content length = %d, want >= 1", len(toolResult.Content))
+	}
+	trp := toolResult.Content[0]
+	if trp.Type != provider.PartToolResult {
+		t.Errorf("tool result Type = %q, want %q", trp.Type, provider.PartToolResult)
+	}
+	if trp.ToolCallID != "call-err" {
+		t.Errorf("tool result ToolCallID = %q, want %q", trp.ToolCallID, "call-err")
+	}
+	if trp.ToolOutput != "error: something went wrong" {
+		t.Errorf("tool result ToolOutput = %q, want %q", trp.ToolOutput, "error: something went wrong")
+	}
+
+	// Message 2: assistant with final text
+	if result.ResponseMessages[2].Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[2].Role = %q, want %q", result.ResponseMessages[2].Role, provider.RoleAssistant)
+	}
+	hasText := false
+	for _, part := range result.ResponseMessages[2].Content {
+		if part.Type == provider.PartText && part.Text == "I see the tool failed." {
+			hasText = true
+		}
+	}
+	if !hasText {
+		t.Error("ResponseMessages[2] missing expected final text")
+	}
+}
+
+// TestGenerateText_ResponseMessages_MaxStepsExhausted verifies that when MaxSteps
+// is reached with the model still requesting tool calls, ResponseMessages contains
+// all tool round-trips plus the final assistant message with tool call parts.
+// With MaxSteps=2, both steps execute tools. The delta captures all round-trips,
+// and the final assistant message reflects the last step's tool calls.
+func TestGenerateText_ResponseMessages_MaxStepsExhausted(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			switch callCount {
+			case 1:
+				return &provider.GenerateResult{
+					ToolCalls: []provider.ToolCall{
+						{ID: "call-1", Name: "compute", Input: json.RawMessage(`{"n":1}`)},
+					},
+					FinishReason: provider.FinishToolCalls,
+					Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+				}, nil
+			default:
+				// Step 2: model returns another tool call (MaxSteps=2, so loop exits after this step)
+				return &provider.GenerateResult{
+					ToolCalls: []provider.ToolCall{
+						{ID: "call-2", Name: "compute", Input: json.RawMessage(`{"n":2}`)},
+					},
+					FinishReason: provider.FinishToolCalls,
+					Usage:        provider.Usage{InputTokens: 20, OutputTokens: 5},
+				}, nil
+			}
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("compute stuff"),
+		WithMaxSteps(2),
+		WithTools(Tool{
+			Name:        "compute",
+			Description: "Compute something",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"n":{"type":"integer"}}}`),
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "computed", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// With MaxSteps=2, both steps execute tools and append round-trips.
+	// Delta: [assistant(call-1), tool(result-1), assistant(call-2), tool(result-2)]
+	// The last step's assistant message is already in the delta (appendToolRoundTrip ran),
+	// so buildResponseMessages does NOT append a duplicate. Total: 4 messages.
+	if len(result.ResponseMessages) != 4 {
+		t.Fatalf("ResponseMessages length = %d, want 4", len(result.ResponseMessages))
+	}
+
+	// Message 0: assistant with tool call 1
+	if result.ResponseMessages[0].Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[0].Role = %q, want %q", result.ResponseMessages[0].Role, provider.RoleAssistant)
+	}
+	if len(result.ResponseMessages[0].Content) == 0 {
+		t.Fatalf("ResponseMessages[0].Content is empty")
+	}
+	if result.ResponseMessages[0].Content[0].Type != provider.PartToolCall || result.ResponseMessages[0].Content[0].ToolCallID != "call-1" {
+		t.Errorf("ResponseMessages[0] should contain tool call 1")
+	}
+
+	// Message 1: tool result for call-1
+	if result.ResponseMessages[1].Role != provider.RoleTool {
+		t.Errorf("ResponseMessages[1].Role = %q, want %q", result.ResponseMessages[1].Role, provider.RoleTool)
+	}
+	if len(result.ResponseMessages[1].Content) == 0 {
+		t.Fatalf("ResponseMessages[1].Content is empty")
+	}
+	if result.ResponseMessages[1].Content[0].ToolOutput != "computed" {
+		t.Errorf("ResponseMessages[1] tool output = %q, want %q", result.ResponseMessages[1].Content[0].ToolOutput, "computed")
+	}
+
+	// Message 2: assistant with tool call 2
+	if result.ResponseMessages[2].Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[2].Role = %q, want %q", result.ResponseMessages[2].Role, provider.RoleAssistant)
+	}
+	if len(result.ResponseMessages[2].Content) == 0 {
+		t.Fatalf("ResponseMessages[2].Content is empty")
+	}
+	if result.ResponseMessages[2].Content[0].Type != provider.PartToolCall || result.ResponseMessages[2].Content[0].ToolCallID != "call-2" {
+		t.Errorf("ResponseMessages[2] should contain tool call 2")
+	}
+
+	// Message 3: tool result for call-2 (executed before loop exits)
+	if result.ResponseMessages[3].Role != provider.RoleTool {
+		t.Errorf("ResponseMessages[3].Role = %q, want %q", result.ResponseMessages[3].Role, provider.RoleTool)
+	}
+	if len(result.ResponseMessages[3].Content) == 0 {
+		t.Fatalf("ResponseMessages[3].Content is empty")
+	}
+	if result.ResponseMessages[3].Content[0].ToolOutput != "computed" {
+		t.Errorf("ResponseMessages[3] tool output = %q, want %q", result.ResponseMessages[3].Content[0].ToolOutput, "computed")
+	}
+}
+
+// TestStreamText_ResponseMessages_MaxStepsExhausted verifies that when MaxSteps
+// is exhausted in streaming mode, ResponseMessages does not contain a duplicate
+// assistant message for the last step.
+func TestStreamText_ResponseMessages_MaxStepsExhausted(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test-stream",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			switch n {
+			case 1:
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "call-1", ToolName: "compute", ToolInput: `{"n":1}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			default:
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "call-2", ToolName: "compute", ToolInput: `{"n":2}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 20, OutputTokens: 5}},
+				), nil
+			}
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("compute stuff"),
+		WithMaxSteps(2),
+		WithTools(Tool{
+			Name:        "compute",
+			Description: "Compute something",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"n":{"type":"integer"}}}`),
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "computed", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Drain the stream.
+	for range stream.Stream() {
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("unexpected stream error: %v", err)
+	}
+
+	result := stream.Result()
+
+	// With MaxSteps=2, both steps return tool calls. The delta contains all
+	// round-trips: [assistant(call-1), tool(result-1), assistant(call-2), tool(result-2)].
+	// No duplicate assistant message should be appended. Total: 4 messages.
+	if len(result.ResponseMessages) != 4 {
+		t.Fatalf("ResponseMessages length = %d, want 4", len(result.ResponseMessages))
+	}
+
+	// Message 0: assistant with tool call 1
+	if result.ResponseMessages[0].Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[0].Role = %q, want %q", result.ResponseMessages[0].Role, provider.RoleAssistant)
+	}
+	if len(result.ResponseMessages[0].Content) == 0 {
+		t.Fatalf("ResponseMessages[0].Content is empty")
+	}
+	if result.ResponseMessages[0].Content[0].Type != provider.PartToolCall || result.ResponseMessages[0].Content[0].ToolCallID != "call-1" {
+		t.Errorf("ResponseMessages[0] should contain tool call 1")
+	}
+
+	// Message 1: tool result for call-1
+	if result.ResponseMessages[1].Role != provider.RoleTool {
+		t.Errorf("ResponseMessages[1].Role = %q, want %q", result.ResponseMessages[1].Role, provider.RoleTool)
+	}
+	if len(result.ResponseMessages[1].Content) == 0 {
+		t.Fatalf("ResponseMessages[1].Content is empty")
+	}
+	if result.ResponseMessages[1].Content[0].ToolOutput != "computed" {
+		t.Errorf("ResponseMessages[1] tool output = %q, want %q", result.ResponseMessages[1].Content[0].ToolOutput, "computed")
+	}
+
+	// Message 2: assistant with tool call 2
+	if result.ResponseMessages[2].Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[2].Role = %q, want %q", result.ResponseMessages[2].Role, provider.RoleAssistant)
+	}
+	if len(result.ResponseMessages[2].Content) == 0 {
+		t.Fatalf("ResponseMessages[2].Content is empty")
+	}
+	if result.ResponseMessages[2].Content[0].Type != provider.PartToolCall || result.ResponseMessages[2].Content[0].ToolCallID != "call-2" {
+		t.Errorf("ResponseMessages[2] should contain tool call 2")
+	}
+
+	// Message 3: tool result for call-2
+	if result.ResponseMessages[3].Role != provider.RoleTool {
+		t.Errorf("ResponseMessages[3].Role = %q, want %q", result.ResponseMessages[3].Role, provider.RoleTool)
+	}
+	if len(result.ResponseMessages[3].Content) == 0 {
+		t.Fatalf("ResponseMessages[3].Content is empty")
+	}
+	if result.ResponseMessages[3].Content[0].ToolOutput != "computed" {
+		t.Errorf("ResponseMessages[3] tool output = %q, want %q", result.ResponseMessages[3].Content[0].ToolOutput, "computed")
+	}
+}
+
+// TestStreamText_ResponseMessages_WithReasoning verifies that ResponseMessages
+// includes reasoning parts in assistant messages, with reasoning appearing before
+// text parts (matching appendToolRoundTrip ordering).
+func TestStreamText_ResponseMessages_WithReasoning(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test-stream",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkReasoning, Text: "let me think..."},
+					provider.StreamChunk{Type: provider.ChunkText, Text: "I'll call the tool"},
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "lookup", ToolInput: `{"q":"test"}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "final answer"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 20, OutputTokens: 8}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("reason about this"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:        "lookup",
+			Description: "Look something up",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`),
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "found it", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Drain the stream.
+	for range stream.Stream() {
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("unexpected stream error: %v", err)
+	}
+
+	result := stream.Result()
+
+	// Expected: assistant (reasoning + text + tool call), tool result, assistant (final text) = 3 messages
+	if len(result.ResponseMessages) != 3 {
+		t.Fatalf("ResponseMessages length = %d, want 3", len(result.ResponseMessages))
+	}
+
+	// Message 0: assistant with reasoning, text, and tool call
+	msg0 := result.ResponseMessages[0]
+	if msg0.Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[0].Role = %q, want %q", msg0.Role, provider.RoleAssistant)
+	}
+	// Verify ordering: reasoning parts appear before text and tool call parts.
+	if len(msg0.Content) != 3 {
+		t.Fatalf("ResponseMessages[0].Content length = %d, want 3", len(msg0.Content))
+	}
+	// First part should be reasoning.
+	if msg0.Content[0].Type != provider.PartReasoning {
+		t.Errorf("ResponseMessages[0].Content[0].Type = %q, want %q", msg0.Content[0].Type, provider.PartReasoning)
+	}
+	if msg0.Content[0].Text != "let me think..." {
+		t.Errorf("ResponseMessages[0].Content[0].Text = %q, want %q", msg0.Content[0].Text, "let me think...")
+	}
+	// Second part should be text.
+	if msg0.Content[1].Type != provider.PartText {
+		t.Errorf("ResponseMessages[0].Content[1].Type = %q, want %q", msg0.Content[1].Type, provider.PartText)
+	}
+	if msg0.Content[1].Text != "I'll call the tool" {
+		t.Errorf("ResponseMessages[0].Content[1].Text = %q, want %q", msg0.Content[1].Text, "I'll call the tool")
+	}
+	// Third part should be tool call.
+	if msg0.Content[2].Type != provider.PartToolCall {
+		t.Errorf("ResponseMessages[0].Content[2].Type = %q, want %q", msg0.Content[2].Type, provider.PartToolCall)
+	}
+	if msg0.Content[2].ToolCallID != "tc1" {
+		t.Errorf("ResponseMessages[0].Content[2].ToolCallID = %q, want %q", msg0.Content[2].ToolCallID, "tc1")
+	}
+
+	// Message 1: tool result
+	if result.ResponseMessages[1].Role != provider.RoleTool {
+		t.Errorf("ResponseMessages[1].Role = %q, want %q", result.ResponseMessages[1].Role, provider.RoleTool)
+	}
+	if len(result.ResponseMessages[1].Content) == 0 {
+		t.Fatalf("ResponseMessages[1].Content is empty")
+	}
+	if result.ResponseMessages[1].Content[0].ToolOutput != "found it" {
+		t.Errorf("ResponseMessages[1] tool output = %q, want %q", result.ResponseMessages[1].Content[0].ToolOutput, "found it")
+	}
+
+	// Message 2: final assistant with text
+	msg2 := result.ResponseMessages[2]
+	if msg2.Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[2].Role = %q, want %q", msg2.Role, provider.RoleAssistant)
+	}
+	hasText := false
+	for _, part := range msg2.Content {
+		if part.Type == provider.PartText && part.Text == "final answer" {
+			hasText = true
+		}
+	}
+	if !hasText {
+		t.Error("ResponseMessages[2] missing final text")
+	}
+}
+
+// TestStreamText_ResponseMessages_SingleStep verifies that a simple single-step
+// streaming text generation produces a ResponseMessages with one assistant message.
+// This tests the buildResult() fallback path where ts.responseMessages is nil.
+func TestStreamText_ResponseMessages_SingleStep(t *testing.T) {
+	model := &mockModel{
+		id: "test-stream",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "Hello, world!"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 5, OutputTokens: 3}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("say hi"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Drain the stream.
+	for range stream.Stream() {
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("unexpected stream error: %v", err)
+	}
+
+	result := stream.Result()
+
+	// Single-step: one assistant message with the text.
+	if len(result.ResponseMessages) != 1 {
+		t.Fatalf("ResponseMessages length = %d, want 1", len(result.ResponseMessages))
+	}
+	if result.ResponseMessages[0].Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[0].Role = %q, want %q", result.ResponseMessages[0].Role, provider.RoleAssistant)
+	}
+	hasText := false
+	for _, part := range result.ResponseMessages[0].Content {
+		if part.Type == provider.PartText && part.Text == "Hello, world!" {
+			hasText = true
+		}
+	}
+	if !hasText {
+		t.Error("ResponseMessages[0] missing expected text")
+	}
+}
+
+// TestStreamText_ResponseMessages_SingleStepReasoning verifies that a single-step
+// streaming response with reasoning (no tools, MaxSteps=1) produces a
+// ResponseMessages with one assistant message containing PartReasoning then PartText.
+// This tests the buildResult() single-step fallback with reasoning.
+func TestStreamText_ResponseMessages_SingleStepReasoning(t *testing.T) {
+	model := &mockModel{
+		id: "test-stream",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkReasoning, Text: "thinking..."},
+				// Second reasoning chunk with signature metadata (like Anthropic/Bedrock).
+				provider.StreamChunk{Type: provider.ChunkReasoning, Text: "", Metadata: map[string]any{"signature": "sig-abc"}},
+				provider.StreamChunk{Type: provider.ChunkText, Text: "answer"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("think about this"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Drain the stream.
+	for range stream.Stream() {
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("unexpected stream error: %v", err)
+	}
+
+	result := stream.Result()
+
+	// Single-step with reasoning: one assistant message.
+	if len(result.ResponseMessages) != 1 {
+		t.Fatalf("ResponseMessages length = %d, want 1", len(result.ResponseMessages))
+	}
+
+	msg := result.ResponseMessages[0]
+	if msg.Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[0].Role = %q, want %q", msg.Role, provider.RoleAssistant)
+	}
+	if len(msg.Content) != 2 {
+		t.Fatalf("ResponseMessages[0].Content length = %d, want 2", len(msg.Content))
+	}
+
+	// First part: consolidated reasoning (two chunks merged into one with metadata).
+	if msg.Content[0].Type != provider.PartReasoning {
+		t.Errorf("ResponseMessages[0].Content[0].Type = %q, want %q", msg.Content[0].Type, provider.PartReasoning)
+	}
+	if msg.Content[0].Text != "thinking..." {
+		t.Errorf("ResponseMessages[0].Content[0].Text = %q, want %q", msg.Content[0].Text, "thinking...")
+	}
+	// Verify ProviderOptions contains merged metadata (signature from second chunk).
+	if msg.Content[0].ProviderOptions == nil {
+		t.Fatal("ResponseMessages[0].Content[0].ProviderOptions is nil, want signature metadata")
+	}
+	if sig, ok := msg.Content[0].ProviderOptions["signature"].(string); !ok || sig != "sig-abc" {
+		t.Errorf("reasoning ProviderOptions[signature] = %v, want %q", msg.Content[0].ProviderOptions["signature"], "sig-abc")
+	}
+
+	// Second part: text.
+	if msg.Content[1].Type != provider.PartText {
+		t.Errorf("ResponseMessages[0].Content[1].Type = %q, want %q", msg.Content[1].Type, provider.PartText)
+	}
+	if msg.Content[1].Text != "answer" {
+		t.Errorf("ResponseMessages[0].Content[1].Text = %q, want %q", msg.Content[1].Text, "answer")
+	}
+}
+
+// TestStreamText_ResponseMessages_MidLoopError verifies that when DoStream fails
+// on step 2 of a tool loop, the stream reports an error and ResponseMessages is
+// either nil or contains only a minimal fallback (not the full tool round-trip).
+func TestStreamText_ResponseMessages_MidLoopError(t *testing.T) {
+	var callCount atomic.Int32
+	model := &mockModel{
+		id: "test-stream",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			n := callCount.Add(1)
+			if n == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "tool", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+				), nil
+			}
+			return nil, &APIError{Message: "server error", StatusCode: 500}
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithMaxRetries(0),
+		WithTools(Tool{
+			Name:        "tool",
+			Description: "A tool",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "ok", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Drain the stream to trigger the error.
+	for range stream.Stream() {
+	}
+
+	// Verify stream has an error.
+	if stream.Err() == nil {
+		t.Fatal("expected non-nil Err()")
+	}
+	var apiErr *APIError
+	if !errors.As(stream.Err(), &apiErr) {
+		t.Fatalf("expected *APIError, got %T: %v", stream.Err(), stream.Err())
+	}
+	if apiErr.StatusCode != 500 {
+		t.Errorf("StatusCode = %d, want 500", apiErr.StatusCode)
+	}
+
+	// ResponseMessages should be minimal: at most one assistant message with partial
+	// tool call data. The full round-trip (assistant + tool results) from step 1 is lost
+	// because the goroutine returns without setting ts.responseMessages on error.
+	result := stream.Result()
+	if len(result.ResponseMessages) > 1 {
+		t.Errorf("expected ResponseMessages to have at most 1 message on mid-loop error, got %d", len(result.ResponseMessages))
+	}
+	// If present, the single message should be an assistant message (not a tool result).
+	for _, msg := range result.ResponseMessages {
+		if msg.Role != provider.RoleAssistant {
+			t.Errorf("expected only assistant messages in error ResponseMessages, got role %q", msg.Role)
+		}
+	}
+}
+
+// TestGenerateText_ResponseMessages_EmptyResponse verifies that ResponseMessages
+// is nil when the model returns empty text and no tool calls.
+func TestGenerateText_ResponseMessages_EmptyResponse(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         "",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 5, OutputTokens: 0},
+			}, nil
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model, WithPrompt("hi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.ResponseMessages != nil {
+		t.Errorf("ResponseMessages = %v, want nil for empty response", result.ResponseMessages)
+	}
+}

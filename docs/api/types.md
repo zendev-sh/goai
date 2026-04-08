@@ -19,14 +19,15 @@ The final result of a text generation call (`GenerateText` or `TextStream.Result
 
 ```go
 type TextResult struct {
-    Text         string                   // Accumulated generated text (includes reasoning text when streaming).
-    ToolCalls    []provider.ToolCall       // Tool calls from the final step.
-    Steps        []StepResult             // Results from each generation step.
-    TotalUsage   provider.Usage           // Aggregated token usage across all steps.
-    FinishReason provider.FinishReason    // Why generation stopped.
-    Response     provider.ResponseMetadata // Provider metadata from the last step.
-    ProviderMetadata map[string]map[string]any // Provider-specific response data.
-    Sources      []provider.Source        // Citations/references from all steps.
+    Text             string                       // Accumulated generated text (includes reasoning text when streaming).
+    ToolCalls        []provider.ToolCall           // Tool calls from the final step.
+    Steps            []StepResult                 // Results from each generation step.
+    TotalUsage       provider.Usage               // Aggregated token usage across all steps.
+    FinishReason     provider.FinishReason        // Why generation stopped.
+    Response         provider.ResponseMetadata    // Provider metadata from the last step.
+    ProviderMetadata map[string]map[string]any    // Provider-specific response data.
+    Sources          []provider.Source            // Citations/references from all steps.
+    ResponseMessages []provider.Message           // Assistant + tool messages for multi-turn continuation.
 }
 ```
 
@@ -71,6 +72,7 @@ type ObjectResult[T any] struct {
     FinishReason     provider.FinishReason    // Why generation stopped.
     Response         provider.ResponseMetadata // Provider metadata.
     ProviderMetadata map[string]map[string]any // Provider-specific response data.
+    ResponseMessages []provider.Message       // Assistant + tool messages for multi-turn continuation.
     Steps            []StepResult             // Results from each generation step (for multi-step tool loops).
 }
 ```

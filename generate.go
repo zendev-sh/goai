@@ -59,6 +59,20 @@ type TextResult struct {
 
 	// Sources contains citations/references extracted from the response.
 	Sources []provider.Source
+
+	// ResponseMessages contains the assistant and tool messages from all generation steps.
+	// For multi-turn conversations, append these to your message history:
+	//   messages = append(messages, result.ResponseMessages...)
+	//
+	// Nil when the response has no content (empty text and no tool calls).
+	// For StreamText, check Err() before using , on stream errors, ResponseMessages
+	// may be partial (intermediate tool round-trips lost) or reflect only completed
+	// steps. Do not use ResponseMessages for conversation continuation when Err() != nil.
+	// Reasoning parts (PartReasoning) are included for StreamText (both single-step
+	// and multi-step) but not for GenerateText (which does not expose reasoning).
+	// Reasoning chunks are consolidated into a single PartReasoning part with merged
+	// metadata (e.g. Anthropic/Bedrock signatures).
+	ResponseMessages []provider.Message
 }
 
 // StepResult is the result of a single generation step in a tool loop.
@@ -131,6 +145,11 @@ type TextStream struct {
 	stepText      strings.Builder
 	stepToolCalls []provider.ToolCall
 	stepSources   []provider.Source
+	reasoningBuf  strings.Builder // consolidated reasoning text (matches drainStep)
+	reasoningMeta map[string]any  // merged reasoning metadata (e.g. Anthropic signature)
+
+	// responseMessages is set by the streamWithToolLoop goroutine before doneCh closes.
+	responseMessages []provider.Message
 }
 
 func newTextStream(ctx context.Context, source <-chan provider.StreamChunk) *TextStream {
@@ -278,9 +297,19 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 
 		case provider.ChunkReasoning:
 			ts.text.WriteString(chunk.Text) // global accumulator (existing, includes reasoning)
-			// NOTE: reasoning is NOT written to ts.stepText. This matches drainStep behavior
-			// where text and reasoning are separated. StepResult.Text contains text-only,
-			// consistent between OnStepFinish hook (from drainStep) and Result().Steps (from consume).
+			// Consolidate reasoning fragments into one Part (matching drainStep behavior).
+			// Text is accumulated; metadata is merged (last chunk carries the signature).
+			if chunk.Text != "" {
+				ts.reasoningBuf.WriteString(chunk.Text)
+			}
+			if chunk.Metadata != nil {
+				if ts.reasoningMeta == nil {
+					ts.reasoningMeta = make(map[string]any)
+				}
+				for k, v := range chunk.Metadata {
+					ts.reasoningMeta[k] = v
+				}
+			}
 			if s, ok := chunk.Metadata["source"].(provider.Source); ok {
 				ts.sources = append(ts.sources, s)         // global (preserve existing behavior)
 				ts.stepSources = append(ts.stepSources, s) // per-step
@@ -324,6 +353,8 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 				ts.stepText.Reset()
 				ts.stepToolCalls = nil
 				ts.stepSources = nil
+				ts.reasoningBuf.Reset()
+				ts.reasoningMeta = nil
 			} else {
 				// Provider-internal step boundary (e.g., Anthropic extended thinking).
 				// Preserve existing behavior: extract response, metadata, sources.
@@ -440,6 +471,26 @@ func (ts *TextStream) buildResult() *TextResult {
 		}}
 	}
 	// No data: Steps is nil.
+
+	// Populate ResponseMessages.
+	if ts.responseMessages != nil {
+		// Multi-step: set by streamWithToolLoop goroutine.
+		result.ResponseMessages = ts.responseMessages
+	} else if text != "" || len(result.ToolCalls) > 0 {
+		// Single-step: build a simple assistant message from the result.
+		// Use stepText (text-only, excludes reasoning) for ResponseMessages so reasoning
+		// doesn't get baked into PartText. Pass consolidated reasoning part separately
+		// (matching drainStep: one Part with merged metadata including signatures).
+		var reasoning []provider.Part
+		if ts.reasoningBuf.Len() > 0 || len(ts.reasoningMeta) > 0 {
+			reasoning = []provider.Part{{
+				Type:            provider.PartReasoning,
+				Text:            ts.reasoningBuf.String(),
+				ProviderOptions: ts.reasoningMeta,
+			}}
+		}
+		result.ResponseMessages = buildFinalAssistantMessages(ts.stepText.String(), result.ToolCalls, reasoning)
+	}
 	return result
 }
 
@@ -489,6 +540,7 @@ func buildParams(opts options) provider.GenerateParams {
 
 func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o options, toolMap map[string]Tool) (*TextStream, error) {
 	params := buildParams(o)
+	originalLen := len(params.Messages)
 
 	var timeoutCancel context.CancelFunc
 	if o.Timeout > 0 {
@@ -534,6 +586,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 	// Step 1 succeeded. Goroutine-local copy of start time avoids closure capture.
 	step1Start := start
 	out := make(chan provider.StreamChunk, 64)
+	ts := newTextStream(ctx, out)
 
 	go func() {
 		defer close(out)
@@ -544,6 +597,8 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 		var totalUsage provider.Usage
 		var lastFinishReason provider.FinishReason
 		var lastResponse provider.ResponseMetadata
+		var lastReasoning []provider.Part
+		var steps []StepResult
 		firstStep := true       // true only for step 1 (already have firstResult)
 		stepStart := step1Start // goroutine-local start time per step
 
@@ -596,6 +651,10 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 							f(info)
 						}(fn)
 					}
+					// responseMessages intentionally not set on error , buildResult falls back to
+					// a minimal assistant message from accumulated text. Intermediate tool round-trip
+					// messages are lost. Callers should check Err() and not rely on ResponseMessages
+					// when the stream has errors.
 					provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: err})
 					provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: lastFinishReason, Usage: totalUsage})
 					return
@@ -604,7 +663,10 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 
 			ds := drainStep(ctx, result.Stream, out)
 			if ds.err != nil {
-				// Context cancelled during drain.
+				// responseMessages intentionally not set on error , buildResult falls back to
+				// a minimal assistant message from accumulated text. Intermediate tool round-trip
+				// messages are lost. Callers should check Err() and not rely on ResponseMessages
+				// when the stream has errors.
 				provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: ds.err})
 				provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkFinish, Usage: totalUsage})
 				return
@@ -644,9 +706,11 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 				Response:         ds.response,
 				ProviderMetadata: ds.providerMetadata,
 			}
+			steps = append(steps, stepResult)
 			totalUsage = addUsage(totalUsage, ds.usage)
 			lastFinishReason = ds.finishReason
 			lastResponse = ds.response
+			lastReasoning = ds.reasoning
 
 			// OnStepFinish (recover-wrapped).
 			for _, fn := range o.OnStepFinish {
@@ -697,6 +761,10 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			params.ToolChoice = ""
 		}
 
+		// Set responseMessages before emitting ChunkFinish (safe: ts.buildResult reads
+		// responseMessages only after doneCh closes, which happens after out is closed).
+		ts.responseMessages = buildResponseMessages(params.Messages[originalLen:], steps, lastReasoning)
+
 		// Emit final ChunkFinish with total usage and last step Response metadata.
 		provider.TrySend(ctx, out, provider.StreamChunk{
 			Type:         provider.ChunkFinish,
@@ -706,7 +774,6 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 		})
 	}()
 
-	ts := newTextStream(ctx, out)
 	// OnResponse handled per-step inside the goroutine (ts.onResponse not set).
 	return ts, nil
 }
@@ -798,6 +865,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 	}
 
 	params := buildParams(o)
+	originalLen := len(params.Messages)
 
 	// Build tool lookup for auto loop.
 	toolMap := buildToolMap(o.Tools)
@@ -882,7 +950,9 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		}
 
 		if result.FinishReason != provider.FinishToolCalls || len(result.ToolCalls) == 0 || len(toolMap) == 0 {
-			return buildTextResult(steps, totalUsage), nil
+			tr := buildTextResult(steps, totalUsage)
+			tr.ResponseMessages = buildResponseMessages(params.Messages[originalLen:], steps, nil)
+			return tr, nil
 		}
 
 		// Execute tools and build continuation messages.
@@ -896,7 +966,9 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 	}
 
 	// MaxSteps reached.
-	return buildTextResult(steps, totalUsage), nil
+	tr := buildTextResult(steps, totalUsage)
+	tr.ResponseMessages = buildResponseMessages(params.Messages[originalLen:], steps, nil)
+	return tr, nil
 }
 
 // requestMessages returns msgs with a system message prepended when system is non-empty.
@@ -1115,8 +1187,15 @@ func appendToolRoundTrip(
 	toolMsgs []provider.Message,
 ) []provider.Message {
 	var parts []provider.Part
-	// Reasoning first (before text and tool_use).
-	parts = append(parts, reasoning...)
+	// Reasoning first (before text and tool_use). Clone ProviderOptions to avoid
+	// aliasing between params.Messages and ResponseMessages.
+	for _, r := range reasoning {
+		parts = append(parts, provider.Part{
+			Type:            r.Type,
+			Text:            r.Text,
+			ProviderOptions: maps.Clone(r.ProviderOptions),
+		})
+	}
 	if text != "" {
 		parts = append(parts, provider.Part{Type: provider.PartText, Text: text})
 	}
@@ -1125,8 +1204,8 @@ func appendToolRoundTrip(
 			Type:            provider.PartToolCall,
 			ToolCallID:      tc.ID,
 			ToolName:        tc.Name,
-			ToolInput:       tc.Input,
-			ProviderOptions: tc.Metadata,
+			ToolInput:       append(json.RawMessage(nil), tc.Input...), // clone byte slice
+			ProviderOptions: maps.Clone(tc.Metadata),                  // shallow clone (matches buildFinalAssistantMessages)
 		})
 	}
 	msgs = append(msgs, provider.Message{Role: provider.RoleAssistant, Content: parts})
@@ -1162,6 +1241,89 @@ func buildTextResult(steps []StepResult, totalUsage provider.Usage) *TextResult 
 		ProviderMetadata: last.ProviderMetadata,
 		Sources:          allSources,
 	}
+}
+
+// buildResponseMessages constructs the full ResponseMessages from the tool round-trip
+// messages (delta between original and final params.Messages) and the steps.
+// The delta contains assistant+tool messages for each step where appendToolRoundTrip
+// ran. When the loop exits normally (final step produces text, no tool calls), that
+// final assistant message is NOT in the delta, so we append it. When MaxSteps is
+// exhausted and the last step still has tool calls, appendToolRoundTrip already added
+// the assistant+tool messages for that step , appending again would duplicate.
+//
+// Consecutive tool messages are merged into a single message because some providers
+// require parallel tool results in a single message (not split across multiple messages).
+//
+// The reasoning parameter provides thinking/reasoning parts for the final assistant
+// message (streaming path only; GenerateText passes nil).
+func buildResponseMessages(roundTripDelta []provider.Message, steps []StepResult, reasoning []provider.Part) []provider.Message {
+	if len(steps) == 0 {
+		return nil
+	}
+	last := steps[len(steps)-1]
+	if len(roundTripDelta) == 0 {
+		return buildFinalAssistantMessages(last.Text, last.ToolCalls, reasoning)
+	}
+	msgs := mergeToolMessages(roundTripDelta)
+	if len(last.ToolCalls) > 0 {
+		// MaxSteps exhausted: appendToolRoundTrip already added this step's
+		// assistant + tool messages to the delta. Skip to avoid duplication.
+		// Invariant: len(last.ToolCalls) > 0 implies appendToolRoundTrip ran for the
+		// last step. This holds because the loop only exits early (before appendToolRoundTrip)
+		// when FinishReason != FinishToolCalls or ToolCalls is empty , in both cases
+		// last.ToolCalls would be empty.
+		return msgs
+	}
+	finalMsg := buildFinalAssistantMessages(last.Text, last.ToolCalls, reasoning)
+	msgs = append(msgs, finalMsg...)
+	return msgs
+}
+
+// mergeToolMessages merges consecutive tool-role messages into single messages.
+// The internal tool loop creates one message per tool call, but callers expect
+// parallel tool results grouped in a single message per round-trip.
+func mergeToolMessages(msgs []provider.Message) []provider.Message {
+	out := make([]provider.Message, 0, len(msgs))
+	for _, m := range msgs {
+		if m.Role == provider.RoleTool && len(out) > 0 && out[len(out)-1].Role == provider.RoleTool {
+			// Merge parts into the previous tool message.
+			out[len(out)-1].Content = append(out[len(out)-1].Content, m.Content...)
+		} else {
+			// Clone the message to avoid mutating the original.
+			out = append(out, provider.Message{
+				Role:    m.Role,
+				Content: slices.Clone(m.Content),
+			})
+		}
+	}
+	return out
+}
+
+// buildFinalAssistantMessages builds a single assistant message from text, tool calls,
+// and/or reasoning parts. Returns nil when all inputs are empty.
+// Reasoning parts are placed first so providers that require thinking blocks
+// (e.g. Bedrock with extended thinking) see them before text/tool_use content.
+func buildFinalAssistantMessages(text string, toolCalls []provider.ToolCall, reasoning []provider.Part) []provider.Message {
+	var parts []provider.Part
+	parts = append(parts, reasoning...)
+	if text != "" {
+		parts = append(parts, provider.Part{Type: provider.PartText, Text: text})
+	}
+	for _, tc := range toolCalls {
+		parts = append(parts, provider.Part{
+			Type:       provider.PartToolCall,
+			ToolCallID: tc.ID,
+			ToolName:   tc.Name,
+			ToolInput:  append(json.RawMessage(nil), tc.Input...),
+			// Shallow copy of Metadata , matches the existing appendToolRoundTrip pattern.
+			// Nested map values are shared, not deep-cloned.
+			ProviderOptions: maps.Clone(tc.Metadata),
+		})
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return []provider.Message{{Role: provider.RoleAssistant, Content: parts}}
 }
 
 type drainResult struct {

@@ -2009,6 +2009,124 @@ func TestGenerateObject_EmptyPrompt(t *testing.T) {
 	}
 }
 
+// TestGenerateObject_ResponseMessages_SingleStep verifies that a single-step
+// GenerateObject populates ResponseMessages with one assistant message.
+func TestGenerateObject_ResponseMessages_SingleStep(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         `{"name":"Alice","age":30}`,
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+			}, nil
+		},
+	}
+
+	result, err := GenerateObject[simpleObject](t.Context(), model,
+		WithPrompt("generate a person"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.ResponseMessages) != 1 {
+		t.Fatalf("ResponseMessages len = %d, want 1", len(result.ResponseMessages))
+	}
+	msg := result.ResponseMessages[0]
+	if msg.Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[0].Role = %q, want %q", msg.Role, provider.RoleAssistant)
+	}
+	if len(msg.Content) != 1 || msg.Content[0].Type != provider.PartText {
+		t.Fatalf("ResponseMessages[0].Content = %+v, want single text part", msg.Content)
+	}
+	if msg.Content[0].Text != `{"name":"Alice","age":30}` {
+		t.Errorf("ResponseMessages[0] text = %q, want JSON output", msg.Content[0].Text)
+	}
+}
+
+// TestGenerateObject_ResponseMessages_ToolLoop verifies that a multi-step
+// GenerateObject with tool calls populates ResponseMessages with assistant+tool+assistant messages.
+func TestGenerateObject_ResponseMessages_ToolLoop(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			switch callCount {
+			case 1:
+				return &provider.GenerateResult{
+					FinishReason: provider.FinishToolCalls,
+					ToolCalls: []provider.ToolCall{
+						{ID: "call_1", Name: "get_age", Input: json.RawMessage(`{"name":"Alice"}`)},
+					},
+					Usage: provider.Usage{InputTokens: 10, OutputTokens: 5},
+				}, nil
+			case 2:
+				return &provider.GenerateResult{
+					Text:         `{"name":"Alice","age":30}`,
+					FinishReason: provider.FinishStop,
+					Usage:        provider.Usage{InputTokens: 20, OutputTokens: 8},
+				}, nil
+			default:
+				t.Fatalf("unexpected call count %d", callCount)
+				return nil, nil
+			}
+		},
+	}
+
+	result, err := GenerateObject[simpleObject](t.Context(), model,
+		WithPrompt("generate a person"),
+		WithMaxSteps(2),
+		WithTools(Tool{
+			Name:        "get_age",
+			Description: "get age for a person",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}}}`),
+			Execute: func(_ context.Context, input json.RawMessage) (string, error) {
+				return "30", nil
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Expect: assistant (tool call) + tool (result) + assistant (final text)
+	if len(result.ResponseMessages) != 3 {
+		t.Fatalf("ResponseMessages len = %d, want 3", len(result.ResponseMessages))
+	}
+
+	// First message: assistant with tool call.
+	if result.ResponseMessages[0].Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[0].Role = %q, want assistant", result.ResponseMessages[0].Role)
+	}
+	hasToolCall := false
+	for _, p := range result.ResponseMessages[0].Content {
+		if p.Type == provider.PartToolCall {
+			hasToolCall = true
+		}
+	}
+	if !hasToolCall {
+		t.Error("ResponseMessages[0] missing tool call part")
+	}
+
+	// Second message: tool result.
+	if result.ResponseMessages[1].Role != provider.RoleTool {
+		t.Errorf("ResponseMessages[1].Role = %q, want tool", result.ResponseMessages[1].Role)
+	}
+
+	// Third message: assistant with final text.
+	if result.ResponseMessages[2].Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[2].Role = %q, want assistant", result.ResponseMessages[2].Role)
+	}
+	if len(result.ResponseMessages[2].Content) == 0 || result.ResponseMessages[2].Content[0].Type != provider.PartText {
+		t.Fatal("ResponseMessages[2] missing text part")
+	}
+	if result.ResponseMessages[2].Content[0].Text != `{"name":"Alice","age":30}` {
+		t.Errorf("ResponseMessages[2] text = %q, want JSON output", result.ResponseMessages[2].Content[0].Text)
+	}
+}
+
 func TestStreamObject_EmptyPrompt(t *testing.T) {
 	model := &mockModel{id: "test"}
 	_, err := StreamObject[simpleObject](t.Context(), model)
@@ -2017,5 +2135,52 @@ func TestStreamObject_EmptyPrompt(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "prompt or messages must not be empty") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestStreamObject_ResponseMessages verifies that StreamObject populates
+// ResponseMessages with a single assistant message containing the structured output.
+func TestStreamObject_ResponseMessages(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: `{"name":"Alice","age":30}`},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+			), nil
+		},
+	}
+
+	stream, err := StreamObject[simpleObject](t.Context(), model, WithPrompt("generate a person"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := stream.Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Object.Name != "Alice" {
+		t.Errorf("Object.Name = %q, want %q", result.Object.Name, "Alice")
+	}
+
+	// ResponseMessages should have one assistant message with the JSON text.
+	if len(result.ResponseMessages) != 1 {
+		t.Fatalf("ResponseMessages length = %d, want 1", len(result.ResponseMessages))
+	}
+
+	msg := result.ResponseMessages[0]
+	if msg.Role != provider.RoleAssistant {
+		t.Errorf("ResponseMessages[0].Role = %q, want %q", msg.Role, provider.RoleAssistant)
+	}
+	if len(msg.Content) != 1 {
+		t.Fatalf("ResponseMessages[0].Content length = %d, want 1", len(msg.Content))
+	}
+	if msg.Content[0].Type != provider.PartText {
+		t.Errorf("ResponseMessages[0].Content[0].Type = %q, want %q", msg.Content[0].Type, provider.PartText)
+	}
+	if msg.Content[0].Text != `{"name":"Alice","age":30}` {
+		t.Errorf("ResponseMessages[0].Content[0].Text = %q, want JSON output", msg.Content[0].Text)
 	}
 }
