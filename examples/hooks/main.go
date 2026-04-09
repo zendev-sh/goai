@@ -84,6 +84,8 @@ func main() {
 				}
 			}
 			fmt.Printf("[PERMISSION] Allowed: %s\n", info.ToolName)
+			// Can also override context or input before Execute:
+			//   return goai.BeforeToolExecuteResult{Ctx: customCtx, Input: rewrittenInput}
 			return goai.BeforeToolExecuteResult{} // proceed normally
 		}),
 
@@ -98,7 +100,11 @@ func main() {
 				redacted = strings.ReplaceAll(redacted, "sk-secret-12345", "sk-***REDACTED***")
 				fmt.Printf("[REDACT] Masked secret in %s output\n", info.ToolName)
 			}
-			return goai.AfterToolExecuteResult{Output: redacted}
+			return goai.AfterToolExecuteResult{
+				Output: redacted,
+				// Metadata flows to OnToolCall for observability (e.g., display title).
+				Metadata: map[string]any{"redacted": true},
+			}
 		}),
 
 		// Hook 3: Loop control -- fires before step 2+ only (not step 1).

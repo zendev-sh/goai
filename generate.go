@@ -60,6 +60,11 @@ type TextResult struct {
 	// Sources contains citations/references extracted from the response.
 	Sources []provider.Source
 
+	// StepsExhausted is true when the tool loop terminated because MaxSteps was reached
+	// while the model still requested tool calls. This distinguishes "model finished
+	// naturally" (StepsExhausted=false) from "loop was cut short" (StepsExhausted=true).
+	StepsExhausted bool
+
 	// ResponseMessages contains the assistant and tool messages from all generation steps.
 	// For multi-turn conversations, append these to your message history:
 	//   messages = append(messages, result.ResponseMessages...)
@@ -150,6 +155,8 @@ type TextStream struct {
 
 	// responseMessages is set by the streamWithToolLoop goroutine before doneCh closes.
 	responseMessages []provider.Message
+	// stepsExhausted is set by the streamWithToolLoop goroutine when MaxSteps was reached.
+	stepsExhausted bool
 }
 
 func newTextStream(ctx context.Context, source <-chan provider.StreamChunk) *TextStream {
@@ -472,6 +479,9 @@ func (ts *TextStream) buildResult() *TextResult {
 	}
 	// No data: Steps is nil.
 
+	// Set StepsExhausted from streamWithToolLoop goroutine.
+	result.StepsExhausted = ts.stepsExhausted
+
 	// Populate ResponseMessages.
 	if ts.responseMessages != nil {
 		// Multi-step: set by streamWithToolLoop goroutine.
@@ -599,6 +609,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 		var lastResponse provider.ResponseMetadata
 		var lastReasoning []provider.Part
 		var steps []StepResult
+		var stepsExhausted bool
 		firstStep := true       // true only for step 1 (already have firstResult)
 		stepStart := step1Start // goroutine-local start time per step
 
@@ -776,6 +787,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 
 			// --- Execute tools in parallel ---
 			toolMsgs := executeToolsParallel(ctx, ds.toolCalls, toolMap, step, toolHooks{
+				sequential:      o.SequentialTools,
 				onToolCallStart: o.OnToolCallStart,
 				onToolCall:      o.OnToolCall,
 				onBeforeExecute: o.OnBeforeToolExecute,
@@ -789,8 +801,16 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			params.ToolChoice = ""
 		}
 
+		// StepsExhausted: true only when MaxSteps was reached AND the last step
+		// still had tool calls pending (model wanted to continue but was cut short).
+		// If the last step finished naturally (no tool calls), it's not exhausted.
+		if len(steps) >= o.MaxSteps && len(steps) > 0 && len(steps[len(steps)-1].ToolCalls) > 0 {
+			stepsExhausted = true
+		}
+
 		// Set responseMessages before emitting ChunkFinish (safe: ts.buildResult reads
 		// responseMessages only after doneCh closes, which happens after out is closed).
+		ts.stepsExhausted = stepsExhausted
 		ts.responseMessages = buildResponseMessages(params.Messages[originalLen:], steps, lastReasoning)
 
 		// Emit final ChunkFinish with total usage and last step Response metadata.
@@ -1011,6 +1031,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		// produce a text response on subsequent steps.
 		params.ToolChoice = ""
 		toolMessages := executeToolsParallel(ctx, result.ToolCalls, toolMap, step, toolHooks{
+			sequential:      o.SequentialTools,
 			onToolCallStart: o.OnToolCallStart,
 			onToolCall:      o.OnToolCall,
 			onBeforeExecute: o.OnBeforeToolExecute,
@@ -1021,8 +1042,11 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		params.Messages = appendToolRoundTrip(params.Messages, result.Text, nil, result.ToolCalls, toolMessages)
 	}
 
-	// MaxSteps reached.
+	// MaxSteps reached. This path is only reachable when the last step had tool calls
+	// (if it had no tool calls, the early return at line ~1023 would have fired).
+	// Set StepsExhausted = true -- the model wanted to continue but was cut short.
 	tr := buildTextResult(steps, totalUsage)
+	tr.StepsExhausted = true
 	tr.ResponseMessages = buildResponseMessages(params.Messages[originalLen:], steps, nil)
 	return tr, nil
 }
@@ -1069,8 +1093,9 @@ type toolOutput struct {
 	err    error
 }
 
-// toolHooks bundles the hook functions passed to executeToolsParallel.
+// toolHooks bundles the hook functions and options passed to executeToolsParallel.
 type toolHooks struct {
+	sequential         bool // when true, execute tools one at a time
 	onToolCallStart    []func(ToolCallStartInfo)
 	onToolCall         []func(ToolCallInfo)
 	onBeforeExecute    func(BeforeToolExecuteInfo) BeforeToolExecuteResult
@@ -1129,9 +1154,10 @@ func executeToolsParallel(
 			continue
 		}
 
-		wg.Add(1)
-		go func(i int, tc provider.ToolCall, tool Tool) {
-			defer wg.Done()
+		toolFn := func(i int, tc provider.ToolCall, tool Tool) {
+			if !hooks.sequential {
+				defer wg.Done()
+			}
 			var hookFired bool // true after OnToolCallStart completes (before Execute)
 			var executed bool  // tracks whether Execute ran (for panic recovery)
 			defer func() {
@@ -1232,6 +1258,13 @@ func executeToolsParallel(
 					}
 					return
 				}
+				// Apply hook overrides for non-skipped tools.
+				if beforeResult.Ctx != nil {
+					toolCtx = beforeResult.Ctx
+				}
+				if beforeResult.Input != nil {
+					tc.Input = beforeResult.Input
+				}
 			}
 
 			start := time.Now()
@@ -1239,6 +1272,7 @@ func executeToolsParallel(
 			executed = true
 
 			// OnAfterToolExecute: can modify output (secret scanning, truncation, etc.).
+			var afterMetadata map[string]any
 			if hooks.onAfterExecute != nil {
 				func() {
 					defer func() {
@@ -1262,6 +1296,7 @@ func executeToolsParallel(
 					if afterResult.Error != nil {
 						err = afterResult.Error
 					}
+					afterMetadata = afterResult.Metadata
 				}()
 			}
 
@@ -1284,6 +1319,7 @@ func executeToolsParallel(
 						StartTime:  start,
 						Duration:   time.Since(start),
 						Error:      err,
+						Metadata:   afterMetadata,
 					}
 					var parsed any
 					if err == nil && json.Unmarshal([]byte(output), &parsed) == nil {
@@ -1292,10 +1328,18 @@ func executeToolsParallel(
 					f(info)
 				}(fn)
 			}
-		}(i, tc, tool)
+		}
+		if hooks.sequential {
+			toolFn(i, tc, tool)
+		} else {
+			wg.Add(1)
+			go toolFn(i, tc, tool)
+		}
 	}
 
-	wg.Wait()
+	if !hooks.sequential {
+		wg.Wait()
+	}
 	return buildToolMessages(calls, results)
 }
 

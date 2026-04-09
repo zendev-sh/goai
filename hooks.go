@@ -101,6 +101,11 @@ type ToolCallInfo struct {
 
 	// Error is non-nil if the tool execution failed.
 	Error error
+
+	// Metadata is opaque consumer data set by OnAfterToolExecute.
+	// Nil if no OnAfterToolExecute hook is registered or if the hook
+	// returned nil Metadata.
+	Metadata map[string]any
 }
 
 // WithOnStepFinish adds a callback invoked after each generation step completes.
@@ -203,6 +208,19 @@ type BeforeToolExecuteResult struct {
 	// Result is ignored when Error is set --the LLM receives "error: <message>".
 	// Ignored when Skip is false.
 	Error error
+
+	// Ctx, when non-nil, replaces the context passed to tool.Execute.
+	// Use this to inject per-tool values (auth tokens, session IDs, timeouts)
+	// or to wrap the context with context.WithTimeout for per-tool deadlines.
+	// Nil means use the default toolCtx (parent ctx + tool call ID).
+	// Ignored when Skip is true.
+	Ctx context.Context
+
+	// Input, when non-nil, replaces the tool arguments passed to Execute.
+	// Use for input normalization, PII redaction, or secret injection.
+	// Nil means use the original input from the LLM.
+	// Ignored when Skip is true.
+	Input json.RawMessage
 }
 
 // WithOnBeforeToolExecute adds a callback invoked before each known tool's Execute function.
@@ -250,6 +268,13 @@ type AfterToolExecuteResult struct {
 	// Error, when non-nil, replaces the tool's original error.
 	// A nil value preserves the original error (cannot clear an error to nil).
 	Error error
+
+	// Metadata is opaque consumer data attached to the tool call result.
+	// Passed through to ToolCallInfo.Metadata in the OnToolCall hook.
+	// Use for tool titles, display tags, scanner flags, or any consumer-specific
+	// data that should travel alongside the tool result.
+	// Nil means no metadata.
+	Metadata map[string]any
 }
 
 // WithOnAfterToolExecute adds a callback invoked after each tool's Execute function,

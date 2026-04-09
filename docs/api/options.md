@@ -104,6 +104,18 @@ Set to 2 or higher to enable multi-step auto loops. For example, `WithMaxSteps(2
 
 With `GenerateText`, tools with `Execute` can still be executed at step 1 if the model requests them. With `MaxSteps(1)`, GoAI executes those tools and returns without a follow-up generation step.
 
+### WithSequentialToolExecution
+
+Forces tool calls to execute one at a time instead of in parallel.
+
+```go
+func WithSequentialToolExecution() Option
+```
+
+**Default:** `false` (parallel execution).
+
+Useful when tools share non-thread-safe resources or when execution order matters.
+
 ### WithToolChoice
 
 Controls how the model selects tools.
@@ -341,7 +353,7 @@ goai.WithOnBeforeToolExecute(func(info goai.BeforeToolExecuteInfo) goai.BeforeTo
 })
 ```
 
-Called before each tool's Execute function. Can skip execution for permission checks, rate limiting, or doom-loop detection. `info.Ctx` carries the tool execution context (with tool call ID injected). Only one callback supported (replaces previous). Panic-recovered: a panic skips the tool with an error result.
+Called before each tool's Execute function. Can skip execution for permission checks, rate limiting, or doom-loop detection. `info.Ctx` carries the tool execution context (with tool call ID injected). Only one callback supported (replaces previous). Panic-recovered: a panic skips the tool with an error result. The returned `Ctx` and `Input` fields can override the context and input passed to `Execute` (nil = no override).
 
 ### WithOnAfterToolExecute
 
@@ -352,7 +364,7 @@ goai.WithOnAfterToolExecute(func(info goai.AfterToolExecuteInfo) goai.AfterToolE
 })
 ```
 
-Called after each tool's Execute function, before the result is sent to the LLM. Can modify output for secret scanning, truncation, or transformation. `info.Ctx` carries the same tool execution context as `OnBeforeToolExecute`. Only one callback supported. Panic-recovered: preserves original result.
+Called after each tool's Execute function, before the result is sent to the LLM. Can modify output for secret scanning, truncation, or transformation. `info.Ctx` carries the same tool execution context as `OnBeforeToolExecute`. Only one callback supported. Panic-recovered: preserves original result. The returned `Metadata` field is passed through to `ToolCallInfo.Metadata` for downstream observability hooks.
 
 ### WithOnBeforeStep
 

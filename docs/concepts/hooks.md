@@ -42,7 +42,7 @@ Step 2+ --Transition and next LLM call:
   ... (same pattern as Step 1)
 ```
 
-Note: "step" = one LLM call. Tool execution happens between steps --results feed into the next step's messages.
+Note: "step" = one LLM call. Tool execution happens between steps -- results feed into the next step's messages. By default, tools within a step execute in parallel. Use `WithSequentialToolExecution()` to force one-at-a-time execution when tools share non-thread-safe resources or when execution order matters.
 
 ## Interceptor Hooks
 
@@ -73,6 +73,8 @@ result, _ := goai.GenerateText(ctx, model,
 - `Skip: true, Error: err` --error message sent to LLM (Result is ignored)
 - `Skip: true` (no Result or Error) --empty string sent to LLM
 - Not called for unknown tools (which fail with `ErrUnknownTool`)
+
+The hook can also override the context and input passed to `Execute` via the result's `Ctx` and `Input` fields (nil = no override). This is useful for injecting tracing context or rewriting tool arguments before execution.
 
 **Observability:** When a tool is skipped, `OnToolCall` still fires with `Skipped: true` so observers can track it. `OnAfterToolExecute` does NOT fire for skipped tools.
 

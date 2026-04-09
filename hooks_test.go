@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/zendev-sh/goai/provider"
@@ -1871,5 +1873,291 @@ func TestWithOnRequest_SystemMessageInMessages(t *testing.T) {
 	}
 	if captured.Messages[1].Role != provider.RoleUser {
 		t.Errorf("Messages[1].Role = %q, want user", captured.Messages[1].Role)
+	}
+}
+
+// --- Gap 1: BeforeToolExecuteResult.Ctx replaces tool context ---
+
+type ctxKeyForTest struct{}
+
+func TestOnBeforeToolExecute_CtxOverride(t *testing.T) {
+	// Hook returns a custom Ctx with a marker value.
+	// Tool Execute checks it received the overridden context.
+	var toolSawValue any
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "checker", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "checker",
+			Execute: func(ctx context.Context, _ json.RawMessage) (string, error) {
+				toolSawValue = ctx.Value(ctxKeyForTest{})
+				return "ok", nil
+			},
+		}),
+		WithOnBeforeToolExecute(func(info BeforeToolExecuteInfo) BeforeToolExecuteResult {
+			return BeforeToolExecuteResult{
+				Ctx: context.WithValue(info.Ctx, ctxKeyForTest{}, "overridden"),
+			}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toolSawValue != "overridden" {
+		t.Errorf("tool ctx value = %v, want \"overridden\"", toolSawValue)
+	}
+}
+
+// --- Gap 2: BeforeToolExecuteResult.Input replaces tool input ---
+
+func TestOnBeforeToolExecute_InputOverride(t *testing.T) {
+	// Hook rewrites input from /secret/file to /safe/file.
+	// Tool Execute receives the rewritten input.
+	var receivedInput json.RawMessage
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "read", Input: json.RawMessage(`{"path":"/secret/file"}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "read",
+			Execute: func(_ context.Context, input json.RawMessage) (string, error) {
+				receivedInput = input
+				return "safe contents", nil
+			},
+		}),
+		WithOnBeforeToolExecute(func(info BeforeToolExecuteInfo) BeforeToolExecuteResult {
+			return BeforeToolExecuteResult{
+				Input: json.RawMessage(`{"path":"/safe/file"}`),
+			}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(receivedInput) != `{"path":"/safe/file"}` {
+		t.Errorf("tool received input = %s, want {\"path\":\"/safe/file\"}", receivedInput)
+	}
+}
+
+// --- Gap 3: AfterToolExecuteResult.Metadata flows to ToolCallInfo.Metadata ---
+
+func TestOnAfterToolExecute_Metadata(t *testing.T) {
+	// After hook sets Metadata. OnToolCall receives it.
+	var capturedMeta map[string]any
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "read", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "read",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "file contents", nil
+			},
+		}),
+		WithOnAfterToolExecute(func(_ AfterToolExecuteInfo) AfterToolExecuteResult {
+			return AfterToolExecuteResult{
+				Metadata: map[string]any{"title": "Read file"},
+			}
+		}),
+		WithOnToolCall(func(info ToolCallInfo) {
+			capturedMeta = info.Metadata
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capturedMeta == nil {
+		t.Fatal("OnToolCall Metadata was nil, want non-nil")
+	}
+	if capturedMeta["title"] != "Read file" {
+		t.Errorf("Metadata[\"title\"] = %v, want \"Read file\"", capturedMeta["title"])
+	}
+}
+
+// --- Gap 4: TextResult.StepsExhausted ---
+
+func TestStepsExhausted_True(t *testing.T) {
+	// MaxSteps=2, model always requests tool calls. Result.StepsExhausted should be true.
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			return &provider.GenerateResult{
+				ToolCalls:    []provider.ToolCall{{ID: fmt.Sprintf("tc%d", callCount), Name: "noop", Input: json.RawMessage(`{}`)}},
+				FinishReason: provider.FinishToolCalls,
+			}, nil
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(2),
+		WithTools(Tool{
+			Name:    "noop",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.StepsExhausted {
+		t.Error("StepsExhausted = false, want true (model never stopped requesting tools)")
+	}
+	if callCount != 2 {
+		t.Errorf("callCount = %d, want 2 (both MaxSteps consumed)", callCount)
+	}
+}
+
+func TestStepsExhausted_False(t *testing.T) {
+	// MaxSteps=3, model stops after 2 steps. Result.StepsExhausted should be false.
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "noop", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "noop",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StepsExhausted {
+		t.Error("StepsExhausted = true, want false (model stopped naturally)")
+	}
+}
+
+// --- Gap 5: WithSequentialToolExecution ---
+
+func TestSequentialToolExecution(t *testing.T) {
+	// Structural proof: track max concurrent executions.
+	// With sequential mode, maxConcurrent must be exactly 1.
+	var concurrent atomic.Int32
+	var maxConcurrent atomic.Int32
+	var order []string
+	var mu sync.Mutex
+
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls: []provider.ToolCall{
+						{ID: "tc1", Name: "a", Input: json.RawMessage(`{}`)},
+						{ID: "tc2", Name: "b", Input: json.RawMessage(`{}`)},
+						{ID: "tc3", Name: "c", Input: json.RawMessage(`{}`)},
+					},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	makeTool := func(name string) Tool {
+		return Tool{
+			Name: name,
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				cur := concurrent.Add(1)
+				// Track peak concurrency.
+				for {
+					old := maxConcurrent.Load()
+					if cur <= old || maxConcurrent.CompareAndSwap(old, cur) {
+						break
+					}
+				}
+				// Record execution order.
+				mu.Lock()
+				order = append(order, name)
+				mu.Unlock()
+				concurrent.Add(-1)
+				return name + " done", nil
+			},
+		}
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(makeTool("a"), makeTool("b"), makeTool("c")),
+		WithSequentialToolExecution(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Structural proof: max concurrency must be 1 (sequential).
+	if mc := maxConcurrent.Load(); mc != 1 {
+		t.Errorf("maxConcurrent = %d, want 1 (sequential execution)", mc)
+	}
+	// Order must be deterministic: a, b, c (matches tool call order).
+	if len(order) != 3 {
+		t.Fatalf("order len = %d, want 3", len(order))
+	}
+	expected := []string{"a", "b", "c"}
+	for i, name := range expected {
+		if order[i] != name {
+			t.Errorf("order[%d] = %q, want %q (full order: %v)", i, order[i], name, order)
+		}
 	}
 }
