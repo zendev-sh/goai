@@ -1309,6 +1309,152 @@ func TestOnBeforeStep_GenerateObject(t *testing.T) {
 	}
 }
 
+func TestOnBeforeStep_GenerateObject_Stop(t *testing.T) {
+	// OnBeforeStep Stop=true in GenerateObject terminates the loop.
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "tool", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         `{"name":"stopped","value":0}`,
+				FinishReason: provider.FinishStop,
+			}, nil
+		},
+	}
+
+	type TestObj struct {
+		Name  string `json:"name"`
+		Value int    `json:"value"`
+	}
+
+	_, err := GenerateObject[TestObj](t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(5),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		WithOnBeforeStep(func(_ BeforeStepInfo) BeforeStepResult {
+			return BeforeStepResult{Stop: true}
+		}),
+	)
+	// Stop before step 2 means no structured output produced -- expect MaxSteps error.
+	if err == nil {
+		t.Fatal("expected error when Stop prevents structured output")
+	}
+	if callCount != 1 {
+		t.Errorf("LLM called %d times, want 1 (Stop before step 2)", callCount)
+	}
+}
+
+func TestOnBeforeStep_GenerateObject_InjectMessages(t *testing.T) {
+	// OnBeforeStep injects messages in GenerateObject.
+	callCount := 0
+	var step2MsgCount int
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, p provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "tool", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			step2MsgCount = len(p.Messages)
+			return &provider.GenerateResult{
+				Text:         `{"name":"injected","value":99}`,
+				FinishReason: provider.FinishStop,
+			}, nil
+		},
+	}
+
+	type TestObj struct {
+		Name  string `json:"name"`
+		Value int    `json:"value"`
+	}
+
+	result, err := GenerateObject[TestObj](t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		WithOnBeforeStep(func(_ BeforeStepInfo) BeforeStepResult {
+			return BeforeStepResult{
+				ExtraMessages: []provider.Message{
+					{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "extra context"}}},
+				},
+			}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Object.Name != "injected" {
+		t.Errorf("Object.Name = %q, want injected", result.Object.Name)
+	}
+	// Step 2 should have more messages than step 1 (original + assistant + tool + injected).
+	if step2MsgCount < 4 {
+		t.Errorf("step 2 message count = %d, want >= 4 (with injected message)", step2MsgCount)
+	}
+}
+
+func TestOnBeforeStep_GenerateObject_PanicRecovery(t *testing.T) {
+	// OnBeforeStep panics in GenerateObject -- recovered, step proceeds.
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "tool", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         `{"name":"recovered","value":1}`,
+				FinishReason: provider.FinishStop,
+			}, nil
+		},
+	}
+
+	type TestObj struct {
+		Name  string `json:"name"`
+		Value int    `json:"value"`
+	}
+
+	result, err := GenerateObject[TestObj](t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		WithOnBeforeStep(func(_ BeforeStepInfo) BeforeStepResult {
+			panic("object step panic!")
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if callCount != 2 {
+		t.Errorf("LLM called %d times, want 2 (panic recovered)", callCount)
+	}
+	if result.Object.Name != "recovered" {
+		t.Errorf("Object.Name = %q, want recovered", result.Object.Name)
+	}
+}
+
 // --- Finding 5: Skip=true with both Result and Error set ---
 
 func TestOnBeforeToolExecute_SkipWithResultAndError(t *testing.T) {
