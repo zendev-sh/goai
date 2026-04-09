@@ -1709,6 +1709,140 @@ func TestOnBeforeStep_CtxInheritsFromCaller(t *testing.T) {
 	}
 }
 
+// --- Finding 3: OnAfterToolExecute NOT called when OnBeforeToolExecute skips ---
+
+func TestOnAfterToolExecute_NotCalledWhenSkipped(t *testing.T) {
+	afterCalled := false
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "tool", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		WithOnBeforeToolExecute(func(_ BeforeToolExecuteInfo) BeforeToolExecuteResult {
+			return BeforeToolExecuteResult{Skip: true, Result: "skipped"}
+		}),
+		WithOnAfterToolExecute(func(_ AfterToolExecuteInfo) AfterToolExecuteResult {
+			afterCalled = true
+			return AfterToolExecuteResult{}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterCalled {
+		t.Error("OnAfterToolExecute should NOT be called when OnBeforeToolExecute skips")
+	}
+}
+
+// --- Finding 4: Output " " (space) forces empty through preserve-original rule ---
+
+func TestOnAfterToolExecute_SpaceForcesEmpty(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, p provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "read", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			// Check the tool result is a single space (forced empty).
+			for _, msg := range p.Messages {
+				for _, part := range msg.Content {
+					if part.Type == provider.PartToolResult && part.ToolOutput == " " {
+						return &provider.GenerateResult{Text: "space forced", FinishReason: provider.FinishStop}, nil
+					}
+				}
+			}
+			return &provider.GenerateResult{Text: "unexpected", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name: "read",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+				return "original non-empty output", nil
+			},
+		}),
+		WithOnAfterToolExecute(func(_ AfterToolExecuteInfo) AfterToolExecuteResult {
+			return AfterToolExecuteResult{Output: " "} // space forces "empty"
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "space forced" {
+		t.Errorf("Text = %q, want 'space forced'", result.Text)
+	}
+}
+
+// --- Finding 5: Second callback replaces first for single-callback hooks ---
+
+func TestSingleCallbackReplacesFirst(t *testing.T) {
+	var calledBy string
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "tool", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		// Register first callback.
+		WithOnBeforeToolExecute(func(_ BeforeToolExecuteInfo) BeforeToolExecuteResult {
+			calledBy = "first"
+			return BeforeToolExecuteResult{}
+		}),
+		// Register second -- should replace first.
+		WithOnBeforeToolExecute(func(_ BeforeToolExecuteInfo) BeforeToolExecuteResult {
+			calledBy = "second"
+			return BeforeToolExecuteResult{}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calledBy != "second" {
+		t.Errorf("calledBy = %q, want 'second' (second callback should replace first)", calledBy)
+	}
+}
+
 func TestWithOnRequest_SystemMessageInMessages(t *testing.T) {
 	// requestMessages prepends the system message to RequestInfo.Messages
 	// so hooks always see the full conversation including the system prompt.

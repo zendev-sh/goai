@@ -265,7 +265,7 @@ func WithProviderOptions(opts map[string]any) Option
 
 > **Panic handling:** Hooks use two panic strategies depending on execution context:
 >
-> - **Caller goroutine** (`OnRequest`): panics always propagate to the caller (not recovered).
+> - **Caller goroutine** (`OnRequest`): panics propagate in `GenerateText`, `GenerateObject`, and `StreamText` first step. In `StreamText` step 2+ (goroutine), each callback is individually recovered.
 > - **Mixed** (`OnResponse`): recovered in `GenerateText` and background goroutines; propagates in `GenerateObject`, `StreamObject` error path, and `StreamText` first-step error path. See per-hook docs below.
 > - **Worker goroutines** (`OnStepFinish`, `OnToolCallStart`, `OnToolCall`): panics are recovered, logged to stderr, and do not propagate.
 > - **Interceptor hooks** (`OnBeforeToolExecute`, `OnAfterToolExecute`, `OnBeforeStep`): always panic-recovered with hook-specific behavior (skip tool, preserve result, or proceed normally).
@@ -280,7 +280,7 @@ func WithOnRequest(fn func(RequestInfo)) Option
 
 **Default:** `nil`.
 
-> **Panic behavior:** Panics in `OnRequest` callbacks propagate to the caller and are not recovered.
+> **Panic behavior:** In `GenerateText`, `GenerateObject`, and `StreamText`'s first step, panics propagate to the caller. In `StreamText` step 2+ (goroutine), each callback is individually panic-recovered.
 
 ### WithOnResponse
 

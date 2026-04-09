@@ -45,8 +45,9 @@ type ResponseInfo struct {
 	// FinishReason indicates why generation stopped.
 	FinishReason provider.FinishReason
 
-	// Error is non-nil if the API call itself failed (DoGenerate/DoStream returned error).
-	// Mid-stream errors (ChunkError) are not reported here; use stream.Err().
+	// Error is non-nil if the API call failed (DoGenerate/DoStream returned error)
+	// or if a mid-stream ChunkError occurred (in StreamText/StreamObject consume goroutine).
+	// For streaming success paths, check stream.Err() for the definitive error status.
 	Error error
 
 	// StatusCode is the HTTP status code (0 if not applicable).
@@ -89,7 +90,8 @@ type ToolCallInfo struct {
 	// reflects when the skip decision was made, not execution start.
 	StartTime time.Time
 
-	// Duration is how long the tool execution took.
+	// Duration measures time from before Execute to after OnAfterToolExecute
+	// (if registered). Includes both tool execution and after-hook overhead.
 	Duration time.Duration
 
 	// Skipped is true when the tool execution was skipped by OnBeforeToolExecute.
@@ -111,8 +113,9 @@ func WithOnStepFinish(fn func(StepResult)) Option {
 
 // WithOnRequest adds a callback invoked before each model call.
 // Multiple callbacks are called in registration order.
-// A panic in one callback prevents subsequent callbacks from firing and propagates
-// to the caller in synchronous paths (GenerateText, GenerateObject).
+// In GenerateText, GenerateObject, and StreamText's first step, panics propagate
+// to the caller (a panic in one callback prevents subsequent callbacks from firing).
+// In StreamText step 2+ (goroutine), each callback is individually panic-recovered.
 func WithOnRequest(fn func(RequestInfo)) Option {
 	return func(o *options) { o.OnRequest = append(o.OnRequest, fn) }
 }
