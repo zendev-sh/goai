@@ -102,9 +102,9 @@ type ToolCallInfo struct {
 }
 
 // WithOnStepFinish adds a callback invoked after each generation step completes.
-// Multiple callbacks are called in registration order.
-// In synchronous paths, a panic in one callback prevents subsequent callbacks from firing.
-// In streaming paths, panics are recovered and logged to stderr.
+// Multiple callbacks are called in registration order. Each callback is individually
+// panic-recovered in all paths (GenerateText, StreamText, GenerateObject).
+// A panic in one callback does not prevent subsequent callbacks from firing.
 func WithOnStepFinish(fn func(StepResult)) Option {
 	return func(o *options) { o.OnStepFinish = append(o.OnStepFinish, fn) }
 }

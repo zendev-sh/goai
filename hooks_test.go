@@ -295,6 +295,12 @@ func TestWithOnToolCall_UnknownTool(t *testing.T) {
 	if captured.Error == nil {
 		t.Error("expected error for unknown tool")
 	}
+	if !captured.StartTime.IsZero() {
+		t.Error("StartTime should be zero for unknown tools")
+	}
+	if captured.Duration != 0 {
+		t.Error("Duration should be zero for unknown tools")
+	}
 }
 
 func TestHooks_MultipleSteps(t *testing.T) {
@@ -1119,6 +1125,9 @@ func TestOnBeforeToolExecute_SkipFiresOnToolCallWithSkipped(t *testing.T) {
 	}
 	if captured[0].StartTime.IsZero() {
 		t.Error("StartTime should be non-zero")
+	}
+	if captured[0].Duration != 0 {
+		t.Errorf("Duration = %v, want 0 for skipped tools", captured[0].Duration)
 	}
 }
 
