@@ -64,6 +64,11 @@ type options struct {
 	// MaxSteps is the maximum number of auto tool loop iterations (default 1 = no loop).
 	MaxSteps int
 
+	// SequentialTools, when true, forces tool calls to execute one at a time
+	// instead of in parallel. Useful when tools share non-thread-safe resources
+	// or when execution order matters.
+	SequentialTools bool
+
 	// MaxRetries is the retry count for transient errors (default 2).
 	MaxRetries int
 
@@ -201,6 +206,12 @@ func WithSeed(s int) Option {
 // WithStopSequences sets stop sequences.
 func WithStopSequences(seqs ...string) Option {
 	return func(o *options) { o.StopSequences = seqs }
+}
+
+// WithSequentialToolExecution forces tool calls to execute one at a time
+// instead of in parallel. Useful when tools share non-thread-safe resources.
+func WithSequentialToolExecution() Option {
+	return func(o *options) { o.SequentialTools = true }
 }
 
 // WithMaxSteps sets the maximum auto tool loop iterations.

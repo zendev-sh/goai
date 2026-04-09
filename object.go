@@ -415,6 +415,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 		// produce structured output on subsequent steps.
 		params.ToolChoice = ""
 		toolMessages := executeToolsParallel(ctx, result.ToolCalls, toolMap, step, toolHooks{
+			sequential:      o.SequentialTools,
 			onToolCallStart: o.OnToolCallStart,
 			onToolCall:      o.OnToolCall,
 			onBeforeExecute: o.OnBeforeToolExecute,

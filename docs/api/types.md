@@ -28,6 +28,7 @@ type TextResult struct {
     ProviderMetadata map[string]map[string]any    // Provider-specific response data.
     Sources          []provider.Source            // Citations/references from all steps.
     ResponseMessages []provider.Message           // Assistant + tool messages for multi-turn continuation.
+    StepsExhausted   bool                         // True when MaxSteps was reached with tool calls still pending.
 }
 ```
 
@@ -244,6 +245,7 @@ type ToolCallInfo struct {
     Duration     time.Duration   // How long execution took.
     Skipped      bool            // True when execution was skipped by OnBeforeToolExecute.
     Error        error           // Non-nil if execution failed.
+    Metadata     map[string]any  // Consumer metadata from OnAfterToolExecute (nil if not set).
 }
 ```
 
@@ -280,9 +282,11 @@ Controls what happens after `OnBeforeToolExecute` runs.
 
 ```go
 type BeforeToolExecuteResult struct {
-    Skip   bool   // Prevent Execute from running; use Result as synthetic output.
-    Result string // Synthetic tool output when Skip is true.
-    Error  error  // Tool error when Skip is true.
+    Skip   bool            // Prevent Execute from running; use Result as synthetic output.
+    Result string          // Synthetic tool output when Skip is true.
+    Error  error           // Tool error when Skip is true.
+    Ctx    context.Context // Replaces tool context (nil = use default).
+    Input  json.RawMessage // Replaces tool input (nil = use original).
 }
 ```
 
@@ -308,8 +312,9 @@ Controls tool output modification before it reaches the LLM.
 
 ```go
 type AfterToolExecuteResult struct {
-    Output string // Replaces tool output (empty = preserve original).
-    Error  error  // Replaces tool error (nil = preserve original).
+    Output   string         // Replaces tool output (empty = preserve original).
+    Error    error          // Replaces tool error (nil = preserve original).
+    Metadata map[string]any // Opaque consumer data, passed to ToolCallInfo.Metadata.
 }
 ```
 
