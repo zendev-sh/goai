@@ -1797,7 +1797,7 @@ func TestExecuteToolsParallel_ContextCancelled(t *testing.T) {
 
 	// With parallel execution, all tools run via goroutines and complete.
 	// The cancelled context is passed to Execute, but the tool ignores it.
-	msgs := executeToolsParallel(ctx, calls, toolMap, 1, nil, nil)
+	msgs := executeToolsParallel(ctx, calls, toolMap, 1, toolHooks{})
 	if len(msgs) != 2 {
 		t.Errorf("expected 2 messages (parallel execution completes all), got %d", len(msgs))
 	}

@@ -205,6 +205,7 @@ Passed to the `OnRequest` hook before a generation call.
 
 ```go
 type RequestInfo struct {
+    Ctx          context.Context    // Caller's context (for span parenting in observability hooks).
     Model        string             // Model ID.
     MessageCount int                // Number of messages in the request.
     ToolCount    int                // Number of tools available.
@@ -241,6 +242,7 @@ type ToolCallInfo struct {
     OutputObject any             // Parsed JSON value of Output when the tool returned valid JSON; nil otherwise.
     StartTime    time.Time       // When the tool execution began.
     Duration     time.Duration   // How long execution took.
+    Skipped      bool            // True when execution was skipped by OnBeforeToolExecute.
     Error        error           // Non-nil if execution failed.
 }
 ```
@@ -255,6 +257,79 @@ type ToolCallStartInfo struct {
     ToolName   string          // Name of the tool called.
     Step       int             // 1-based index of the generation step in which this tool was called.
     Input      json.RawMessage // Raw JSON arguments passed to the tool.
+}
+```
+
+### BeforeToolExecuteInfo
+
+Passed to the `OnBeforeToolExecute` hook before a tool's Execute function runs.
+
+```go
+type BeforeToolExecuteInfo struct {
+    ToolCallID string          // Provider-assigned identifier.
+    ToolName   string          // Name of the tool about to execute.
+    Step       int             // 1-based step index.
+    Input      json.RawMessage // Raw JSON arguments.
+}
+```
+
+### BeforeToolExecuteResult
+
+Controls what happens after `OnBeforeToolExecute` runs.
+
+```go
+type BeforeToolExecuteResult struct {
+    Skip   bool   // Prevent Execute from running; use Result as synthetic output.
+    Result string // Synthetic tool output when Skip is true.
+    Error  error  // Tool error when Skip is true.
+}
+```
+
+### AfterToolExecuteInfo
+
+Passed to the `OnAfterToolExecute` hook after a tool's Execute function completes.
+
+```go
+type AfterToolExecuteInfo struct {
+    ToolCallID string          // Provider-assigned identifier.
+    ToolName   string          // Name of the tool that executed.
+    Step       int             // 1-based step index.
+    Input      json.RawMessage // Raw JSON arguments.
+    Output     string          // Tool output.
+    Error      error           // Non-nil if Execute failed.
+}
+```
+
+### AfterToolExecuteResult
+
+Controls tool output modification before it reaches the LLM.
+
+```go
+type AfterToolExecuteResult struct {
+    Output string // Replaces tool output (empty = preserve original).
+    Error  error  // Replaces tool error (nil = preserve original).
+}
+```
+
+### BeforeStepInfo
+
+Passed to the `OnBeforeStep` hook before each LLM call in a multi-step tool loop (step 2+).
+
+```go
+type BeforeStepInfo struct {
+    Step     int                // 1-based step number.
+    Messages []provider.Message // Current conversation history (shallow clone).
+}
+```
+
+### BeforeStepResult
+
+Controls behavior before the next LLM call.
+
+```go
+type BeforeStepResult struct {
+    ExtraMessages []provider.Message // Appended before LLM call. Ignored when Stop is true.
+    Stop          bool               // Terminate tool loop. ExtraMessages are ignored.
 }
 ```
 

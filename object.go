@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -303,6 +304,28 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 	var totalUsage provider.Usage
 
 	for step := 1; step <= o.MaxSteps; step++ {
+		// OnBeforeStep: step 2+ only (step 1 has no prior tool results to act on).
+		if step > 1 && o.OnBeforeStep != nil {
+			var bsr BeforeStepResult
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Fprintf(os.Stderr, "goai: recovered panic in OnBeforeStep hook: %v\n", r)
+					}
+				}()
+				bsr = o.OnBeforeStep(BeforeStepInfo{
+					Step:     step,
+					Messages: slices.Clone(params.Messages),
+				})
+			}()
+			if bsr.Stop {
+				break
+			}
+			if len(bsr.ExtraMessages) > 0 {
+				params.Messages = append(params.Messages, bsr.ExtraMessages...)
+			}
+		}
+
 		for _, fn := range o.OnRequest {
 			fn(RequestInfo{
 				Ctx:          ctx,
@@ -390,7 +413,12 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 		// Clear tool_choice after the first tool step so the model can freely
 		// produce structured output on subsequent steps.
 		params.ToolChoice = ""
-		toolMessages := executeToolsParallel(ctx, result.ToolCalls, toolMap, step, o.OnToolCallStart, o.OnToolCall)
+		toolMessages := executeToolsParallel(ctx, result.ToolCalls, toolMap, step, toolHooks{
+			onToolCallStart: o.OnToolCallStart,
+			onToolCall:      o.OnToolCall,
+			onBeforeExecute: o.OnBeforeToolExecute,
+			onAfterExecute:  o.OnAfterToolExecute,
+		})
 		params.Messages = appendToolRoundTrip(params.Messages, result.Text, nil, result.ToolCalls, toolMessages)
 	}
 
