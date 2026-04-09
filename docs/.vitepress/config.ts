@@ -123,6 +123,7 @@ export default defineConfig({
             { text: 'Multi-Turn Conversations', link: '/concepts/multi-turn' },
             { text: 'Prompt Caching', link: '/concepts/prompt-caching' },
             { text: 'Observability', link: '/concepts/observability' },
+            { text: 'Lifecycle Hooks', link: '/concepts/hooks' },
           ],
         },
         {

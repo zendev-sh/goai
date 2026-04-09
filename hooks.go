@@ -161,6 +161,11 @@ func WithOnToolCallStart(fn func(ToolCallStartInfo)) Option {
 // BeforeToolExecuteInfo is passed to the OnBeforeToolExecute hook before a tool's
 // Execute function runs. The hook can inspect the call and optionally skip execution.
 type BeforeToolExecuteInfo struct {
+	// Ctx is the tool execution context (with tool call ID injected).
+	// Use this for passing cancellation, timeouts, or tracing context
+	// to any work done inside the hook (e.g., spawning child agents).
+	Ctx context.Context
+
 	// ToolCallID is the provider-assigned identifier for this tool call.
 	ToolCallID string
 
@@ -210,6 +215,9 @@ func WithOnBeforeToolExecute(fn func(BeforeToolExecuteInfo) BeforeToolExecuteRes
 // AfterToolExecuteInfo is passed to the OnAfterToolExecute hook after a tool's
 // Execute function completes, before the result is sent to the LLM.
 type AfterToolExecuteInfo struct {
+	// Ctx is the tool execution context (with tool call ID injected).
+	Ctx context.Context
+
 	// ToolCallID is the provider-assigned identifier for this tool call.
 	ToolCallID string
 
@@ -255,6 +263,10 @@ func WithOnAfterToolExecute(fn func(AfterToolExecuteInfo) AfterToolExecuteResult
 // BeforeStepInfo is passed to the OnBeforeStep hook before each LLM call in
 // a multi-step tool loop (step 2+). It is NOT called before step 1.
 type BeforeStepInfo struct {
+	// Ctx is the generation context. Use for cancellation checks or
+	// passing context to external calls (e.g., inbox drain, context fetch).
+	Ctx context.Context
+
 	// Step is the 1-based step number about to execute.
 	Step int
 

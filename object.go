@@ -314,6 +314,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 					}
 				}()
 				bsr = o.OnBeforeStep(BeforeStepInfo{
+					Ctx:      ctx,
 					Step:     step,
 					Messages: slices.Clone(params.Messages),
 				})

@@ -620,6 +620,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 							}
 						}()
 						bsr = o.OnBeforeStep(BeforeStepInfo{
+							Ctx:      ctx,
 							Step:     step,
 							Messages: slices.Clone(params.Messages),
 						})
@@ -911,6 +912,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 					}
 				}()
 				bsr = o.OnBeforeStep(BeforeStepInfo{
+					Ctx:      ctx,
 					Step:     step,
 					Messages: slices.Clone(params.Messages),
 				})
@@ -1177,6 +1179,9 @@ func executeToolsParallel(
 				return
 			}
 
+			// Create tool context early so both hooks and Execute share it.
+			toolCtx := context.WithValue(ctx, toolCallIDKey{}, tc.ID)
+
 			// OnBeforeToolExecute: can skip execution (permission, doom loop, etc.).
 			if hooks.onBeforeExecute != nil {
 				var beforeResult BeforeToolExecuteResult
@@ -1191,6 +1196,7 @@ func executeToolsParallel(
 						}
 					}()
 					beforeResult = hooks.onBeforeExecute(BeforeToolExecuteInfo{
+						Ctx:        toolCtx,
 						ToolCallID: tc.ID,
 						ToolName:   tc.Name,
 						Step:       step,
@@ -1229,7 +1235,6 @@ func executeToolsParallel(
 			}
 
 			start := time.Now()
-			toolCtx := context.WithValue(ctx, toolCallIDKey{}, tc.ID)
 			output, err := tool.Execute(toolCtx, tc.Input)
 			executed = true
 
@@ -1243,6 +1248,7 @@ func executeToolsParallel(
 						}
 					}()
 					afterResult := hooks.onAfterExecute(AfterToolExecuteInfo{
+						Ctx:        toolCtx,
 						ToolCallID: tc.ID,
 						ToolName:   tc.Name,
 						Step:       step,
