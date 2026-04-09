@@ -1472,9 +1472,11 @@ func TestOnBeforeToolExecute_SkipWithResultAndError(t *testing.T) {
 				}, nil
 			}
 			// Verify the tool result is the error, not the Result string.
+			foundToolResult := false
 			for _, msg := range p.Messages {
 				for _, part := range msg.Content {
 					if part.Type == provider.PartToolResult {
+						foundToolResult = true
 						if part.ToolOutput == "error: access denied" {
 							return &provider.GenerateResult{Text: "error wins", FinishReason: provider.FinishStop}, nil
 						}
@@ -1483,6 +1485,9 @@ func TestOnBeforeToolExecute_SkipWithResultAndError(t *testing.T) {
 						}
 					}
 				}
+			}
+			if !foundToolResult {
+				t.Error("no tool result message found in step 2 -- tool result was dropped entirely")
 			}
 			return &provider.GenerateResult{Text: "unexpected", FinishReason: provider.FinishStop}, nil
 		},
@@ -1648,7 +1653,10 @@ func TestOnAfterToolExecute_CtxHasToolCallID(t *testing.T) {
 	}
 }
 
-func TestOnBeforeStep_CtxNotNil(t *testing.T) {
+type ctxKey struct{}
+
+func TestOnBeforeStep_CtxInheritsFromCaller(t *testing.T) {
+	// Verify info.Ctx inherits from the caller's context (not context.Background).
 	var capturedCtx context.Context
 	callCount := 0
 	model := &mockModel{
@@ -1665,7 +1673,10 @@ func TestOnBeforeStep_CtxNotNil(t *testing.T) {
 		},
 	}
 
-	_, err := GenerateText(t.Context(), model,
+	// Inject a custom value into the caller context.
+	callerCtx := context.WithValue(t.Context(), ctxKey{}, "caller-marker")
+
+	_, err := GenerateText(callerCtx, model,
 		WithPrompt("go"),
 		WithMaxSteps(3),
 		WithTools(Tool{
@@ -1682,6 +1693,10 @@ func TestOnBeforeStep_CtxNotNil(t *testing.T) {
 	}
 	if capturedCtx == nil {
 		t.Fatal("BeforeStepInfo.Ctx should not be nil")
+	}
+	// Verify the context inherits from the caller (not a fresh context.Background).
+	if v, ok := capturedCtx.Value(ctxKey{}).(string); !ok || v != "caller-marker" {
+		t.Error("BeforeStepInfo.Ctx should inherit from caller context, but custom value not found")
 	}
 }
 
