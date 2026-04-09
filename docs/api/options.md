@@ -341,7 +341,7 @@ goai.WithOnBeforeToolExecute(func(info goai.BeforeToolExecuteInfo) goai.BeforeTo
 })
 ```
 
-Called before each tool's Execute function. Can skip execution for permission checks, rate limiting, or doom-loop detection. Only one callback supported (replaces previous). Panic-recovered: a panic skips the tool with an error result.
+Called before each tool's Execute function. Can skip execution for permission checks, rate limiting, or doom-loop detection. `info.Ctx` carries the tool execution context (with tool call ID injected). Only one callback supported (replaces previous). Panic-recovered: a panic skips the tool with an error result.
 
 ### WithOnAfterToolExecute
 
@@ -352,7 +352,7 @@ goai.WithOnAfterToolExecute(func(info goai.AfterToolExecuteInfo) goai.AfterToolE
 })
 ```
 
-Called after each tool's Execute function, before the result is sent to the LLM. Can modify output for secret scanning, truncation, or transformation. Only one callback supported. Panic-recovered: preserves original result.
+Called after each tool's Execute function, before the result is sent to the LLM. Can modify output for secret scanning, truncation, or transformation. `info.Ctx` carries the same tool execution context as `OnBeforeToolExecute`. Only one callback supported. Panic-recovered: preserves original result.
 
 ### WithOnBeforeStep
 
@@ -363,7 +363,7 @@ goai.WithOnBeforeStep(func(info goai.BeforeStepInfo) goai.BeforeStepResult {
 })
 ```
 
-Called before each LLM call in a multi-step tool loop (step 2+ only, not step 1). Can inject additional messages or stop the loop early. Only one callback supported. Panic-recovered: a panic is logged and the step proceeds normally.
+Called before each LLM call in a multi-step tool loop (step 2+ only, not step 1). Can inject additional messages or stop the loop early. `info.Ctx` carries the generation context for cancellation checks or external calls. Only one callback supported. Panic-recovered: a panic is logged and the step proceeds normally.
 
 > **Panic handling note:** Interceptor hooks (`OnBeforeToolExecute`, `OnAfterToolExecute`, `OnBeforeStep`): always panic-recovered with hook-specific behavior (skip tool, preserve result, or proceed normally).
 

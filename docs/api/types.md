@@ -266,6 +266,7 @@ Passed to the `OnBeforeToolExecute` hook before a tool's Execute function runs.
 
 ```go
 type BeforeToolExecuteInfo struct {
+    Ctx        context.Context // Tool execution context (with tool call ID).
     ToolCallID string          // Provider-assigned identifier.
     ToolName   string          // Name of the tool about to execute.
     Step       int             // 1-based step index.
@@ -291,6 +292,7 @@ Passed to the `OnAfterToolExecute` hook after a tool's Execute function complete
 
 ```go
 type AfterToolExecuteInfo struct {
+    Ctx        context.Context // Tool execution context (with tool call ID).
     ToolCallID string          // Provider-assigned identifier.
     ToolName   string          // Name of the tool that executed.
     Step       int             // 1-based step index.
@@ -317,6 +319,7 @@ Passed to the `OnBeforeStep` hook before each LLM call in a multi-step tool loop
 
 ```go
 type BeforeStepInfo struct {
+    Ctx      context.Context    // Generation context (for cancellation, tracing).
     Step     int                // 1-based step number.
     Messages []provider.Message // Current conversation history (shallow clone).
 }

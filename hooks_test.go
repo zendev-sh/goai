@@ -1565,6 +1565,126 @@ func TestOnBeforeStep_StopIgnoresExtraMessages(t *testing.T) {
 	}
 }
 
+// --- Ctx field tests ---
+
+func TestOnBeforeToolExecute_CtxHasToolCallID(t *testing.T) {
+	// Verify info.Ctx is non-nil and carries the tool call ID.
+	var capturedCtx context.Context
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc-abc", Name: "read", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "read",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		WithOnBeforeToolExecute(func(info BeforeToolExecuteInfo) BeforeToolExecuteResult {
+			capturedCtx = info.Ctx
+			return BeforeToolExecuteResult{}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capturedCtx == nil {
+		t.Fatal("BeforeToolExecuteInfo.Ctx should not be nil")
+	}
+	if id := ToolCallIDFromContext(capturedCtx); id != "tc-abc" {
+		t.Errorf("ToolCallIDFromContext = %q, want tc-abc", id)
+	}
+}
+
+func TestOnAfterToolExecute_CtxHasToolCallID(t *testing.T) {
+	var capturedCtx context.Context
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc-xyz", Name: "read", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "read",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		WithOnAfterToolExecute(func(info AfterToolExecuteInfo) AfterToolExecuteResult {
+			capturedCtx = info.Ctx
+			return AfterToolExecuteResult{}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capturedCtx == nil {
+		t.Fatal("AfterToolExecuteInfo.Ctx should not be nil")
+	}
+	if id := ToolCallIDFromContext(capturedCtx); id != "tc-xyz" {
+		t.Errorf("ToolCallIDFromContext = %q, want tc-xyz", id)
+	}
+}
+
+func TestOnBeforeStep_CtxNotNil(t *testing.T) {
+	var capturedCtx context.Context
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "tool", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		WithOnBeforeStep(func(info BeforeStepInfo) BeforeStepResult {
+			capturedCtx = info.Ctx
+			return BeforeStepResult{}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capturedCtx == nil {
+		t.Fatal("BeforeStepInfo.Ctx should not be nil")
+	}
+}
+
 func TestWithOnRequest_SystemMessageInMessages(t *testing.T) {
 	// requestMessages prepends the system message to RequestInfo.Messages
 	// so hooks always see the full conversation including the system prompt.

@@ -48,7 +48,7 @@ Note: "step" = one LLM call. Tool execution happens between steps --results feed
 
 ### OnBeforeToolExecute --Permission Gate
 
-Runs before each tool's `Execute` function. Can skip execution entirely.
+Runs before each tool's `Execute` function. Can skip execution entirely. The `info.Ctx` carries the tool execution context (with tool call ID), useful for spawning child agents or passing tracing context.
 
 ```go
 result, _ := goai.GenerateText(ctx, model,
@@ -78,7 +78,7 @@ result, _ := goai.GenerateText(ctx, model,
 
 ### OnAfterToolExecute --Output Transformation
 
-Runs after each tool's `Execute` function, before the result reaches the LLM. Can modify the output.
+Runs after each tool's `Execute` function, before the result reaches the LLM. Can modify the output. The `info.Ctx` carries the same tool execution context as `OnBeforeToolExecute`.
 
 ```go
 goai.WithOnAfterToolExecute(func(info goai.AfterToolExecuteInfo) goai.AfterToolExecuteResult {
@@ -102,7 +102,7 @@ goai.WithOnAfterToolExecute(func(info goai.AfterToolExecuteInfo) goai.AfterToolE
 
 ### OnBeforeStep --Loop Control
 
-Runs before each LLM call in a multi-step tool loop (step 2+ only, not step 1). Can inject messages or stop the loop.
+Runs before each LLM call in a multi-step tool loop (step 2+ only, not step 1). Can inject messages or stop the loop. The `info.Ctx` carries the generation context for cancellation checks or external calls.
 
 ```go
 goai.WithOnBeforeStep(func(info goai.BeforeStepInfo) goai.BeforeStepResult {
