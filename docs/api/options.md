@@ -265,8 +265,10 @@ func WithProviderOptions(opts map[string]any) Option
 
 > **Panic handling:** Hooks use two panic strategies depending on execution context:
 >
-> - **Caller goroutine** (`OnRequest`, `OnResponse`): panics propagate to the caller (not recovered).
+> - **Caller goroutine** (`OnRequest`): panics always propagate to the caller (not recovered).
+> - **Mixed** (`OnResponse`): recovered in `GenerateText` and background goroutines; propagates in `GenerateObject`, `StreamObject` error path, and `StreamText` first-step error path. See per-hook docs below.
 > - **Worker goroutines** (`OnStepFinish`, `OnToolCallStart`, `OnToolCall`): panics are recovered, logged to stderr, and do not propagate.
+> - **Interceptor hooks** (`OnBeforeToolExecute`, `OnAfterToolExecute`, `OnBeforeStep`): always panic-recovered with hook-specific behavior (skip tool, preserve result, or proceed normally).
 
 ### WithOnRequest
 
@@ -290,7 +292,7 @@ func WithOnResponse(fn func(ResponseInfo)) Option
 
 **Default:** `nil`.
 
-> **Panic behavior:** Panics in `OnResponse` callbacks propagate to the caller and are not recovered.
+> **Panic behavior:** In `GenerateText`, all `StreamText` success paths, and `StreamObject` (success path), panics are individually recovered and logged to stderr. In `GenerateObject`, `StreamObject` (error path), and `StreamText`'s first-step error path, panics propagate to the caller.
 
 ### WithOnStepFinish
 
@@ -329,6 +331,41 @@ func WithOnToolCall(fn func(ToolCallInfo)) Option
 > **Note:** When multiple tools execute in a single step, OnToolCall callbacks fire concurrently from separate goroutines. Order is non-deterministic.
 
 > **Panic behavior:** Panics are recovered and logged to stderr.
+
+### WithOnBeforeToolExecute
+
+```go
+goai.WithOnBeforeToolExecute(func(info goai.BeforeToolExecuteInfo) goai.BeforeToolExecuteResult {
+    // Return Skip: true to prevent tool execution
+    return goai.BeforeToolExecuteResult{}
+})
+```
+
+Called before each tool's Execute function. Can skip execution for permission checks, rate limiting, or doom-loop detection. Only one callback supported (replaces previous). Panic-recovered: a panic skips the tool with an error result.
+
+### WithOnAfterToolExecute
+
+```go
+goai.WithOnAfterToolExecute(func(info goai.AfterToolExecuteInfo) goai.AfterToolExecuteResult {
+    // Return modified Output to transform tool results
+    return goai.AfterToolExecuteResult{}
+})
+```
+
+Called after each tool's Execute function, before the result is sent to the LLM. Can modify output for secret scanning, truncation, or transformation. Only one callback supported. Panic-recovered: preserves original result.
+
+### WithOnBeforeStep
+
+```go
+goai.WithOnBeforeStep(func(info goai.BeforeStepInfo) goai.BeforeStepResult {
+    // Return ExtraMessages to inject, or Stop: true to end loop
+    return goai.BeforeStepResult{}
+})
+```
+
+Called before each LLM call in a multi-step tool loop (step 2+ only, not step 1). Can inject additional messages or stop the loop early. Only one callback supported. Panic-recovered: a panic is logged and the step proceeds normally.
+
+> **Panic handling note:** Interceptor hooks (`OnBeforeToolExecute`, `OnAfterToolExecute`, `OnBeforeStep`): always panic-recovered with hook-specific behavior (skip tool, preserve result, or proceed normally).
 
 ---
 

@@ -188,7 +188,7 @@ User calls goai.GenerateText(ctx, model, opts...)
   │   │       └─ Return {Text, ToolCalls, Usage, FinishReason, Sources}
   │   ├─ OnResponse callback
   │   ├─ if FinishReason == ToolCalls:
-  │   │   ├─ executeToolsParallel(ctx, calls, toolMap, step, OnToolCallStart, OnToolCall)
+  │   │   ├─ executeToolsParallel(ctx, calls, toolMap, step, toolHooks{...})
   │   │   └─ appendToolRoundTrip(msgs, text, toolCalls, toolMsgs)
   │   └─ else: return buildTextResult(steps, totalUsage)
   │
@@ -217,7 +217,7 @@ User calls goai.StreamText(ctx, model, opts...)
   │       │   │   ├─ model.DoStream(ctx, params)
   │       │   │   ├─ drainStep: forward chunks to unified output channel
   │       │   │   ├─ if FinishReason == ToolCalls:
-  │       │   │   │   ├─ executeToolsParallel(ctx, calls, toolMap, step, OnToolCallStart, OnToolCall)
+  │       │   │   │   ├─ executeToolsParallel(ctx, calls, toolMap, step, toolHooks{...})
   │       │   │   │   └─ appendToolRoundTrip(msgs, text, toolCalls, toolMsgs)
   │       │   │   └─ else: break
   │       │   └─ close unified output channel

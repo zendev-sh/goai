@@ -239,6 +239,10 @@ func (h *Hooks) Run() []goai.Option {
 
 	// OnToolCallStart is intentionally not registered here because
 	// OnToolCall.StartTime already provides accurate timing for tool spans.
+
+	// TODO: Register OnBeforeToolExecute, OnAfterToolExecute, and OnBeforeStep hooks
+	// to annotate spans with tool skip status, output modifications, and loop termination.
+
 	opts := []goai.Option{
 		goai.WithOnRequest(func(info goai.RequestInfo) {
 			input := messagesToInput(info.Messages)

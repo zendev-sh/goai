@@ -166,6 +166,9 @@ func run(cfg config) []goai.Option {
 	// end is declared before opts so WithOnStepFinish can reference it.
 	var end func(text string, finishReason provider.FinishReason)
 
+	// TODO: Register OnBeforeToolExecute, OnAfterToolExecute, and OnBeforeStep hooks
+	// to annotate spans with tool skip status, output modifications, and loop termination.
+
 	opts := []goai.Option{
 		goai.WithOnRequest(func(info goai.RequestInfo) {
 			step++

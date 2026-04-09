@@ -610,6 +610,28 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 				result = firstResult
 				firstStep = false
 			} else {
+				// Steps 2+: OnBeforeStep hook (can inject messages or stop loop).
+				if o.OnBeforeStep != nil {
+					var bsr BeforeStepResult
+					func() {
+						defer func() {
+							if r := recover(); r != nil {
+								fmt.Fprintf(os.Stderr, "goai: recovered panic in OnBeforeStep hook: %v\n", r)
+							}
+						}()
+						bsr = o.OnBeforeStep(BeforeStepInfo{
+							Step:     step,
+							Messages: slices.Clone(params.Messages),
+						})
+					}()
+					if bsr.Stop {
+						break
+					}
+					if len(bsr.ExtraMessages) > 0 {
+						params.Messages = append(params.Messages, bsr.ExtraMessages...)
+					}
+				}
+
 				// Steps 2+: DoStream inside goroutine.
 				for _, fn := range o.OnRequest {
 					func(f func(RequestInfo)) {
@@ -752,7 +774,12 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			}
 
 			// --- Execute tools in parallel ---
-			toolMsgs := executeToolsParallel(ctx, ds.toolCalls, toolMap, step, o.OnToolCallStart, o.OnToolCall)
+			toolMsgs := executeToolsParallel(ctx, ds.toolCalls, toolMap, step, toolHooks{
+				onToolCallStart: o.OnToolCallStart,
+				onToolCall:      o.OnToolCall,
+				onBeforeExecute: o.OnBeforeToolExecute,
+				onAfterExecute:  o.OnAfterToolExecute,
+			})
 
 			// --- Append messages for next step ---
 			params.Messages = appendToolRoundTrip(params.Messages, ds.text, ds.reasoning, ds.toolCalls, toolMsgs)
@@ -874,6 +901,28 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 	var totalUsage provider.Usage
 
 	for step := 1; step <= o.MaxSteps; step++ {
+		// OnBeforeStep: step 2+ only (step 1 has no prior tool results to act on).
+		if step > 1 && o.OnBeforeStep != nil {
+			var bsr BeforeStepResult
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Fprintf(os.Stderr, "goai: recovered panic in OnBeforeStep hook: %v\n", r)
+					}
+				}()
+				bsr = o.OnBeforeStep(BeforeStepInfo{
+					Step:     step,
+					Messages: slices.Clone(params.Messages),
+				})
+			}()
+			if bsr.Stop {
+				break
+			}
+			if len(bsr.ExtraMessages) > 0 {
+				params.Messages = append(params.Messages, bsr.ExtraMessages...)
+			}
+		}
+
 		for _, fn := range o.OnRequest {
 			fn(RequestInfo{
 				Ctx:          ctx,
@@ -959,7 +1008,12 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		// Clear tool_choice after the first tool step so the model can freely
 		// produce a text response on subsequent steps.
 		params.ToolChoice = ""
-		toolMessages := executeToolsParallel(ctx, result.ToolCalls, toolMap, step, o.OnToolCallStart, o.OnToolCall)
+		toolMessages := executeToolsParallel(ctx, result.ToolCalls, toolMap, step, toolHooks{
+			onToolCallStart: o.OnToolCallStart,
+			onToolCall:      o.OnToolCall,
+			onBeforeExecute: o.OnBeforeToolExecute,
+			onAfterExecute:  o.OnAfterToolExecute,
+		})
 
 		// Append assistant message with tool calls + tool result messages.
 		params.Messages = appendToolRoundTrip(params.Messages, result.Text, nil, result.ToolCalls, toolMessages)
@@ -1013,13 +1067,20 @@ type toolOutput struct {
 	err    error
 }
 
+// toolHooks bundles the hook functions passed to executeToolsParallel.
+type toolHooks struct {
+	onToolCallStart    []func(ToolCallStartInfo)
+	onToolCall         []func(ToolCallInfo)
+	onBeforeExecute    func(BeforeToolExecuteInfo) BeforeToolExecuteResult
+	onAfterExecute     func(AfterToolExecuteInfo) AfterToolExecuteResult
+}
+
 func executeToolsParallel(
 	ctx context.Context,
 	calls []provider.ToolCall,
 	toolMap map[string]Tool,
 	step int,
-	onToolCallStart []func(ToolCallStartInfo),
-	onToolCall []func(ToolCallInfo),
+	hooks toolHooks,
 ) []provider.Message {
 
 	results := make([]toolOutput, len(calls))
@@ -1037,17 +1098,17 @@ func executeToolsParallel(
 			// pre-hook crashed). For unknown tools, Execute never runs anyway, so both
 			// hooks fire independently for observability completeness.
 			results[i] = toolOutput{index: i, err: ErrUnknownTool}
-			for _, fn := range onToolCallStart {
+			for _, fn := range hooks.onToolCallStart {
 				func(f func(ToolCallStartInfo)) {
 					defer func() {
 						if r := recover(); r != nil {
 							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
 						}
 					}()
-					f(ToolCallStartInfo{ToolCallID: tc.ID, ToolName: tc.Name, Step: step + 1, Input: tc.Input})
+					f(ToolCallStartInfo{ToolCallID: tc.ID, ToolName: tc.Name, Step: step, Input: tc.Input})
 				}(fn)
 			}
-			for _, fn := range onToolCall {
+			for _, fn := range hooks.onToolCall {
 				func(f func(ToolCallInfo)) {
 					defer func() {
 						if r := recover(); r != nil {
@@ -1093,7 +1154,7 @@ func executeToolsParallel(
 
 			// OnToolCallStart: pre-execution (each independently recover-wrapped).
 			var hookPanicked bool
-			for _, fn := range onToolCallStart {
+			for _, fn := range hooks.onToolCallStart {
 				func(f func(ToolCallStartInfo)) {
 					defer func() {
 						if r := recover(); r != nil {
@@ -1116,14 +1177,92 @@ func executeToolsParallel(
 				return
 			}
 
+			// OnBeforeToolExecute: can skip execution (permission, doom loop, etc.).
+			if hooks.onBeforeExecute != nil {
+				var beforeResult BeforeToolExecuteResult
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "goai: recovered panic in OnBeforeToolExecute hook: %v\n", r)
+							beforeResult = BeforeToolExecuteResult{
+								Skip:  true,
+								Error: fmt.Errorf("goai: OnBeforeToolExecute hook panicked: %v", r),
+							}
+						}
+					}()
+					beforeResult = hooks.onBeforeExecute(BeforeToolExecuteInfo{
+						ToolCallID: tc.ID,
+						ToolName:   tc.Name,
+						Step:       step,
+						Input:      tc.Input,
+					})
+				}()
+				if beforeResult.Skip {
+					executed = true // prevent outer panic handler from overwriting
+					if beforeResult.Error != nil {
+						results[i] = toolOutput{index: i, result: beforeResult.Result, err: beforeResult.Error}
+					} else {
+						results[i] = toolOutput{index: i, result: beforeResult.Result}
+					}
+					// Fire OnToolCall with skipped result for observability.
+					for _, fn := range hooks.onToolCall {
+						func(f func(ToolCallInfo)) {
+							defer func() {
+								if r := recover(); r != nil {
+									fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+								}
+							}()
+							f(ToolCallInfo{
+								ToolCallID: tc.ID,
+								ToolName:   tc.Name,
+								Step:       step,
+								Input:      tc.Input,
+								Output:     beforeResult.Result,
+								StartTime:  time.Now(),
+								Skipped:    true,
+								Error:      beforeResult.Error,
+							})
+						}(fn)
+					}
+					return
+				}
+			}
+
 			start := time.Now()
 			toolCtx := context.WithValue(ctx, toolCallIDKey{}, tc.ID)
 			output, err := tool.Execute(toolCtx, tc.Input)
 			executed = true
+
+			// OnAfterToolExecute: can modify output (secret scanning, truncation, etc.).
+			if hooks.onAfterExecute != nil {
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "goai: recovered panic in OnAfterToolExecute hook: %v\n", r)
+							// Preserve original result on panic.
+						}
+					}()
+					afterResult := hooks.onAfterExecute(AfterToolExecuteInfo{
+						ToolCallID: tc.ID,
+						ToolName:   tc.Name,
+						Step:       step,
+						Input:      tc.Input,
+						Output:     output,
+						Error:      err,
+					})
+					if afterResult.Output != "" {
+						output = afterResult.Output
+					}
+					if afterResult.Error != nil {
+						err = afterResult.Error
+					}
+				}()
+			}
+
 			results[i] = toolOutput{index: i, result: output, err: err}
 
 			// OnToolCall: post-execution (each independently recover-wrapped).
-			for _, fn := range onToolCall {
+			for _, fn := range hooks.onToolCall {
 				func(f func(ToolCallInfo)) {
 					defer func() {
 						if r := recover(); r != nil {

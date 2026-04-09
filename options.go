@@ -97,6 +97,21 @@ type options struct {
 	// OnToolCallStart is called before each tool execution.
 	OnToolCallStart []func(ToolCallStartInfo)
 
+	// OnBeforeToolExecute is called before each tool's Execute function.
+	// Can skip execution (e.g., permission denied, doom loop).
+	// Only one callback supported; setting a second replaces the first.
+	OnBeforeToolExecute func(BeforeToolExecuteInfo) BeforeToolExecuteResult
+
+	// OnAfterToolExecute is called after each tool's Execute function,
+	// before the result is sent to the LLM. Can modify output.
+	// Only one callback supported; setting a second replaces the first.
+	OnAfterToolExecute func(AfterToolExecuteInfo) AfterToolExecuteResult
+
+	// OnBeforeStep is called before each LLM call in a multi-step tool loop (step 2+).
+	// Can inject messages or stop the loop.
+	// Only one callback supported; setting a second replaces the first.
+	OnBeforeStep func(BeforeStepInfo) BeforeStepResult
+
 	// ExplicitSchema overrides auto-generated JSON Schema for GenerateObject/StreamObject.
 	ExplicitSchema json.RawMessage
 
