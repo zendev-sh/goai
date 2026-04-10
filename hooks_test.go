@@ -2161,3 +2161,443 @@ func TestSequentialToolExecution(t *testing.T) {
 		}
 	}
 }
+
+// --- OnFinish tests ---
+
+func TestOnFinish_Natural(t *testing.T) {
+	// Single-step GenerateText, model stops naturally.
+	// OnFinish should fire with StepsExhausted=false, TotalSteps=1.
+	var captured FinishInfo
+	var called bool
+	model := &mockModel{
+		id: "test-model",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         "hello",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+			}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("hi"),
+		WithOnFinish(func(info FinishInfo) {
+			called = true
+			captured = info
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("OnFinish was not called")
+	}
+	if captured.StepsExhausted {
+		t.Error("StepsExhausted = true, want false (natural stop)")
+	}
+	if captured.TotalSteps != 1 {
+		t.Errorf("TotalSteps = %d, want 1", captured.TotalSteps)
+	}
+	if captured.FinishReason != provider.FinishStop {
+		t.Errorf("FinishReason = %q, want stop", captured.FinishReason)
+	}
+	if captured.TotalUsage.InputTokens != 10 {
+		t.Errorf("TotalUsage.InputTokens = %d, want 10", captured.TotalUsage.InputTokens)
+	}
+}
+
+func TestOnFinish_MaxSteps(t *testing.T) {
+	// Model always returns tool calls, MaxSteps=2.
+	// OnFinish should fire with StepsExhausted=true, TotalSteps=2.
+	var captured FinishInfo
+	var called bool
+	model := &mockModel{
+		id: "test-model",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "my_tool", Input: json.RawMessage(`{}`)}},
+				FinishReason: provider.FinishToolCalls,
+				Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+			}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(2),
+		WithTools(Tool{
+			Name:    "my_tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		WithOnFinish(func(info FinishInfo) {
+			called = true
+			captured = info
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("OnFinish was not called")
+	}
+	if !captured.StepsExhausted {
+		t.Error("StepsExhausted = false, want true (MaxSteps reached)")
+	}
+	if captured.TotalSteps != 2 {
+		t.Errorf("TotalSteps = %d, want 2", captured.TotalSteps)
+	}
+	if captured.FinishReason != provider.FinishToolCalls {
+		t.Errorf("FinishReason = %q, want tool_calls", captured.FinishReason)
+	}
+}
+
+func TestOnFinish_HookStopped(t *testing.T) {
+	// OnBeforeStep returns Stop=true. OnFinish should fire with StepsExhausted=false
+	// because the loop was stopped by hook, not by max_steps.
+	var captured FinishInfo
+	var called bool
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			return &provider.GenerateResult{
+				ToolCalls:    []provider.ToolCall{{ID: fmt.Sprintf("tc%d", callCount), Name: "tool", Input: json.RawMessage(`{}`)}},
+				FinishReason: provider.FinishToolCalls,
+			}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(5),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		WithOnBeforeStep(func(_ BeforeStepInfo) BeforeStepResult {
+			return BeforeStepResult{Stop: true}
+		}),
+		WithOnFinish(func(info FinishInfo) {
+			called = true
+			captured = info
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("OnFinish was not called")
+	}
+	if captured.StepsExhausted {
+		t.Error("StepsExhausted = true, want false (hook stopped, not max_steps)")
+	}
+	if captured.TotalSteps != 1 {
+		t.Errorf("TotalSteps = %d, want 1 (only step 1 executed before hook stopped)", captured.TotalSteps)
+	}
+}
+
+func TestOnFinish_StreamText(t *testing.T) {
+	// StreamText multi-step. OnFinish should fire in the stream goroutine.
+	var captured FinishInfo
+	var called atomic.Bool
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			callCount++
+			if callCount == 1 {
+				return streamFromChunks(
+					provider.StreamChunk{Type: provider.ChunkToolCall, ToolCallID: "tc1", ToolName: "tool", ToolInput: `{}`},
+					provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls},
+				), nil
+			}
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "done"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop},
+			), nil
+		},
+	}
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		WithOnFinish(func(info FinishInfo) {
+			called.Store(true)
+			captured = info
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := stream.Result()
+	if result.Text != "done" {
+		t.Errorf("Text = %q, want done", result.Text)
+	}
+	if !called.Load() {
+		t.Fatal("OnFinish was not called in stream goroutine")
+	}
+	if captured.StepsExhausted {
+		t.Error("StepsExhausted = true, want false (natural stop)")
+	}
+	if captured.TotalSteps != 2 {
+		t.Errorf("TotalSteps = %d, want 2", captured.TotalSteps)
+	}
+}
+
+func TestOnFinish_PanicRecovery(t *testing.T) {
+	// OnFinish panics. Verify no crash and second hook still fires.
+	var secondCalled bool
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         "ok",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 5, OutputTokens: 3},
+			}, nil
+		},
+	}
+
+	_, err := GenerateText(t.Context(), model,
+		WithPrompt("hi"),
+		WithOnFinish(func(_ FinishInfo) {
+			panic("kaboom in OnFinish")
+		}),
+		WithOnFinish(func(_ FinishInfo) {
+			secondCalled = true
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !secondCalled {
+		t.Error("second OnFinish hook should fire even when first panics")
+	}
+}
+
+func TestOnFinish_GenerateObject(t *testing.T) {
+	// GenerateObject single-step. OnFinish should fire.
+	var captured FinishInfo
+	var called bool
+	model := &mockModel{
+		id: "test-obj",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         `{"name":"Alice","age":30}`,
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 15, OutputTokens: 8},
+			}, nil
+		},
+	}
+
+	_, err := GenerateObject[simpleObject](t.Context(), model,
+		WithPrompt("generate"),
+		WithOnFinish(func(info FinishInfo) {
+			called = true
+			captured = info
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("OnFinish was not called for GenerateObject")
+	}
+	if captured.StepsExhausted {
+		t.Error("StepsExhausted = true, want false (single-step GenerateObject)")
+	}
+	if captured.TotalSteps != 1 {
+		t.Errorf("TotalSteps = %d, want 1", captured.TotalSteps)
+	}
+	if captured.FinishReason != provider.FinishStop {
+		t.Errorf("FinishReason = %q, want stop", captured.FinishReason)
+	}
+	if captured.TotalUsage.InputTokens != 15 {
+		t.Errorf("TotalUsage.InputTokens = %d, want 15", captured.TotalUsage.InputTokens)
+	}
+}
+
+func TestWrapOnBeforeToolExecute(t *testing.T) {
+	// User hook skips "dangerous" tool. Wrapper adds observability side-effect.
+	var wrapperCalled bool
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "danger", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{Text: "ok", FinishReason: provider.FinishStop}, nil
+		},
+	}
+	tool := Tool{Name: "danger", Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "boom", nil }}
+
+	result, err := GenerateText(context.Background(), model,
+		WithOnBeforeToolExecute(func(info BeforeToolExecuteInfo) BeforeToolExecuteResult {
+			return BeforeToolExecuteResult{Skip: true, Result: "blocked"}
+		}),
+		WrapOnBeforeToolExecute(func(existing func(BeforeToolExecuteInfo) BeforeToolExecuteResult) func(BeforeToolExecuteInfo) BeforeToolExecuteResult {
+			return func(info BeforeToolExecuteInfo) BeforeToolExecuteResult {
+				wrapperCalled = true
+				if existing != nil {
+					return existing(info)
+				}
+				return BeforeToolExecuteResult{}
+			}
+		}),
+		WithPrompt("go"), WithMaxSteps(3), WithTools(tool),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wrapperCalled {
+		t.Error("wrapper was not called")
+	}
+	if result.Text != "ok" {
+		t.Errorf("Text = %q, want %q", result.Text, "ok")
+	}
+}
+
+func TestWrapOnAfterToolExecute(t *testing.T) {
+	// User hook modifies output. Wrapper observes.
+	var wrapperCalled bool
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "fetch", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+				}, nil
+			}
+			return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop}, nil
+		},
+	}
+	tool := Tool{Name: "fetch", Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "secret-data", nil }}
+
+	_, err := GenerateText(context.Background(), model,
+		WithOnAfterToolExecute(func(info AfterToolExecuteInfo) AfterToolExecuteResult {
+			return AfterToolExecuteResult{Output: "redacted"}
+		}),
+		WrapOnAfterToolExecute(func(existing func(AfterToolExecuteInfo) AfterToolExecuteResult) func(AfterToolExecuteInfo) AfterToolExecuteResult {
+			return func(info AfterToolExecuteInfo) AfterToolExecuteResult {
+				wrapperCalled = true
+				if existing != nil {
+					return existing(info)
+				}
+				return AfterToolExecuteResult{}
+			}
+		}),
+		WithPrompt("go"), WithMaxSteps(3), WithTools(tool),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wrapperCalled {
+		t.Error("wrapper was not called")
+	}
+}
+
+func TestWrapOnBeforeStep(t *testing.T) {
+	// User hook stops loop. Wrapper observes.
+	var wrapperCalled bool
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			return &provider.GenerateResult{
+				ToolCalls:    []provider.ToolCall{{ID: fmt.Sprintf("tc%d", callCount), Name: "t", Input: json.RawMessage(`{}`)}},
+				FinishReason: provider.FinishToolCalls,
+			}, nil
+		},
+	}
+	tool := Tool{Name: "t", Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil }}
+
+	result, err := GenerateText(context.Background(), model,
+		WithOnBeforeStep(func(_ BeforeStepInfo) BeforeStepResult {
+			return BeforeStepResult{Stop: true}
+		}),
+		WrapOnBeforeStep(func(existing func(BeforeStepInfo) BeforeStepResult) func(BeforeStepInfo) BeforeStepResult {
+			return func(info BeforeStepInfo) BeforeStepResult {
+				wrapperCalled = true
+				if existing != nil {
+					return existing(info)
+				}
+				return BeforeStepResult{}
+			}
+		}),
+		WithPrompt("go"), WithMaxSteps(5), WithTools(tool),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wrapperCalled {
+		t.Error("wrapper was not called")
+	}
+	if result.StepsExhausted {
+		t.Error("StepsExhausted should be false (hook stopped, not max_steps)")
+	}
+}
+
+func TestStreamObject_OnFinishAndOnStepFinish(t *testing.T) {
+	var finishCalled, stepCalled bool
+	var finishInfo FinishInfo
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: `{"name":"test"}`},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 10, OutputTokens: 5}},
+			), nil
+		},
+	}
+	type Simple struct{ Name string }
+	stream, err := StreamObject[Simple](t.Context(), model,
+		WithPrompt("go"),
+		WithOnStepFinish(func(sr StepResult) {
+			stepCalled = true
+			if sr.Number != 1 {
+				t.Errorf("StepResult.Number = %d, want 1", sr.Number)
+			}
+		}),
+		WithOnFinish(func(info FinishInfo) {
+			finishCalled = true
+			finishInfo = info
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := stream.Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Object.Name != "test" {
+		t.Errorf("Object.Name = %q, want %q", result.Object.Name, "test")
+	}
+	if !stepCalled {
+		t.Error("OnStepFinish was not called for StreamObject")
+	}
+	if !finishCalled {
+		t.Error("OnFinish was not called for StreamObject")
+	}
+	if finishInfo.TotalSteps != 1 {
+		t.Errorf("TotalSteps = %d, want 1", finishInfo.TotalSteps)
+	}
+	if finishInfo.FinishReason != provider.FinishStop {
+		t.Errorf("FinishReason = %q, want stop", finishInfo.FinishReason)
+	}
+}

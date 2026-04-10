@@ -99,6 +99,32 @@ export GEMINI_API_KEY=...
 go run examples/tools/main.go
 ```
 
+### multi-turn
+
+Multi-turn conversation with tools using `ResponseMessages` to preserve history across turns.
+
+- **Provider:** Google Gemini
+- **Features:** `ResponseMessages`, multi-turn tool context, conversation history management
+- **Source:** [`examples/multi-turn/`](https://github.com/zendev-sh/goai/tree/main/examples/multi-turn)
+
+```bash
+export GEMINI_API_KEY=...
+go run examples/multi-turn/main.go
+```
+
+### streaming-tools
+
+Streaming text generation with multi-step tool loops via `StreamText`.
+
+- **Provider:** OpenAI
+- **Features:** `StreamText`, `WithMaxSteps`, tool execution during streaming, `Stream()` consumption
+- **Source:** [`examples/streaming-tools/`](https://github.com/zendev-sh/goai/tree/main/examples/streaming-tools)
+
+```bash
+export OPENAI_API_KEY=...
+go run examples/streaming-tools/main.go
+```
+
 ### agent-loop
 
 Multi-step agent loop with multiple tools and step/tool-call callbacks.
@@ -342,4 +368,51 @@ MCP client basics without an LLM. Exercises every MCP capability: tools, prompts
 
 ```bash
 go run ./examples/mcp-local/main.go
+```
+
+---
+
+## Observability & Hooks
+
+Lifecycle hooks, Langfuse tracing, and OpenTelemetry integration.
+
+### hooks
+
+Lifecycle hooks for tool interception, output transformation, and loop control.
+
+- **Provider:** Google Gemini
+- **Features:** `OnBeforeToolExecute` (permission gate), `OnAfterToolExecute` (secret scanning), `OnBeforeStep` (loop control), `OnFinish` (max_steps detection)
+- **Source:** [`examples/hooks/`](https://github.com/zendev-sh/goai/tree/main/examples/hooks)
+
+```bash
+export GEMINI_API_KEY=...
+go run examples/hooks/main.go
+```
+
+### langfuse
+
+Langfuse tracing for a multi-step agent with tool calls.
+
+- **Provider:** Google Gemini
+- **Features:** `langfuse.WithTracing`, trace hierarchy (trace → span → generation), token usage, tool spans
+- **Source:** [`examples/langfuse/`](https://github.com/zendev-sh/goai/tree/main/examples/langfuse)
+
+```bash
+export GEMINI_API_KEY=...
+export LANGFUSE_PUBLIC_KEY=pk-lf-...
+export LANGFUSE_SECRET_KEY=sk-lf-...
+go run examples/langfuse/main.go
+```
+
+### otel
+
+OpenTelemetry tracing with stdout exporter for local development.
+
+- **Provider:** Google Gemini
+- **Features:** `otel.WithTracing`, span hierarchy, custom attributes, `RecordInputMessages`, `RecordOutputMessages`
+- **Source:** [`examples/otel/`](https://github.com/zendev-sh/goai/tree/main/examples/otel)
+
+```bash
+export GEMINI_API_KEY=...
+cd examples/otel && go run .
 ```

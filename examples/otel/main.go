@@ -7,7 +7,7 @@
 //
 // Usage:
 //
-//	export OPENAI_API_KEY=...
+//	export GEMINI_API_KEY=...
 //	cd examples/otel && go run .
 package main
 
@@ -21,19 +21,12 @@ import (
 
 	"github.com/zendev-sh/goai"
 	goaiotel "github.com/zendev-sh/goai/observability/otel"
-	"github.com/zendev-sh/goai/provider/openai"
+	"github.com/zendev-sh/goai/provider/google"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
-
-// WeatherReport is the structured output returned by the agent.
-type WeatherReport struct {
-	City        string `json:"city" jsonschema:"description=City name"`
-	Temperature string `json:"temperature" jsonschema:"description=Current temperature with unit"`
-	Summary     string `json:"summary" jsonschema:"description=One-sentence weather summary"`
-}
 
 func main() {
 	// --- Exporter setup ---
@@ -60,7 +53,7 @@ func main() {
 	defer func() { _ = tp.Shutdown(context.Background()) }()
 	otel.SetTracerProvider(tp)
 
-	model := openai.Chat("gpt-4o-mini", openai.WithAPIKey(os.Getenv("OPENAI_API_KEY")))
+	model := google.Chat("gemini-2.0-flash", google.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
 
 	// Tool that simulates fetching weather data.
 	weatherTool := goai.Tool{
@@ -72,7 +65,6 @@ func main() {
 		Execute: func(_ context.Context, input json.RawMessage) (string, error) {
 			var args struct{ City string }
 			_ = json.Unmarshal(input, &args)
-			// Simulate an API call.
 			time.Sleep(50 * time.Millisecond)
 			return fmt.Sprintf(`{"city":%q,"temp":"22°C","condition":"sunny"}`, args.City), nil
 		},
@@ -82,25 +74,25 @@ func main() {
 
 	// --- WithTracing: uses the global TracerProvider ---
 	fmt.Println("=== WithTracing (simple) ===")
-	result, err := goai.GenerateObject[WeatherReport](ctx, model,
+	result, err := goai.GenerateText(ctx, model,
 		goaiotel.WithTracing(
 			goaiotel.WithSpanName("weather-agent"),
 		),
 		goai.WithSystem("You are a weather assistant. Always call get_weather before answering."),
 		goai.WithPrompt("What's the weather in Tokyo?"),
 		goai.WithTools(weatherTool),
-		goai.WithMaxSteps(3),
+		goai.WithMaxSteps(5),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("City: %s\nTemp: %s\nSummary: %s\n", result.Object.City, result.Object.Temperature, result.Object.Summary)
+	fmt.Printf("\nResult: %s\n", result.Text[:min(120, len(result.Text))])
 	fmt.Printf("Steps: %d | Tokens: %d in / %d out\n\n",
-		len(result.Steps), result.Usage.InputTokens, result.Usage.OutputTokens)
+		len(result.Steps), result.TotalUsage.InputTokens, result.TotalUsage.OutputTokens)
 
 	// --- WithTracing: with explicit provider and custom attributes ---
 	fmt.Println("\n=== WithTracing (with options) ===")
-	r, err := goai.GenerateObject[WeatherReport](ctx, model,
+	r, err := goai.GenerateText(ctx, model,
 		goaiotel.WithTracing(
 			goaiotel.WithTracerProvider(tp),
 			goaiotel.WithSpanName("weather-agent"),
@@ -114,10 +106,10 @@ func main() {
 		goai.WithSystem("You are a weather assistant. Always call get_weather before answering."),
 		goai.WithPrompt("What's the weather in Paris?"),
 		goai.WithTools(weatherTool),
-		goai.WithMaxSteps(3),
+		goai.WithMaxSteps(5),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Paris: %s - %s\n", r.Object.Temperature, r.Object.Summary)
+	fmt.Printf("\nParis: %s\n", r.Text[:min(120, len(r.Text))])
 }

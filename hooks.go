@@ -110,10 +110,49 @@ type ToolCallInfo struct {
 
 // WithOnStepFinish adds a callback invoked after each generation step completes.
 // Multiple callbacks are called in registration order. Each callback is individually
-// panic-recovered in all paths (GenerateText, StreamText, GenerateObject).
+// panic-recovered in all paths (GenerateText, StreamText, GenerateObject, StreamObject).
 // A panic in one callback does not prevent subsequent callbacks from firing.
 func WithOnStepFinish(fn func(StepResult)) Option {
 	return func(o *options) { o.OnStepFinish = append(o.OnStepFinish, fn) }
+}
+
+// FinishInfo is passed to the OnFinish hook after all generation steps complete.
+// It fires exactly once per GenerateText/StreamText/GenerateObject/StreamObject call,
+// after the last OnStepFinish. For StreamText/StreamObject, it fires in the
+// stream goroutine.
+type FinishInfo struct {
+	// StepsExhausted is true when MaxSteps was reached while the model still
+	// requested tool calls. This is the authoritative signal for "max_steps"
+	// termination -- it is not available from any per-step hook.
+	StepsExhausted bool
+
+	// TotalSteps is the number of generation steps executed.
+	TotalSteps int
+
+	// TotalUsage is the aggregated token usage across all steps.
+	TotalUsage provider.Usage
+
+	// FinishReason from the last step.
+	FinishReason provider.FinishReason
+}
+
+// WithOnFinish adds a callback invoked once after all generation steps complete.
+// Multiple callbacks are called in registration order. Each callback is individually
+// panic-recovered so a panic in one does not prevent subsequent callbacks from firing.
+//
+// This hook fires in all code paths:
+//   - GenerateText: after the tool loop exits (natural, max_steps, or hook_stopped)
+//   - StreamText: in the stream goroutine, after the tool loop exits
+//   - GenerateObject: after the tool loop exits (including max_steps error path)
+//   - StreamObject: in the consume goroutine, after the stream completes
+//
+// It does NOT fire when DoGenerate/DoStream returns a provider error (API failure,
+// context cancelled). In those cases, the OnResponse hook receives the error.
+// Note: GenerateObject's max_steps error IS a goai-level error, not a provider error,
+// so OnFinish fires before that error is returned.
+// For StreamText/StreamObject, check stream.Err() for definitive error status.
+func WithOnFinish(fn func(FinishInfo)) Option {
+	return func(o *options) { o.OnFinish = append(o.OnFinish, fn) }
 }
 
 // WithOnRequest adds a callback invoked before each model call.
@@ -129,9 +168,9 @@ func WithOnRequest(fn func(RequestInfo)) Option {
 // Multiple callbacks are called in registration order.
 // Each callback is individually panic-recovered in GenerateText (all steps),
 // all StreamText success paths (single-step consume goroutine and multi-step goroutine),
-// and StreamObject's success path (consume goroutine).
-// In GenerateObject, StreamObject's error path, and StreamText's first-step error path,
-// panics propagate to the caller.
+// GenerateObject (all steps), StreamObject's success path (consume goroutine),
+// and StreamObject's error path.
+// In StreamText's first-step error path, panics propagate to the caller.
 func WithOnResponse(fn func(ResponseInfo)) Option {
 	return func(o *options) { o.OnResponse = append(o.OnResponse, fn) }
 }
@@ -326,4 +365,48 @@ type BeforeStepResult struct {
 // The callback is panic-recovered; a panic is logged and the step proceeds normally.
 func WithOnBeforeStep(fn func(BeforeStepInfo) BeforeStepResult) Option {
 	return func(o *options) { o.OnBeforeStep = fn }
+}
+
+// WrapOnBeforeToolExecute returns an Option that wraps the existing OnBeforeToolExecute hook.
+// The wrapper function receives the current hook (may be nil if none is registered) and
+// returns a replacement. This enables observability packages to add side-effects without
+// replacing the user's hook.
+//
+// The wrapper MUST return the user hook's result verbatim when delegating -- accidentally
+// zeroing the struct suppresses tool executions or input overrides. When the existing
+// hook is nil, return a zero BeforeToolExecuteResult (no skip, no override).
+//
+// Ordering hazard: the wrapper captures the existing hook at option-apply time.
+// If a user calls WithOnBeforeToolExecute AFTER this wrapper is applied, the user's
+// hook overwrites the wrapper entirely. Callers using this for observability should
+// apply it after user hooks (e.g., WithTracing should be the last option).
+func WrapOnBeforeToolExecute(wrapper func(existing func(BeforeToolExecuteInfo) BeforeToolExecuteResult) func(BeforeToolExecuteInfo) BeforeToolExecuteResult) Option {
+	return func(o *options) {
+		o.OnBeforeToolExecute = wrapper(o.OnBeforeToolExecute)
+	}
+}
+
+// WrapOnAfterToolExecute returns an Option that wraps the existing OnAfterToolExecute hook.
+// The wrapper function receives the current hook (may be nil) and returns a replacement.
+// The wrapper MUST return the user hook's result verbatim -- an empty AfterToolExecuteResult
+// has special semantics (empty Output preserves original, nil Error preserves original).
+// When the existing hook is nil, return a zero AfterToolExecuteResult.
+//
+// Ordering hazard: same as WrapOnBeforeToolExecute -- apply after user hooks.
+func WrapOnAfterToolExecute(wrapper func(existing func(AfterToolExecuteInfo) AfterToolExecuteResult) func(AfterToolExecuteInfo) AfterToolExecuteResult) Option {
+	return func(o *options) {
+		o.OnAfterToolExecute = wrapper(o.OnAfterToolExecute)
+	}
+}
+
+// WrapOnBeforeStep returns an Option that wraps the existing OnBeforeStep hook.
+// The wrapper function receives the current hook (may be nil) and returns a replacement.
+// The wrapper MUST forward the user hook's Stop and ExtraMessages fields verbatim.
+// When the existing hook is nil, return a zero BeforeStepResult (no stop, no messages).
+//
+// Ordering hazard: same as WrapOnBeforeToolExecute -- apply after user hooks.
+func WrapOnBeforeStep(wrapper func(existing func(BeforeStepInfo) BeforeStepResult) func(BeforeStepInfo) BeforeStepResult) Option {
+	return func(o *options) {
+		o.OnBeforeStep = wrapper(o.OnBeforeStep)
+	}
 }

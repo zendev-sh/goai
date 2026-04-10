@@ -29,7 +29,7 @@ goai/
 ├── caching.go              # Prompt cache control (copies msgs, no mutation)
 ├── types.go                # Tool struct
 ├── messages.go             # Message builders
-├── hooks.go                # Telemetry hooks
+├── hooks.go                # Lifecycle hooks (OnRequest, OnResponse, OnToolCallStart, OnToolCall, OnStepFinish, OnFinish, OnBeforeStep, OnBeforeToolExecute, OnAfterToolExecute + Wrap* helpers)
 ├── partial_json.go         # Partial JSON parser for streaming
 ├── provider/
 │   ├── provider.go         # LanguageModel, EmbeddingModel, ImageModel interfaces
@@ -55,7 +55,7 @@ goai/
 ├── observability/
 │   ├── langfuse/           # Langfuse observability integration (separate go.mod)
 │   └── otel/               # OpenTelemetry tracing and metrics (separate go.mod)
-├── examples/               # 26 runnable examples (including 7 MCP examples)
+├── examples/               # 28 runnable examples (including 7 MCP examples)
 └── bench/                  # Performance benchmarks (GoAI vs Vercel AI SDK)
 ```
 

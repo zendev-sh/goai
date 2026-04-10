@@ -50,8 +50,8 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 - **Computer use**: Anthropic computer, bash, text editor tools for autonomous desktop interaction
 - **20 provider-defined tools**: Web fetch, file search, image generation, X search, and more - [full list](#provider-defined-tools)
 - **MCP client**: Connect to any MCP server (stdio, HTTP, SSE), auto-convert tools for use with GoAI
-- **Observability**: Built-in Langfuse integration and optional OpenTelemetry (OTel) support, with hooks for request/response/step/tool tracing
-- **Telemetry hooks**: `OnRequest`, `OnResponse`, `OnStepFinish`, `OnToolCall`, `OnToolCallStart` callbacks
+- **Observability**: Built-in Langfuse and OpenTelemetry (OTel) integrations for tracing generations, tools, and multi-step loops
+- **9 lifecycle hooks**: Observability (`OnRequest`, `OnResponse`, `OnToolCallStart`, `OnToolCall`, `OnStepFinish`, `OnFinish`) and interceptor (`OnBeforeToolExecute`, `OnAfterToolExecute`, `OnBeforeStep`) hooks for permission gates, secret scanning, output transformation, and loop control
 - **Retry/backoff**: Automatic retry with exponential backoff on retryable HTTP errors (429/5xx)
 - **Minimal dependencies**: Core depends on `golang.org/x/oauth2` + one indirect (`cloud.google.com/go/compute/metadata`). Optional `observability/otel` submodule uses separate `go.mod` with OTel SDK.
 
@@ -318,20 +318,40 @@ Also supported: Google Imagen (`google.Image("imagen-4.0-generate-001")`) and Ve
 
 ## Observability
 
-Built-in [Langfuse](https://langfuse.com) integration for tracing generations, tool calls, and multi-step loops:
+Built-in [Langfuse](https://langfuse.com) and [OpenTelemetry](https://opentelemetry.io) integrations. Nine lifecycle hooks cover the full generation pipeline -- observability providers use them to trace LLM calls, tool executions, and multi-step agent loops:
 
 ```go
 import "github.com/zendev-sh/goai/observability/langfuse"
 
 // Credentials from env: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
-// Or override via langfuse.PublicKey(), langfuse.SecretKey(), langfuse.Host().
 result, err := goai.GenerateText(ctx, model,
     goai.WithPrompt("Hello"),
-    langfuse.WithTracing(), // wires OnRequest, OnResponse, OnStepFinish, OnToolCall
+    goai.WithTools(weatherTool),
+    goai.WithMaxSteps(5),
+    langfuse.WithTracing(langfuse.TraceName("my-agent")),
 )
 ```
 
-See [examples/langfuse](examples/langfuse/) and [observability docs](https://goai.sh/concepts/observability) for details.
+Interceptor hooks let you control tool execution without modifying core code:
+
+```go
+// Permission gate: block dangerous tools
+goai.WithOnBeforeToolExecute(func(info goai.BeforeToolExecuteInfo) goai.BeforeToolExecuteResult {
+    if info.ToolName == "delete_file" {
+        return goai.BeforeToolExecuteResult{Skip: true, Result: "Permission denied."}
+    }
+    return goai.BeforeToolExecuteResult{}
+}),
+
+// Detect max-steps exhaustion
+goai.WithOnFinish(func(info goai.FinishInfo) {
+    if info.StepsExhausted {
+        log.Printf("Loop exhausted after %d steps", info.TotalSteps)
+    }
+}),
+```
+
+See [examples/hooks](examples/hooks/), [examples/langfuse](examples/langfuse/), [examples/otel](examples/otel/), and the [observability docs](https://goai.sh/concepts/observability) for details.
 
 ## Providers
 
@@ -534,15 +554,19 @@ fmt.Printf("Model used: %s\n", result.Response.Model)
 | `WithPromptCaching(b)`    | Enable prompt caching                    | false            |
 | `WithToolChoice(tc)`      | "auto", "none", "required", or tool name | -                |
 
-### Telemetry Hooks
+### Lifecycle Hooks
 
-| Option                    | Description                              |
-| ------------------------- | ---------------------------------------- |
-| `WithOnRequest(fn)`       | Called before each API call              |
-| `WithOnResponse(fn)`      | Called after each API call               |
-| `WithOnStepFinish(fn)`    | Called after each tool loop step         |
-| `WithOnToolCall(fn)`      | Called after each tool execution         |
-| `WithOnToolCallStart(fn)` | Called before each tool execution begins |
+| Option                          | Description                                                      |
+| ------------------------------- | ---------------------------------------------------------------- |
+| `WithOnRequest(fn)`             | Called before each API call                                      |
+| `WithOnResponse(fn)`            | Called after each API call                                       |
+| `WithOnToolCallStart(fn)`       | Called before each tool execution begins                         |
+| `WithOnToolCall(fn)`            | Called after each tool execution                                 |
+| `WithOnStepFinish(fn)`          | Called after each tool loop step                                 |
+| `WithOnFinish(fn)`              | Called once after all steps complete (carries `StepsExhausted`)  |
+| `WithOnBeforeToolExecute(fn)`   | Intercept before tool Execute -- can skip, override ctx/input    |
+| `WithOnAfterToolExecute(fn)`    | Intercept after tool Execute -- can modify output/error          |
+| `WithOnBeforeStep(fn)`          | Intercept before step 2+ -- can inject messages or stop loop    |
 
 ### Structured Output Options
 
@@ -728,10 +752,15 @@ See the [examples/](examples/) directory:
 
 - [chat](examples/chat/) - Non-streaming generation
 - [streaming](examples/streaming/) - Real-time text streaming
+- [streaming-tools](examples/streaming-tools/) - Streaming with multi-step tool loops
 - [structured](examples/structured/) - Structured output with Go generics
 - [tools](examples/tools/) - Single tool call
 - [agent-loop](examples/agent-loop/) - Multi-step agent with callbacks
+- [multi-turn](examples/multi-turn/) - Multi-turn conversation with ResponseMessages
 - [citations](examples/citations/) - Accessing sources and citations
+- [hooks](examples/hooks/) - Lifecycle hooks: permission gates, secret scanning, loop control, OnFinish
+- [langfuse](examples/langfuse/) - Langfuse tracing integration
+- [otel](examples/otel/) - OpenTelemetry tracing and metrics
 - [computer-use](examples/computer-use/) - Anthropic computer, bash, and text editor tools
 - [embedding](examples/embedding/) - Embeddings with similarity search
 - [web-search](examples/web-search/) - Web search across providers (OpenAI, Anthropic, Google)

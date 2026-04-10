@@ -56,6 +56,7 @@ type config struct {
 	attrs          []attribute.KeyValue
 	recordInput    bool
 	recordOutput   bool
+	recordToolIO   bool // A7: record tool output as span events
 }
 
 // TracingOption configures WithTracing.
@@ -93,11 +94,20 @@ func RecordOutputMessages(b bool) TracingOption {
 	return func(c *config) { c.recordOutput = b }
 }
 
+// RecordToolIO controls whether tool input/output are recorded as span events
+// on tool spans (default: false, for privacy). Similar to RecordInputMessages/
+// RecordOutputMessages but for tool execution payloads.
+func RecordToolIO(b bool) TracingOption {
+	return func(c *config) { c.recordToolIO = b }
+}
+
 // instruments holds pre-created metric instruments to avoid repeated creation.
 type instruments struct {
 	tokenUsage        metric.Int64Histogram
 	operationDuration metric.Float64Histogram
 	toolDuration      metric.Float64Histogram
+	earlyStopCounter  metric.Int64Counter      // D1: loop early stop counter
+	messageCount      metric.Int64Gauge         // D4: conversation message count
 }
 
 func newInstruments(mp metric.MeterProvider) instruments {
@@ -114,15 +124,28 @@ func newInstruments(mp metric.MeterProvider) instruments {
 		metric.WithDescription("Duration of tool executions"),
 		metric.WithUnit("s"),
 	)
+	earlyStopCounter, _ := m.Int64Counter("goai.loop.early_stop",
+		metric.WithDescription("Number of tool loops stopped early by OnBeforeStep hook"),
+	)
+	messageCount, _ := m.Int64Gauge("goai.conversation.message_count",
+		metric.WithDescription("Number of messages in conversation per step"),
+	)
 	return instruments{
 		tokenUsage:        tokenUsage,
 		operationDuration: operationDuration,
 		toolDuration:      toolDuration,
+		earlyStopCounter:  earlyStopCounter,
+		messageCount:      messageCount,
 	}
 }
 
 // WithTracing returns a goai.Option that enables OTel tracing for a single call.
 // Each invocation creates a fresh trace with isolated state -- safe for concurrent use.
+//
+// Ordering: WithTracing wraps the singleton hooks (OnBeforeToolExecute, OnAfterToolExecute,
+// OnBeforeStep) to add observability without replacing user hooks. For this to work,
+// WithTracing must be applied AFTER any user-registered singleton hooks. Place it last
+// in the option list, or use WithOptions to group user hooks before WithTracing.
 func WithTracing(opts ...TracingOption) goai.Option {
 	cfg := config{
 		spanName: "chat",
@@ -161,13 +184,32 @@ func run(cfg config) []goai.Option {
 		step      int
 		toolMu    sync.Mutex
 		toolSpans = make(map[string]trace.Span) // keyed by toolCallID
+
+		// B1-B3: per-tool state from OnBeforeToolExecute (keyed by toolCallID).
+		toolSkipReasons    = make(map[string]string)
+		toolInputOverrides = make(map[string]bool)
+		toolCtxOverridden  = make(map[string]bool)   // B3: context was overridden
+		toolCtxDeadlines   = make(map[string]string) // B3: deadline string (empty if no deadline)
+
+		// C1-C2: per-tool state from OnAfterToolExecute (keyed by toolCallID).
+		toolOutputModified = make(map[string]bool)
+		toolErrorModified  = make(map[string]string)
+
+		// D1-D2: termination tracking.
+		hookStopped       bool
+		hookStoppedAtStep int
+		terminationReason string
+
+		// D3: injected message count for next generation.
+		pendingInjectedMessages int
+
+		// Pending text/finishReason from OnStepFinish, for OnFinish to flush.
+		pendingText         string
+		pendingFinishReason provider.FinishReason
 	)
 
 	// end is declared before opts so WithOnStepFinish can reference it.
 	var end func(text string, finishReason provider.FinishReason)
-
-	// TODO: Register OnBeforeToolExecute, OnAfterToolExecute, and OnBeforeStep hooks
-	// to annotate spans with tool skip status, output modifications, and loop termination.
 
 	opts := []goai.Option{
 		goai.WithOnRequest(func(info goai.RequestInfo) {
@@ -186,8 +228,11 @@ func run(cfg config) []goai.Option {
 				if parentCtx == nil {
 					parentCtx = context.Background()
 				}
+				// A4: use info.Timestamp for span start time (more accurate than
+				// in-hook wall clock -- set by goai before OnRequest fires).
 				rootCtx, rootSpan = tracer.Start(parentCtx, cfg.spanName,
 					trace.WithAttributes(attrs...),
+					trace.WithTimestamp(info.Timestamp),
 				)
 
 				if cfg.recordInput {
@@ -197,14 +242,27 @@ func run(cfg config) []goai.Option {
 				}
 			}
 
+			// A3: message count and tool count on LLM span.
+			llmAttrs := []attribute.KeyValue{
+				attribute.String("gen_ai.system", "goai"),
+				attribute.String("gen_ai.operation.name", "chat"),
+				attribute.String("gen_ai.request.model", info.Model),
+				attribute.Int("goai.step", step),
+				attribute.Int("goai.request.message_count", info.MessageCount),
+				attribute.Int("goai.request.tool_count", info.ToolCount),
+			}
+
+			// D3: annotate injected messages from OnBeforeStep.
+			if pendingInjectedMessages > 0 {
+				llmAttrs = append(llmAttrs, attribute.Int("goai.step.injected_messages", pendingInjectedMessages))
+				pendingInjectedMessages = 0
+			}
+
 			// Start LLM call span as child of root.
+			// A4: use info.Timestamp for span start time.
 			_, llmSpan = tracer.Start(rootCtx, fmt.Sprintf("chat %s", info.Model),
-				trace.WithAttributes(
-					attribute.String("gen_ai.system", "goai"),
-					attribute.String("gen_ai.operation.name", "chat"),
-					attribute.String("gen_ai.request.model", info.Model),
-					attribute.Int("goai.step", step),
-				),
+				trace.WithAttributes(llmAttrs...),
+				trace.WithTimestamp(info.Timestamp),
 			)
 		}),
 
@@ -265,7 +323,6 @@ func run(cfg config) []goai.Option {
 				llmSpan.SetStatus(codes.Error, info.Error.Error())
 				llmSpan.End()
 				llmSpan = nil
-				// On error, mark root span with error status and end immediately.
 				if rootSpan != nil {
 					rootSpan.SetStatus(codes.Error, info.Error.Error())
 				}
@@ -290,6 +347,13 @@ func run(cfg config) []goai.Option {
 				),
 			)
 
+			// A7: record tool input as span event (respecting privacy opt-in).
+			if cfg.recordToolIO && len(info.Input) > 0 {
+				toolSpan.AddEvent("goai.tool.input", trace.WithAttributes(
+					attribute.String("goai.tool.input", string(info.Input)),
+				))
+			}
+
 			toolMu.Lock()
 			toolSpans[info.ToolCallID] = toolSpan
 			toolMu.Unlock()
@@ -301,10 +365,83 @@ func run(cfg config) []goai.Option {
 			if ok {
 				delete(toolSpans, info.ToolCallID)
 			}
+
+			// Read per-tool state from B/C hooks.
+			skipReason := toolSkipReasons[info.ToolCallID]
+			delete(toolSkipReasons, info.ToolCallID)
+			inputOverridden := toolInputOverrides[info.ToolCallID]
+			delete(toolInputOverrides, info.ToolCallID)
+			ctxOverridden := toolCtxOverridden[info.ToolCallID]
+			delete(toolCtxOverridden, info.ToolCallID)
+			ctxDeadline := toolCtxDeadlines[info.ToolCallID]
+			delete(toolCtxDeadlines, info.ToolCallID)
+			outputModified := toolOutputModified[info.ToolCallID]
+			delete(toolOutputModified, info.ToolCallID)
+			errModified := toolErrorModified[info.ToolCallID]
+			delete(toolErrorModified, info.ToolCallID)
 			toolMu.Unlock()
 
 			if !ok {
 				return
+			}
+
+			// A1: annotate skipped tools.
+			if info.Skipped {
+				toolSpan.SetAttributes(attribute.Bool("goai.tool.skipped", true))
+				// B1: skip reason attribution.
+				if skipReason != "" {
+					toolSpan.AddEvent("goai.tool.skipped", trace.WithAttributes(
+						attribute.String("goai.tool.skip_reason", skipReason),
+					))
+				}
+			}
+
+			// A2: record metadata from OnAfterToolExecute.
+			for k, v := range info.Metadata {
+				switch val := v.(type) {
+				case string:
+					toolSpan.SetAttributes(attribute.String("goai.tool.metadata."+k, val))
+				case int:
+					toolSpan.SetAttributes(attribute.Int("goai.tool.metadata."+k, val))
+				case int64:
+					toolSpan.SetAttributes(attribute.Int64("goai.tool.metadata."+k, val))
+				case float64:
+					toolSpan.SetAttributes(attribute.Float64("goai.tool.metadata."+k, val))
+				case bool:
+					toolSpan.SetAttributes(attribute.Bool("goai.tool.metadata."+k, val))
+				}
+			}
+
+			// B2: input override detection.
+			if inputOverridden {
+				toolSpan.SetAttributes(attribute.Bool("goai.tool.input_overridden", true))
+			}
+
+			// B3: context override detection -- set unconditionally when ctx overridden.
+			if ctxOverridden {
+				toolSpan.SetAttributes(attribute.Bool("goai.tool.context_overridden", true))
+				if ctxDeadline != "" {
+					toolSpan.SetAttributes(attribute.String("goai.tool.deadline", ctxDeadline))
+				}
+			}
+
+			// C1: output modification detection.
+			if outputModified {
+				toolSpan.SetAttributes(attribute.Bool("goai.tool.output_modified", true))
+			}
+
+			// C2: error injection/replacement detection.
+			if errModified != "" {
+				toolSpan.AddEvent("goai.tool.error_modified", trace.WithAttributes(
+					attribute.String("goai.tool.error_modification", errModified),
+				))
+			}
+
+			// A7: record tool output as span event (respecting privacy opt-in).
+			if cfg.recordToolIO && info.Output != "" {
+				toolSpan.AddEvent("goai.tool.output", trace.WithAttributes(
+					attribute.String("goai.tool.output", info.Output),
+				))
 			}
 
 			if info.Error != nil {
@@ -313,18 +450,205 @@ func run(cfg config) []goai.Option {
 
 			toolSpan.End()
 
-			inst.toolDuration.Record(context.Background(), info.Duration.Seconds(),
-				metric.WithAttributes(attribute.String("gen_ai.tool.name", info.ToolName)),
-			)
+			// A1: skip recording tool duration metric when Skipped=true (0s pollutes histogram).
+			if !info.Skipped {
+				inst.toolDuration.Record(context.Background(), info.Duration.Seconds(),
+					metric.WithAttributes(attribute.String("gen_ai.tool.name", info.ToolName)),
+				)
+			}
 		}),
 
 		goai.WithOnStepFinish(func(sr goai.StepResult) {
+			// A6: record Sources, Response.Model, Response.ID, ProviderMetadata.
+			// The per-step LLM span has already ended in OnResponse, so these are set
+			// on rootSpan. In multi-step runs, later steps overwrite earlier values --
+			// only the last step's metadata survives. This is acceptable because the
+			// root span represents the overall operation, and the last step's response
+			// is the final answer. Per-step metadata is available on LLM spans via
+			// OnResponse attributes (usage, finish reason, etc.).
+			if rootSpan != nil {
+				if sr.Response.Model != "" {
+					rootSpan.SetAttributes(attribute.String("gen_ai.response.model", sr.Response.Model))
+				}
+				if sr.Response.ID != "" {
+					rootSpan.SetAttributes(attribute.String("gen_ai.response.id", sr.Response.ID))
+				}
+				if len(sr.Sources) > 0 {
+					sourceNames := make([]string, 0, len(sr.Sources))
+					for _, s := range sr.Sources {
+						if s.URL != "" {
+							sourceNames = append(sourceNames, s.URL)
+						} else if s.Title != "" {
+							sourceNames = append(sourceNames, s.Title)
+						}
+					}
+					if len(sourceNames) > 0 {
+						rootSpan.AddEvent("gen_ai.content.sources", trace.WithAttributes(
+							attribute.StringSlice("gen_ai.sources", sourceNames),
+						))
+					}
+				}
+				if len(sr.ProviderMetadata) > 0 {
+					for ns, data := range sr.ProviderMetadata {
+						for k, v := range data {
+							switch val := v.(type) {
+							case string:
+								rootSpan.SetAttributes(attribute.String("goai.provider_metadata."+ns+"."+k, val))
+							case float64:
+								rootSpan.SetAttributes(attribute.Float64("goai.provider_metadata."+ns+"."+k, val))
+							case bool:
+								rootSpan.SetAttributes(attribute.Bool("goai.provider_metadata."+ns+"."+k, val))
+							}
+						}
+					}
+				}
+			}
+
+			// D2: track termination reason.
+			// "natural" and "hook_stopped" are detected here in OnStepFinish.
+			// "max_steps" is detected in OnFinish via StepsExhausted.
 			if sr.FinishReason == provider.FinishToolCalls {
 				return // intermediate step -- more tool calls follow
 			}
-			end(sr.Text, sr.FinishReason)
+			if !hookStopped {
+				terminationReason = "natural"
+			}
+
+			// Store pending text/finishReason for OnFinish to flush.
+			// Do NOT call end() here -- OnFinish is the single closer.
+			pendingText = sr.Text
+			pendingFinishReason = sr.FinishReason
 		}),
 	}
+
+	// OnFinish: fires once after all steps complete. Handles termination reason
+	// detection (including max_steps via StepsExhausted) and ensures end() is called
+	// for all exit paths.
+	opts = append(opts, goai.WithOnFinish(func(info goai.FinishInfo) {
+		if info.StepsExhausted {
+			terminationReason = "max_steps"
+		}
+		// For hook_stopped, terminationReason was already set in OnBeforeStep wrapper.
+		// For natural, it was set in OnStepFinish (which stored text in pendingText).
+		// OnFinish is the single closer -- end() is only called here (and OnResponse error).
+		text := pendingText
+		fr := pendingFinishReason
+		if fr == "" {
+			fr = info.FinishReason
+		}
+		end(text, fr)
+	}))
+
+	// Section 7.1: Wrapper pattern for singleton hooks (B/C/D categories).
+
+	// B1-B4: OnBeforeToolExecute wrapper.
+	opts = append(opts, goai.WrapOnBeforeToolExecute(func(userHook func(goai.BeforeToolExecuteInfo) goai.BeforeToolExecuteResult) func(goai.BeforeToolExecuteInfo) goai.BeforeToolExecuteResult {
+		return func(info goai.BeforeToolExecuteInfo) goai.BeforeToolExecuteResult {
+			var result goai.BeforeToolExecuteResult
+			if userHook != nil {
+				result = userHook(info)
+			}
+
+			toolMu.Lock()
+			// B4: add pre-execution span event.
+			if toolSpan, ok := toolSpans[info.ToolCallID]; ok {
+				toolSpan.AddEvent("goai.tool.execute_start")
+			}
+
+			// B1: capture skip reason.
+			if result.Skip {
+				reason := "skipped by hook"
+				if result.Error != nil {
+					reason = result.Error.Error()
+				}
+				toolSkipReasons[info.ToolCallID] = reason
+			}
+			// B2: detect input override.
+			if result.Input != nil {
+				toolInputOverrides[info.ToolCallID] = true
+			}
+			// B3: detect context override with deadline extraction.
+			if result.Ctx != nil {
+				toolCtxOverridden[info.ToolCallID] = true
+				if dl, ok := result.Ctx.Deadline(); ok {
+					toolCtxDeadlines[info.ToolCallID] = dl.Format("2006-01-02T15:04:05.000Z07:00")
+				}
+			}
+			toolMu.Unlock()
+
+			return result
+		}
+	}))
+
+	// C1-C3: OnAfterToolExecute wrapper.
+	opts = append(opts, goai.WrapOnAfterToolExecute(func(userHook func(goai.AfterToolExecuteInfo) goai.AfterToolExecuteResult) func(goai.AfterToolExecuteInfo) goai.AfterToolExecuteResult {
+		return func(info goai.AfterToolExecuteInfo) goai.AfterToolExecuteResult {
+			var result goai.AfterToolExecuteResult
+			if userHook != nil {
+				result = userHook(info)
+			}
+
+			toolMu.Lock()
+			// C3: add timing boundary event.
+			if toolSpan, ok := toolSpans[info.ToolCallID]; ok {
+				toolSpan.AddEvent("goai.tool.after_execute")
+			}
+
+			// C1: detect output modification.
+			if result.Output != "" && result.Output != info.Output {
+				toolOutputModified[info.ToolCallID] = true
+			}
+			// C2: detect error injection/replacement.
+			if result.Error != nil {
+				if info.Error == nil {
+					toolErrorModified[info.ToolCallID] = "injected"
+				} else if result.Error.Error() != info.Error.Error() {
+					toolErrorModified[info.ToolCallID] = "replaced"
+				}
+			}
+			toolMu.Unlock()
+
+			return result
+		}
+	}))
+
+	// D1, D3-D4: OnBeforeStep wrapper.
+	opts = append(opts, goai.WrapOnBeforeStep(func(userHook func(goai.BeforeStepInfo) goai.BeforeStepResult) func(goai.BeforeStepInfo) goai.BeforeStepResult {
+		return func(info goai.BeforeStepInfo) goai.BeforeStepResult {
+			var result goai.BeforeStepResult
+			if userHook != nil {
+				result = userHook(info)
+			}
+
+			// D1: detect loop termination signal.
+			if result.Stop {
+				hookStopped = true
+				hookStoppedAtStep = info.Step
+				terminationReason = "hook_stopped"
+				if rootSpan != nil {
+					rootSpan.AddEvent("goai.loop.stopped", trace.WithAttributes(
+						attribute.Int("goai.step", info.Step),
+					))
+					inst.earlyStopCounter.Add(context.Background(), 1)
+				}
+				// end() is called by OnFinish (which fires after the loop exits).
+			}
+
+			// D3: track injected messages.
+			if len(result.ExtraMessages) > 0 {
+				pendingInjectedMessages = len(result.ExtraMessages)
+			}
+
+			// D4: conversation size monitoring.
+			if rootSpan != nil {
+				inst.messageCount.Record(context.Background(), int64(len(info.Messages)),
+					metric.WithAttributes(attribute.Int("goai.step", info.Step)),
+				)
+			}
+
+			return result
+		}
+	}))
 
 	end = func(text string, finishReason provider.FinishReason) {
 		if rootSpan == nil {
@@ -341,6 +665,27 @@ func run(cfg config) []goai.Option {
 			rootSpan.SetAttributes(
 				attribute.StringSlice("gen_ai.response.finish_reasons", []string{string(finishReason)}),
 			)
+		}
+
+		// D1: annotate root span with hook_stopped.
+		if hookStopped {
+			rootSpan.SetAttributes(
+				attribute.Bool("goai.stopped_by_hook", true),
+				attribute.Int("goai.stopped_at_step", hookStoppedAtStep),
+			)
+		}
+
+		// D2: set termination reason on root span.
+		if terminationReason != "" {
+			rootSpan.SetAttributes(attribute.String("goai.termination_reason", terminationReason))
+		}
+
+		// End any orphaned LLM span (e.g., drainStep error or empty step where
+		// OnResponse never fired to end it). Safe to call even if llmSpan is nil.
+		if llmSpan != nil {
+			llmSpan.SetStatus(codes.Error, "stream terminated before response")
+			llmSpan.End()
+			llmSpan = nil
 		}
 
 		rootSpan.End()
