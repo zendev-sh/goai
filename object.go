@@ -62,8 +62,10 @@ type ObjectStream[T any] struct {
 	partialCh <-chan *T
 
 	// Hook support.
-	onResponse []func(ResponseInfo)
-	startTime  time.Time
+	onResponse   []func(ResponseInfo)
+	onStepFinish []func(StepResult)
+	onFinish     []func(FinishInfo)
+	startTime    time.Time
 
 	// Accumulated state.
 	text             strings.Builder
@@ -159,6 +161,43 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 	}
 	if partialOut != nil {
 		defer close(partialOut)
+	}
+
+	// Call OnFinish hook when consume finishes (single-step streaming).
+	// Deferred BEFORE OnStepFinish so it runs AFTER it (LIFO order).
+	if len(os.onFinish) > 0 {
+		defer func() {
+			fireOnFinish(os.onFinish, FinishInfo{
+				TotalSteps:   1,
+				TotalUsage:   os.usage,
+				FinishReason: os.finishReason,
+			})
+		}()
+	}
+
+	// Call OnStepFinish hook when consume finishes (single-step streaming).
+	// Deferred BEFORE OnResponse so it runs AFTER it (LIFO order).
+	if len(os.onStepFinish) > 0 {
+		defer func() {
+			stepResult := StepResult{
+				Number:       1,
+				Text:         os.text.String(),
+				FinishReason: os.finishReason,
+				Usage:        os.usage,
+				Response:     os.response,
+				ProviderMetadata: os.providerMetadata,
+			}
+			for _, fn := range os.onStepFinish {
+				func(f func(StepResult)) {
+					defer func() {
+						if r := recover(); r != nil {
+							_, _ = fmt.Fprintf(osStderr, "goai: recovered panic in hook: %v\n", r)
+						}
+					}()
+					f(stepResult)
+				}(fn)
+			}
+		}()
 	}
 
 	// Call OnResponse hook when consume finishes (after all chunks processed).
@@ -344,19 +383,35 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 		})
 
 		for _, fn := range o.OnResponse {
-			info := ResponseInfo{Latency: time.Since(start), Error: err}
-			if err == nil {
-				info.Usage = result.Usage
-				info.FinishReason = result.FinishReason
-			}
-			var apiErr *APIError
-			if errors.As(err, &apiErr) {
-				info.StatusCode = apiErr.StatusCode
-			}
-			fn(info)
+			func(f func(ResponseInfo)) {
+				defer func() {
+					if r := recover(); r != nil {
+						_, _ = fmt.Fprintf(osStderr, "goai: recovered panic in hook: %v\n", r)
+					}
+				}()
+				info := ResponseInfo{Latency: time.Since(start), Error: err}
+				if err == nil {
+					info.Usage = result.Usage
+					info.FinishReason = result.FinishReason
+				}
+				var apiErr *APIError
+				if errors.As(err, &apiErr) {
+					info.StatusCode = apiErr.StatusCode
+				}
+				f(info)
+			}(fn)
 		}
 
 		if err != nil {
+			lastFinish := provider.FinishReason("")
+			if len(steps) > 0 {
+				lastFinish = steps[len(steps)-1].FinishReason
+			}
+			fireOnFinish(o.OnFinish, FinishInfo{
+				TotalSteps:   len(steps),
+				TotalUsage:   totalUsage,
+				FinishReason: lastFinish,
+			})
 			return nil, err
 		}
 
@@ -399,6 +454,11 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 				// Raw model output is truncated to 200 chars to limit information disclosure.
 				return nil, fmt.Errorf("parsing structured output: %w (raw: %s)", err, truncate(text, 200))
 			}
+			fireOnFinish(o.OnFinish, FinishInfo{
+				TotalSteps:   len(steps),
+				TotalUsage:   totalUsage,
+				FinishReason: result.FinishReason,
+			})
 			return &ObjectResult[T]{
 				Object:           obj,
 				Usage:            totalUsage,
@@ -425,6 +485,16 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 	}
 
 	// MaxSteps exhausted with tool calls still pending — no structured output produced.
+	lastFinish := provider.FinishReason("")
+	if len(steps) > 0 {
+		lastFinish = steps[len(steps)-1].FinishReason
+	}
+	fireOnFinish(o.OnFinish, FinishInfo{
+		StepsExhausted: true,
+		TotalSteps:     len(steps),
+		TotalUsage:     totalUsage,
+		FinishReason:   lastFinish,
+	})
 	return nil, fmt.Errorf("goai: max steps (%d) reached without producing structured output", o.MaxSteps)
 }
 
@@ -485,12 +555,19 @@ func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts
 			timeoutCancel()
 		}
 		for _, fn := range o.OnResponse {
-			info := ResponseInfo{Latency: time.Since(start), Error: err}
-			var apiErr *APIError
-			if errors.As(err, &apiErr) {
-				info.StatusCode = apiErr.StatusCode
-			}
-			fn(info)
+			func(f func(ResponseInfo)) {
+				defer func() {
+					if r := recover(); r != nil {
+						_, _ = fmt.Fprintf(osStderr, "goai: recovered panic in hook: %v\n", r)
+					}
+				}()
+				info := ResponseInfo{Latency: time.Since(start), Error: err}
+				var apiErr *APIError
+				if errors.As(err, &apiErr) {
+					info.StatusCode = apiErr.StatusCode
+				}
+				f(info)
+			}(fn)
 		}
 		return nil, err
 	}
@@ -498,6 +575,8 @@ func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts
 	os := newObjectStream[T](ctx, result.Stream)
 	os.timeoutCancel = timeoutCancel
 	os.onResponse = o.OnResponse
+	os.onStepFinish = o.OnStepFinish
+	os.onFinish = o.OnFinish
 	os.startTime = start
 	return os, nil
 }

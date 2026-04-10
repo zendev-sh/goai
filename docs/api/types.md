@@ -241,9 +241,9 @@ type ToolCallInfo struct {
     Input        json.RawMessage // Raw JSON arguments passed to the tool.
     Output       string          // String result returned by the tool.
     OutputObject any             // Parsed JSON value of Output when the tool returned valid JSON; nil otherwise.
-    StartTime    time.Time       // When the tool execution began.
-    Duration     time.Duration   // How long execution took.
-    Skipped      bool            // True when execution was skipped by OnBeforeToolExecute.
+    StartTime    time.Time       // When tool execution began. Zero for unknown tools. For skipped tools, reflects skip decision time.
+    Duration     time.Duration   // Time from before Execute to after OnAfterToolExecute (includes hook overhead). Zero when Skipped.
+    Skipped      bool            // True when skipped by OnBeforeToolExecute. Duration is zero, StartTime reflects skip decision time.
     Error        error           // Non-nil if execution failed.
     Metadata     map[string]any  // Consumer metadata from OnAfterToolExecute (nil if not set).
 }
@@ -338,6 +338,19 @@ Controls behavior before the next LLM call.
 type BeforeStepResult struct {
     ExtraMessages []provider.Message // Appended before LLM call. Ignored when Stop is true.
     Stop          bool               // Terminate tool loop. ExtraMessages are ignored.
+}
+```
+
+### FinishInfo
+
+Passed to the `OnFinish` hook after all generation steps complete.
+
+```go
+type FinishInfo struct {
+    StepsExhausted bool               // True when MaxSteps reached while model still wanted tools.
+    TotalSteps     int                // Number of generation steps executed.
+    TotalUsage     provider.Usage     // Aggregated token usage across all steps.
+    FinishReason   provider.FinishReason // Finish reason from the last step.
 }
 ```
 

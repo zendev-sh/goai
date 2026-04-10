@@ -132,6 +132,7 @@ type TextStream struct {
 	// Hook support.
 	onResponse   []func(ResponseInfo)
 	onStepFinish []func(StepResult)
+	onFinish     []func(FinishInfo)
 	startTime    time.Time
 
 	// Accumulated state (written by consume goroutine, read after doneCh closes).
@@ -234,6 +235,20 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 	}
 	if textOut != nil {
 		defer close(textOut)
+	}
+
+	// Call OnFinish hook when consume finishes (single-step streaming only).
+	// For multi-step streaming (streamWithToolLoop), OnFinish fires inline in the
+	// goroutine and ts.onFinish is nil, so this block is skipped.
+	// Deferred BEFORE OnStepFinish so it runs AFTER it (LIFO order).
+	if len(ts.onFinish) > 0 {
+		defer func() {
+			fireOnFinish(ts.onFinish, FinishInfo{
+				TotalSteps:   1,
+				TotalUsage:   ts.usage,
+				FinishReason: ts.finishReason,
+			})
+		}()
 	}
 
 	// Call OnStepFinish hook when consume finishes (single-step streaming only).
@@ -691,18 +706,39 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 					// when the stream has errors.
 					provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: err})
 					provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: lastFinishReason, Usage: totalUsage})
+					// Fire OnFinish so observability hooks can close spans/flush traces.
+					lastFinish := provider.FinishReason("")
+					if len(steps) > 0 {
+						lastFinish = steps[len(steps)-1].FinishReason
+					}
+					fireOnFinish(o.OnFinish, FinishInfo{
+						TotalSteps:   len(steps),
+						TotalUsage:   totalUsage,
+						FinishReason: lastFinish,
+					})
 					return
 				}
 			}
 
 			ds := drainStep(ctx, result.Stream, out)
 			if ds.err != nil {
-				// responseMessages intentionally not set on error , buildResult falls back to
+				// responseMessages intentionally not set on error -- buildResult falls back to
 				// a minimal assistant message from accumulated text. Intermediate tool round-trip
 				// messages are lost. Callers should check Err() and not rely on ResponseMessages
 				// when the stream has errors.
 				provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: ds.err})
 				provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkFinish, Usage: totalUsage})
+				// Fire OnFinish so observability hooks can close spans/flush traces.
+				// Without this, OTel root spans leak and Langfuse traces are lost.
+				lastFinish := provider.FinishReason("")
+				if len(steps) > 0 {
+					lastFinish = steps[len(steps)-1].FinishReason
+				}
+				fireOnFinish(o.OnFinish, FinishInfo{
+					TotalSteps:   len(steps),
+					TotalUsage:   totalUsage,
+					FinishReason: lastFinish,
+				})
 				return
 			}
 
@@ -813,6 +849,13 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 		ts.stepsExhausted = stepsExhausted
 		ts.responseMessages = buildResponseMessages(params.Messages[originalLen:], steps, lastReasoning)
 
+		fireOnFinish(o.OnFinish, FinishInfo{
+			StepsExhausted: stepsExhausted,
+			TotalSteps:     len(steps),
+			TotalUsage:     totalUsage,
+			FinishReason:   lastFinishReason,
+		})
+
 		// Emit final ChunkFinish with total usage and last step Response metadata.
 		provider.TrySend(ctx, out, provider.StreamChunk{
 			Type:         provider.ChunkFinish,
@@ -888,6 +931,7 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 	ts.timeoutCancel = timeoutCancel
 	ts.onResponse = o.OnResponse
 	ts.onStepFinish = o.OnStepFinish
+	ts.onFinish = o.OnFinish
 	ts.startTime = start
 	return ts, nil
 }
@@ -982,6 +1026,18 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		}
 
 		if err != nil {
+			// Fire OnFinish so user hooks can observe error termination.
+			// Observability hooks (OTel/Langfuse) already handle this via OnResponse
+			// error -> end(), but user-registered OnFinish hooks need this signal.
+			lastFinish := provider.FinishReason("")
+			if len(steps) > 0 {
+				lastFinish = steps[len(steps)-1].FinishReason
+			}
+			fireOnFinish(o.OnFinish, FinishInfo{
+				TotalSteps:   len(steps),
+				TotalUsage:   totalUsage,
+				FinishReason: lastFinish,
+			})
 			return nil, err
 		}
 
@@ -1023,6 +1079,11 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		if result.FinishReason != provider.FinishToolCalls || len(result.ToolCalls) == 0 || len(toolMap) == 0 {
 			tr := buildTextResult(steps, totalUsage)
 			tr.ResponseMessages = buildResponseMessages(params.Messages[originalLen:], steps, nil)
+			fireOnFinish(o.OnFinish, FinishInfo{
+				TotalSteps:   len(steps),
+				TotalUsage:   totalUsage,
+				FinishReason: tr.FinishReason,
+			})
 			return tr, nil
 		}
 
@@ -1042,13 +1103,37 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		params.Messages = appendToolRoundTrip(params.Messages, result.Text, nil, result.ToolCalls, toolMessages)
 	}
 
-	// MaxSteps reached. This path is only reachable when the last step had tool calls
-	// (if it had no tool calls, the early return at line ~1023 would have fired).
-	// Set StepsExhausted = true -- the model wanted to continue but was cut short.
+	// Post-loop: reachable when MaxSteps was exhausted OR when OnBeforeStep.Stop=true
+	// caused a break. Only set StepsExhausted when MaxSteps was actually reached AND
+	// the last step still had tool calls pending (model wanted to continue but was cut
+	// short). This matches StreamText's conditional logic and correctly distinguishes
+	// "hook stopped" (StepsExhausted=false) from "max steps" (StepsExhausted=true).
 	tr := buildTextResult(steps, totalUsage)
-	tr.StepsExhausted = true
+	if len(steps) >= o.MaxSteps && len(steps) > 0 && len(steps[len(steps)-1].ToolCalls) > 0 {
+		tr.StepsExhausted = true
+	}
 	tr.ResponseMessages = buildResponseMessages(params.Messages[originalLen:], steps, nil)
+	fireOnFinish(o.OnFinish, FinishInfo{
+		StepsExhausted: tr.StepsExhausted,
+		TotalSteps:     len(steps),
+		TotalUsage:     totalUsage,
+		FinishReason:   tr.FinishReason,
+	})
 	return tr, nil
+}
+
+// fireOnFinish calls all OnFinish hooks with individual panic recovery.
+func fireOnFinish(hooks []func(FinishInfo), info FinishInfo) {
+	for _, fn := range hooks {
+		func(f func(FinishInfo)) {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Fprintf(os.Stderr, "goai: recovered panic in OnFinish hook: %v\n", r)
+				}
+			}()
+			f(info)
+		}(fn)
+	}
 }
 
 // requestMessages returns msgs with a system message prepended when system is non-empty.

@@ -1644,3 +1644,875 @@ func TestWithTracing_OnFlushError(t *testing.T) {
 		t.Error("OnFlushError should have been called with a non-nil error via WithTracing")
 	}
 }
+
+// --- Enhancement tests (A/B/C/D/E/G categories) ----------------------------
+
+// toolSpanBodies returns all span bodies for non-agent spans (tool spans).
+func toolSpanBodies(t *testing.T, events []map[string]any) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, e := range events {
+		if e["type"] != eventSpan {
+			continue
+		}
+		b, ok := e["body"].(map[string]any)
+		if !ok {
+			continue
+		}
+		// Skip the agent span (has no parentObservationId or matches trace name)
+		if _, hasParent := b["parentObservationId"]; !hasParent {
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
+// genBodies returns all generation bodies.
+func genBodies(t *testing.T, events []map[string]any) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, e := range events {
+		if e["type"] == eventGeneration {
+			if b, ok := e["body"].(map[string]any); ok {
+				out = append(out, b)
+			}
+		}
+	}
+	return out
+}
+
+// traceBodies returns all trace bodies.
+func traceBodies(t *testing.T, events []map[string]any) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, e := range events {
+		if e["type"] == eventTrace {
+			if b, ok := e["body"].(map[string]any); ok {
+				out = append(out, b)
+			}
+		}
+	}
+	return out
+}
+
+// toolModel returns a mock model that issues one tool call then finishes.
+func toolModel() (*mockModel, *int) {
+	callCount := new(int)
+	m := &mockModel{
+		id: "test-model",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			*callCount++
+			if *callCount == 1 {
+				return &provider.GenerateResult{
+					ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "my_tool", Input: json.RawMessage(`{}`)}},
+					FinishReason: provider.FinishToolCalls,
+					Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         "done",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 20, OutputTokens: 8},
+			}, nil
+		},
+	}
+	return m, callCount
+}
+
+func defaultTool() goai.Tool {
+	return goai.Tool{
+		Name:    "my_tool",
+		Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "tool result", nil },
+	}
+}
+
+func TestWithTracing_A1_SkippedTools(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model, _ := toolModel()
+
+	_, err := goai.GenerateText(t.Context(), model,
+		goai.WithOnBeforeToolExecute(func(info goai.BeforeToolExecuteInfo) goai.BeforeToolExecuteResult {
+			return goai.BeforeToolExecuteResult{Skip: true, Result: "skipped"}
+		}),
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(defaultTool()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	spans := toolSpanBodies(t, events)
+	if len(spans) == 0 {
+		t.Fatal("expected at least one tool span")
+	}
+
+	span := spans[0]
+	meta, ok := span["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool span metadata missing or wrong type: %T", span["metadata"])
+	}
+	if meta["skipped"] != true {
+		t.Errorf("metadata.skipped = %v, want true", meta["skipped"])
+	}
+	if span["level"] != levelWarning {
+		t.Errorf("level = %v, want %q", span["level"], levelWarning)
+	}
+}
+
+func TestWithTracing_A2_Metadata(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model, _ := toolModel()
+
+	_, err := goai.GenerateText(t.Context(), model,
+		goai.WithOnAfterToolExecute(func(info goai.AfterToolExecuteInfo) goai.AfterToolExecuteResult {
+			return goai.AfterToolExecuteResult{
+				Metadata: map[string]any{"custom_key": "custom_value"},
+			}
+		}),
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(defaultTool()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	spans := toolSpanBodies(t, events)
+	if len(spans) == 0 {
+		t.Fatal("expected at least one tool span")
+	}
+
+	meta, ok := spans[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool span metadata missing: %T", spans[0]["metadata"])
+	}
+	if meta["custom_key"] != "custom_value" {
+		t.Errorf("metadata.custom_key = %v, want %q", meta["custom_key"], "custom_value")
+	}
+}
+
+func TestWithTracing_A3_MessageCount_ToolCount(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model, _ := toolModel()
+
+	_, err := goai.GenerateText(t.Context(), model,
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(defaultTool()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	gens := genBodies(t, events)
+	if len(gens) == 0 {
+		t.Fatal("expected at least one generation event")
+	}
+
+	for i, gen := range gens {
+		meta, ok := gen["metadata"].(map[string]any)
+		if !ok {
+			t.Fatalf("generation[%d] metadata missing: %T", i, gen["metadata"])
+		}
+		if _, ok := meta["message_count"]; !ok {
+			t.Errorf("generation[%d] metadata missing message_count", i)
+		}
+		if _, ok := meta["tool_count"]; !ok {
+			t.Errorf("generation[%d] metadata missing tool_count", i)
+		}
+	}
+
+	// First generation should have tool_count=1 (one tool registered).
+	meta0 := gens[0]["metadata"].(map[string]any)
+	if meta0["tool_count"] != float64(1) {
+		t.Errorf("generation[0] tool_count = %v, want 1", meta0["tool_count"])
+	}
+}
+
+func TestWithTracing_A5_StatusCode(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model := &mockModel{
+		id: "test-model",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return nil, &goai.APIError{
+				Message:    "rate limited",
+				StatusCode: 429,
+			}
+		},
+	}
+
+	_, err := goai.GenerateText(t.Context(), model,
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+		goai.WithMaxRetries(0),
+	)
+	if err == nil {
+		t.Fatal("expected error from model")
+	}
+
+	events := getEvents()
+	gens := genBodies(t, events)
+	if len(gens) == 0 {
+		t.Fatal("expected at least one generation event")
+	}
+
+	meta, ok := gens[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("generation metadata missing: %T", gens[0]["metadata"])
+	}
+	if meta["http_status_code"] != float64(429) {
+		t.Errorf("metadata.http_status_code = %v, want 429", meta["http_status_code"])
+	}
+}
+
+func TestWithTracing_A6_StepResultFields(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model := &mockModel{
+		id: "test-model",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         "hello",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+				Sources: []provider.Source{
+					{ID: "src1", URL: "https://example.com", Type: "url"},
+				},
+				Response: provider.ResponseMetadata{
+					ID:    "resp-123",
+					Model: "gpt-4o-2024-05-13",
+				},
+				ProviderMetadata: map[string]map[string]any{
+					"openai": {"system_fingerprint": "fp_abc"},
+				},
+			}, nil
+		},
+	}
+
+	_, err := goai.GenerateText(t.Context(), model,
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	gens := genBodies(t, events)
+	if len(gens) == 0 {
+		t.Fatal("expected at least one generation event")
+	}
+
+	meta, ok := gens[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("generation metadata missing: %T", gens[0]["metadata"])
+	}
+	if meta["response_model"] != "gpt-4o-2024-05-13" {
+		t.Errorf("metadata.response_model = %v, want %q", meta["response_model"], "gpt-4o-2024-05-13")
+	}
+	if meta["response_id"] != "resp-123" {
+		t.Errorf("metadata.response_id = %v, want %q", meta["response_id"], "resp-123")
+	}
+	if meta["sources"] == nil {
+		t.Error("metadata.sources missing")
+	}
+	if meta["provider_metadata.openai.system_fingerprint"] != "fp_abc" {
+		t.Errorf("metadata provider_metadata.openai.system_fingerprint = %v, want %q",
+			meta["provider_metadata.openai.system_fingerprint"], "fp_abc")
+	}
+}
+
+func TestWithTracing_B1_SkipReason(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model, _ := toolModel()
+
+	_, err := goai.GenerateText(t.Context(), model,
+		goai.WithOnBeforeToolExecute(func(info goai.BeforeToolExecuteInfo) goai.BeforeToolExecuteResult {
+			return goai.BeforeToolExecuteResult{
+				Skip:  true,
+				Error: fmt.Errorf("permission denied for %s", info.ToolName),
+			}
+		}),
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(defaultTool()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	spans := toolSpanBodies(t, events)
+	if len(spans) == 0 {
+		t.Fatal("expected at least one tool span")
+	}
+
+	statusMsg, _ := spans[0]["statusMessage"].(string)
+	if !strings.Contains(statusMsg, "permission denied") {
+		t.Errorf("statusMessage = %q, want to contain %q", statusMsg, "permission denied")
+	}
+}
+
+func TestWithTracing_B2_InputOverride(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model, _ := toolModel()
+
+	_, err := goai.GenerateText(t.Context(), model,
+		goai.WithOnBeforeToolExecute(func(info goai.BeforeToolExecuteInfo) goai.BeforeToolExecuteResult {
+			return goai.BeforeToolExecuteResult{
+				Input: json.RawMessage(`{"overridden": true}`),
+			}
+		}),
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(defaultTool()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	spans := toolSpanBodies(t, events)
+	if len(spans) == 0 {
+		t.Fatal("expected at least one tool span")
+	}
+
+	meta, ok := spans[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool span metadata missing: %T", spans[0]["metadata"])
+	}
+	if meta["input_overridden"] != true {
+		t.Errorf("metadata.input_overridden = %v, want true", meta["input_overridden"])
+	}
+}
+
+func TestWithTracing_B3_ContextOverride(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model, _ := toolModel()
+
+	_, err := goai.GenerateText(t.Context(), model,
+		goai.WithOnBeforeToolExecute(func(info goai.BeforeToolExecuteInfo) goai.BeforeToolExecuteResult {
+			return goai.BeforeToolExecuteResult{
+				Ctx: context.WithValue(info.Ctx, struct{}{}, "custom"),
+			}
+		}),
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(defaultTool()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	spans := toolSpanBodies(t, events)
+	if len(spans) == 0 {
+		t.Fatal("expected at least one tool span")
+	}
+
+	meta, ok := spans[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool span metadata missing: %T", spans[0]["metadata"])
+	}
+	if meta["context_overridden"] != true {
+		t.Errorf("metadata.context_overridden = %v, want true", meta["context_overridden"])
+	}
+}
+
+func TestWithTracing_C1_OutputModified(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model, _ := toolModel()
+
+	_, err := goai.GenerateText(t.Context(), model,
+		goai.WithOnAfterToolExecute(func(info goai.AfterToolExecuteInfo) goai.AfterToolExecuteResult {
+			return goai.AfterToolExecuteResult{
+				Output: "modified output",
+			}
+		}),
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(defaultTool()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	spans := toolSpanBodies(t, events)
+	if len(spans) == 0 {
+		t.Fatal("expected at least one tool span")
+	}
+
+	meta, ok := spans[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool span metadata missing: %T", spans[0]["metadata"])
+	}
+	if meta["output_modified"] != true {
+		t.Errorf("metadata.output_modified = %v, want true", meta["output_modified"])
+	}
+}
+
+func TestWithTracing_C2_ErrorInjected(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model, _ := toolModel()
+
+	_, err := goai.GenerateText(t.Context(), model,
+		goai.WithOnAfterToolExecute(func(info goai.AfterToolExecuteInfo) goai.AfterToolExecuteResult {
+			return goai.AfterToolExecuteResult{
+				Error: fmt.Errorf("injected error"),
+			}
+		}),
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(defaultTool()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	spans := toolSpanBodies(t, events)
+	if len(spans) == 0 {
+		t.Fatal("expected at least one tool span")
+	}
+
+	meta, ok := spans[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool span metadata missing: %T", spans[0]["metadata"])
+	}
+	if meta["error_injected"] != true {
+		t.Errorf("metadata.error_injected = %v, want true", meta["error_injected"])
+	}
+}
+
+func TestWithTracing_D1_HookStopped(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model, _ := toolModel()
+
+	_, err := goai.GenerateText(t.Context(), model,
+		goai.WithOnBeforeStep(func(info goai.BeforeStepInfo) goai.BeforeStepResult {
+			return goai.BeforeStepResult{Stop: true}
+		}),
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(5),
+		goai.WithTools(defaultTool()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	traces := traceBodies(t, events)
+	if len(traces) == 0 {
+		t.Fatal("expected at least one trace event")
+	}
+
+	meta, ok := traces[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("trace metadata missing: %T", traces[0]["metadata"])
+	}
+	if meta["stopped_by_hook"] != true {
+		t.Errorf("metadata.stopped_by_hook = %v, want true", meta["stopped_by_hook"])
+	}
+}
+
+func TestWithTracing_D2_TerminationReason_Natural(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model := &mockModel{
+		id: "test-model",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         "done",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+			}, nil
+		},
+	}
+
+	_, err := goai.GenerateText(t.Context(), model,
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	traces := traceBodies(t, events)
+	if len(traces) == 0 {
+		t.Fatal("expected at least one trace event")
+	}
+
+	meta, ok := traces[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("trace metadata missing: %T", traces[0]["metadata"])
+	}
+	if meta["termination_reason"] != "natural" {
+		t.Errorf("metadata.termination_reason = %v, want %q", meta["termination_reason"], "natural")
+	}
+}
+
+func TestWithTracing_D2_TerminationReason_HookStopped(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model, _ := toolModel()
+
+	_, err := goai.GenerateText(t.Context(), model,
+		goai.WithOnBeforeStep(func(info goai.BeforeStepInfo) goai.BeforeStepResult {
+			return goai.BeforeStepResult{Stop: true}
+		}),
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(5),
+		goai.WithTools(defaultTool()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	traces := traceBodies(t, events)
+	if len(traces) == 0 {
+		t.Fatal("expected at least one trace event")
+	}
+
+	meta, ok := traces[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("trace metadata missing: %T", traces[0]["metadata"])
+	}
+	if meta["termination_reason"] != "hook_stopped" {
+		t.Errorf("metadata.termination_reason = %v, want %q", meta["termination_reason"], "hook_stopped")
+	}
+}
+
+func TestWithTracing_D3_ExtraMessages(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model, _ := toolModel()
+
+	_, err := goai.GenerateText(t.Context(), model,
+		goai.WithOnBeforeStep(func(info goai.BeforeStepInfo) goai.BeforeStepResult {
+			return goai.BeforeStepResult{
+				ExtraMessages: []provider.Message{
+					{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "extra context"}}},
+				},
+			}
+		}),
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(defaultTool()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	gens := genBodies(t, events)
+	// The second generation (step 2) should have injected_messages in metadata.
+	if len(gens) < 2 {
+		t.Fatalf("expected at least 2 generations, got %d", len(gens))
+	}
+
+	meta, ok := gens[1]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("generation[1] metadata missing: %T", gens[1]["metadata"])
+	}
+	if meta["injected_messages"] != float64(1) {
+		t.Errorf("metadata.injected_messages = %v, want 1", meta["injected_messages"])
+	}
+}
+
+func TestWithTracing_E1_EagerToolSpans(t *testing.T) {
+	// Track the number of flushes (HTTP requests) to the capture server.
+	var mu sync.Mutex
+	var flushCount int
+	var allEvents []map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		var payload struct {
+			Batch []map[string]any `json:"batch"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		flushCount++
+		allEvents = append(allEvents, payload.Batch...)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	model, _ := toolModel()
+
+	_, err := goai.GenerateText(t.Context(), model,
+		WithTracing(
+			PublicKey("pub"),
+			SecretKey("sec"),
+			Host(srv.URL),
+			EagerToolSpans(true),
+		),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(defaultTool()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// With EagerToolSpans, there should be at least 2 flushes:
+	// one eager flush during tool execution, one final flush.
+	if flushCount < 2 {
+		t.Errorf("flush count = %d, want >= 2 (eager + final)", flushCount)
+	}
+
+	// Verify the eager span has "in_progress" status in metadata.
+	var foundEager bool
+	for _, e := range allEvents {
+		if e["type"] != eventSpan {
+			continue
+		}
+		b, ok := e["body"].(map[string]any)
+		if !ok {
+			continue
+		}
+		meta, ok := b["metadata"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if meta["status"] == "in_progress" {
+			foundEager = true
+			break
+		}
+	}
+	if !foundEager {
+		t.Error("expected an eager tool span with metadata.status='in_progress'")
+	}
+}
+
+// NOTE: G1 (panic recovery in GenerateObject OnResponse) and G3 (StepsExhausted
+// not set by OnBeforeStep.Stop) are bugs in the main goai package, not the
+// langfuse observability layer. Their tests belong in the goai package's test files
+// (generate_test.go / object_test.go). They are noted here for traceability.
+
+func TestWithTracing_WrapperPattern_UserHookHonored(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model, _ := toolModel()
+
+	var userHookCalled bool
+	_, err := goai.GenerateText(t.Context(), model,
+		goai.WithOnBeforeToolExecute(func(info goai.BeforeToolExecuteInfo) goai.BeforeToolExecuteResult {
+			userHookCalled = true
+			return goai.BeforeToolExecuteResult{Skip: true, Result: "user-skipped"}
+		}),
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(defaultTool()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !userHookCalled {
+		t.Error("user OnBeforeToolExecute hook was not called")
+	}
+
+	events := getEvents()
+	spans := toolSpanBodies(t, events)
+	if len(spans) == 0 {
+		t.Fatal("expected at least one tool span")
+	}
+
+	// User's Skip=true should be honored: tool span should have metadata.skipped=true.
+	meta, ok := spans[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool span metadata missing: %T", spans[0]["metadata"])
+	}
+	if meta["skipped"] != true {
+		t.Errorf("metadata.skipped = %v, want true (user's Skip should be honored)", meta["skipped"])
+	}
+}
+
+func TestWithTracing_WrapperPattern_UserAfterHookHonored(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model, _ := toolModel()
+
+	var userHookCalled bool
+	_, err := goai.GenerateText(t.Context(), model,
+		goai.WithOnAfterToolExecute(func(info goai.AfterToolExecuteInfo) goai.AfterToolExecuteResult {
+			userHookCalled = true
+			return goai.AfterToolExecuteResult{
+				Output:   "user-modified",
+				Metadata: map[string]any{"from_user": true},
+			}
+		}),
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(defaultTool()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !userHookCalled {
+		t.Error("user OnAfterToolExecute hook was not called")
+	}
+
+	events := getEvents()
+	spans := toolSpanBodies(t, events)
+	if len(spans) == 0 {
+		t.Fatal("expected at least one tool span")
+	}
+
+	meta, ok := spans[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool span metadata missing: %T", spans[0]["metadata"])
+	}
+	// User's metadata should be present.
+	if meta["from_user"] != true {
+		t.Errorf("metadata.from_user = %v, want true", meta["from_user"])
+	}
+	// Tracing layer should detect the output modification.
+	if meta["output_modified"] != true {
+		t.Errorf("metadata.output_modified = %v, want true", meta["output_modified"])
+	}
+}
+
+func TestWithTracing_WrapperPattern_UserBeforeStepHonored(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	model, _ := toolModel()
+
+	var userHookCalled bool
+	_, err := goai.GenerateText(t.Context(), model,
+		goai.WithOnBeforeStep(func(info goai.BeforeStepInfo) goai.BeforeStepResult {
+			userHookCalled = true
+			return goai.BeforeStepResult{Stop: true}
+		}),
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(5),
+		goai.WithTools(defaultTool()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !userHookCalled {
+		t.Error("user OnBeforeStep hook was not called")
+	}
+
+	events := getEvents()
+	traces := traceBodies(t, events)
+	if len(traces) == 0 {
+		t.Fatal("expected at least one trace event")
+	}
+
+	meta, ok := traces[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("trace metadata missing: %T", traces[0]["metadata"])
+	}
+	if meta["stopped_by_hook"] != true {
+		t.Errorf("metadata.stopped_by_hook = %v, want true", meta["stopped_by_hook"])
+	}
+	if meta["termination_reason"] != "hook_stopped" {
+		t.Errorf("metadata.termination_reason = %v, want %q", meta["termination_reason"], "hook_stopped")
+	}
+}
+
+func TestWithTracing_D2_TerminationReason_MaxSteps(t *testing.T) {
+	srv, getEvents := newCaptureServer(t)
+	defer srv.Close()
+
+	// Model always returns tool calls, so MaxSteps will be exhausted.
+	model := &mockModel{
+		id: "test-model",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "my_tool", Input: json.RawMessage(`{}`)}},
+				FinishReason: provider.FinishToolCalls,
+				Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+			}, nil
+		},
+	}
+
+	_, err := goai.GenerateText(t.Context(), model,
+		WithTracing(PublicKey("pub"), SecretKey("sec"), Host(srv.URL)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(2),
+		goai.WithTools(defaultTool()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := getEvents()
+	traces := traceBodies(t, events)
+	if len(traces) == 0 {
+		t.Fatal("expected at least one trace event")
+	}
+
+	meta, ok := traces[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("trace metadata missing: %T", traces[0]["metadata"])
+	}
+	if meta["termination_reason"] != "max_steps" {
+		t.Errorf("metadata.termination_reason = %v, want %q", meta["termination_reason"], "max_steps")
+	}
+}

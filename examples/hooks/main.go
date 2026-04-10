@@ -2,10 +2,11 @@
 
 // Example: lifecycle hooks for tool interception, output transformation, and loop control.
 //
-// Demonstrates the three interceptor hooks:
+// Demonstrates the interceptor and observability hooks:
 //   - OnBeforeToolExecute: permission gate (skip dangerous tools)
 //   - OnAfterToolExecute: secret scanning (redact sensitive output)
 //   - OnBeforeStep: inject context between tool loop steps
+//   - OnFinish: detect max_steps exhaustion via StepsExhausted
 //
 // Usage:
 //
@@ -126,6 +127,18 @@ func main() {
 				status = "ERROR"
 			}
 			fmt.Printf("[TOOL] %s: %s (step %d, %s)\n", info.ToolName, status, info.Step, info.Duration)
+		}),
+
+		// Hook 4: OnFinish -- fires once after all steps complete.
+		goai.WithOnFinish(func(info goai.FinishInfo) {
+			status := "natural"
+			if info.StepsExhausted {
+				status = "max_steps"
+			}
+			fmt.Printf("[FINISH] %s: %d steps, %d tokens, reason=%s\n",
+				status, info.TotalSteps,
+				info.TotalUsage.InputTokens+info.TotalUsage.OutputTokens,
+				info.FinishReason)
 		}),
 	)
 	if err != nil {

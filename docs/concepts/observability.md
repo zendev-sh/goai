@@ -5,7 +5,7 @@ description: "Trace LLM calls, tool executions, and agent runs in GoAI. Plug-in 
 
 # Observability
 
-GoAI's observability is built on eight lifecycle hooks: `OnRequest`, `OnResponse`, `OnToolCallStart`, `OnToolCall`, `OnStepFinish`, `OnBeforeToolExecute`, `OnAfterToolExecute`, and `OnBeforeStep`. Any observability provider can plug into these hooks to trace LLM calls, tool executions, and multi-step agent runs.
+GoAI's observability is built on nine lifecycle hooks: `OnRequest`, `OnResponse`, `OnToolCallStart`, `OnToolCall`, `OnStepFinish`, `OnFinish`, `OnBeforeToolExecute`, `OnAfterToolExecute`, and `OnBeforeStep`. Any observability provider can plug into these hooks to trace LLM calls, tool executions, and multi-step agent runs.
 
 ## How It Works
 
@@ -29,11 +29,12 @@ Each hook fires at a specific point in the request lifecycle:
 | `OnToolCallStart` | Before each tool execution | Tool call ID, tool name, step, input        |
 | `OnToolCall`      | After each tool execution  | Tool name, input/output, duration, errors   |
 | `OnStepFinish`    | After each step completes  | Step number, finish reason, tool calls      |
+| `OnFinish`        | After all steps complete   | StepsExhausted, TotalSteps, TotalUsage, FinishReason |
 | `OnBeforeToolExecute`* | Before each tool's Execute function | Tool call ID, tool name, step, input; can skip execution |
 | `OnAfterToolExecute`*  | After each tool's Execute function  | Tool call ID, tool name, output, error; can modify output |
 | `OnBeforeStep`*        | Before each LLM call (step 2+)     | Step number, messages; can inject messages or stop loop   |
 
-*\* Interceptor hooks: only one callback supported per hook (setting a second replaces the first). The first five hooks support multiple callbacks.*
+*\* Interceptor hooks: only one callback supported per hook (setting a second replaces the first). The first six hooks support multiple callbacks.*
 
 This design means observability never touches the core SDK. Providers are optional imports with zero impact on non-instrumented code.
 
@@ -65,6 +66,9 @@ func MyTracer() []goai.Option {
         }),
         goai.WithOnStepFinish(func(step goai.StepResult) {
             // close span, flush
+        }),
+        goai.WithOnFinish(func(info goai.FinishInfo) {
+            // record final status, detect max_steps exhaustion
         }),
     }
 }
@@ -153,8 +157,16 @@ langfuse.WithTracing(
     langfuse.SessionID("session-abc123"),
     langfuse.Tags("prod", "v1"),
     langfuse.Release("2026.04.03"),
+    langfuse.Version("1.0.0"),
     langfuse.Environment("production"),
+    langfuse.Metadata(map[string]any{"key": "value"}),
+    langfuse.PromptName("my-prompt"),
+    langfuse.PromptVersion(1),
+    langfuse.PublicKey("pk-lf-..."),  // override env var
+    langfuse.SecretKey("sk-lf-..."),  // override env var
+    langfuse.Host("https://cloud.langfuse.com"), // override env var
     langfuse.OnFlushError(func(err error) { log.Printf("langfuse flush error: %v", err) }),
+    langfuse.EagerToolSpans(true), // opt-in: real-time tool visibility (extra HTTP per tool)
 )
 ```
 
@@ -227,9 +239,9 @@ Each run creates a structured trace:
 
 ```
 chat (root)
-├── chat {model}      — LLM API call (step 1) with model, usage, finish reason
-├── execute_tool {tool} — tool execution with duration
-└── chat {model}      — LLM API call (step 2)
+├── chat {model}      -- LLM API call (step 1) with model, usage, finish reason
+├── execute_tool {tool} -- tool execution with duration
+└── chat {model}      -- LLM API call (step 2)
 ```
 
 ### Usage Patterns
@@ -292,6 +304,7 @@ _ = err
 | `WithAttributes(attrs...)` | Attach custom `attribute.KeyValue` pairs to the root span |
 | `RecordInputMessages(bool)` | Record full input messages as span events (default: `false`) |
 | `RecordOutputMessages(bool)` | Record full output messages as span events (default: `false`) |
+| `RecordToolIO(bool)` | Record tool input/output as span events (default: `false`) |
 
 ### Semantic Conventions
 
@@ -312,6 +325,21 @@ Spans are annotated with `gen_ai.*` attributes following the OpenTelemetry GenAI
 | `goai.step` | 1-based step index (on LLM call and tool spans) |
 | `gen_ai.tool.name` | Tool name (on tool spans) |
 | `gen_ai.tool.call.id` | Tool call ID (on tool spans) |
+| `goai.request.message_count` | Message count per LLM call |
+| `goai.request.tool_count` | Tool count per LLM call |
+| `goai.tool.skipped` | True when tool was skipped by OnBeforeToolExecute |
+| `goai.tool.input_overridden` | True when tool input was overridden |
+| `goai.tool.context_overridden` | True when tool context was overridden |
+| `goai.tool.output_modified` | True when tool output was modified by OnAfterToolExecute |
+| `goai.tool.metadata.*` | Consumer metadata from OnAfterToolExecute |
+| `goai.stopped_at_step` | Step number where OnBeforeStep stopped the loop |
+| `goai.step.injected_messages` | Number of messages injected by OnBeforeStep |
+| `goai.tool.deadline` | Deadline from overridden tool context (ISO 8601) |
+| `goai.provider_metadata.*` | Provider-specific metadata from StepResult |
+| `goai.termination_reason` | "natural", "max_steps", or "hook_stopped" |
+| `goai.stopped_by_hook` | True when OnBeforeStep stopped the loop |
+| `gen_ai.response.model` | Actual response model (may differ from request) |
+| `gen_ai.response.id` | Provider response ID |
 | `http.response.status_code` | HTTP status code (only if > 0) |
 
 ### Metrics
@@ -323,6 +351,8 @@ When a `MeterProvider` is configured, the following metrics are recorded:
 | `gen_ai.client.token.usage` | Int64 Histogram | Token counts per type (`gen_ai.token.type` = `"input"` / `"output"`) |
 | `gen_ai.client.operation.duration` | Float64 Histogram | LLM call duration in seconds |
 | `goai.tool.duration` | Float64 Histogram | Tool execution duration in seconds (includes `gen_ai.tool.name` attribute) |
+| `goai.loop.early_stop` | Int64 Counter | Loop early stops by OnBeforeStep hook |
+| `goai.conversation.message_count` | Int64 Gauge | Message count per step |
 
 ### Error Handling
 

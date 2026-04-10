@@ -1216,3 +1216,931 @@ func TestWithTracing_ParentContext(t *testing.T) {
 		t.Errorf("root span parent ID = %v, want %v (parent span)", root.Parent.SpanID(), parentSC.SpanID())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Helpers for enhancement tests
+// ---------------------------------------------------------------------------
+
+// hasEvent returns true if the span has an event with the given name.
+func hasEvent(span tracetest.SpanStub, name string) bool {
+	for _, e := range span.Events {
+		if e.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// eventAttrValue returns the attribute value for the given event name and key.
+func eventAttrValue(span tracetest.SpanStub, eventName, key string) attribute.Value {
+	for _, e := range span.Events {
+		if e.Name == eventName {
+			return attrValue(e.Attributes, key)
+		}
+	}
+	return attribute.Value{}
+}
+
+// toolLoopModel returns a mock model that issues a single tool call on the first
+// request and returns finalText on the second. The tool call uses the given name
+// and ID. Response.Model and Response.ID are set on both results.
+func toolLoopModel(toolName, toolCallID, finalText string) *mockModel {
+	call := 0
+	return &mockModel{
+		id: "test-model",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			call++
+			if call == 1 {
+				return &provider.GenerateResult{
+					FinishReason: provider.FinishToolCalls,
+					ToolCalls: []provider.ToolCall{
+						{ID: toolCallID, Name: toolName, Input: []byte(`{"q":"test"}`)},
+					},
+					Usage:    provider.Usage{InputTokens: 10, OutputTokens: 5},
+					Response: provider.ResponseMetadata{Model: "test-model-actual", ID: "resp-001"},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         finalText,
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 20, OutputTokens: 10},
+				Response:     provider.ResponseMetadata{Model: "test-model-actual", ID: "resp-002"},
+			}, nil
+		},
+	}
+}
+
+// simpleTool returns a goai.Tool with the given name that returns output.
+func simpleTool(name, output string) goai.Tool {
+	return goai.Tool{
+		Name: name,
+		Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+			return output, nil
+		},
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A1: Skipped tools
+// ---------------------------------------------------------------------------
+
+func TestA1_SkippedTools(t *testing.T) {
+	tp, sr, mp, mr := newTestProviders(t)
+
+	model := toolLoopModel("my_tool", "tc1", "done")
+	tool := simpleTool("my_tool", "result")
+
+	_, err := goai.GenerateText(context.Background(), model,
+		goai.WithOnBeforeToolExecute(func(_ goai.BeforeToolExecuteInfo) goai.BeforeToolExecuteResult {
+			return goai.BeforeToolExecuteResult{Skip: true, Result: "skipped"}
+		}),
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	toolSpan := spanByName(sr, "execute_tool my_tool")
+	if toolSpan.Name == "" {
+		t.Fatal("tool span not found")
+	}
+
+	// Assert goai.tool.skipped=true attribute.
+	if v := attrValue(toolSpan.Attributes, "goai.tool.skipped"); v.AsBool() != true {
+		t.Errorf("goai.tool.skipped = %v, want true", v.AsBool())
+	}
+
+	// Assert tool duration metric is NOT recorded for skipped tools.
+	rm := collectMetrics(t, mr)
+	toolMetric := findMetric(rm, "goai.tool.duration")
+	if toolMetric != nil {
+		t.Error("goai.tool.duration should not be recorded for skipped tools")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A2: Metadata
+// ---------------------------------------------------------------------------
+
+func TestA2_Metadata(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	model := toolLoopModel("my_tool", "tc1", "done")
+	tool := simpleTool("my_tool", "result")
+
+	_, err := goai.GenerateText(context.Background(), model,
+		goai.WithOnAfterToolExecute(func(_ goai.AfterToolExecuteInfo) goai.AfterToolExecuteResult {
+			return goai.AfterToolExecuteResult{
+				Metadata: map[string]any{
+					"region":  "us-east-1",
+					"latency": 42,
+					"cached":  true,
+					"score":   0.95,
+				},
+			}
+		}),
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	toolSpan := spanByName(sr, "execute_tool my_tool")
+	if toolSpan.Name == "" {
+		t.Fatal("tool span not found")
+	}
+
+	if v := attrValue(toolSpan.Attributes, "goai.tool.metadata.region"); v.AsString() != "us-east-1" {
+		t.Errorf("metadata.region = %q, want %q", v.AsString(), "us-east-1")
+	}
+	if v := attrValue(toolSpan.Attributes, "goai.tool.metadata.latency"); v.AsInt64() != 42 {
+		t.Errorf("metadata.latency = %d, want 42", v.AsInt64())
+	}
+	if v := attrValue(toolSpan.Attributes, "goai.tool.metadata.cached"); v.AsBool() != true {
+		t.Errorf("metadata.cached = %v, want true", v.AsBool())
+	}
+	if v := attrValue(toolSpan.Attributes, "goai.tool.metadata.score"); v.AsFloat64() != 0.95 {
+		t.Errorf("metadata.score = %f, want 0.95", v.AsFloat64())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A3: MessageCount / ToolCount
+// ---------------------------------------------------------------------------
+
+func TestA3_MessageCountAndToolCount(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	model := toolLoopModel("my_tool", "tc1", "done")
+	tool := simpleTool("my_tool", "result")
+
+	_, err := goai.GenerateText(context.Background(), model,
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	llmSpans := spansByName(sr, "chat test-model")
+	if len(llmSpans) == 0 {
+		t.Fatal("no LLM spans found")
+	}
+
+	// First LLM call should have message_count and tool_count attributes.
+	first := llmSpans[0]
+	if v := attrValue(first.Attributes, "goai.request.message_count"); v.AsInt64() == 0 {
+		t.Error("goai.request.message_count should be > 0 on first LLM span")
+	}
+	if v := attrValue(first.Attributes, "goai.request.tool_count"); v.AsInt64() != 1 {
+		t.Errorf("goai.request.tool_count = %d, want 1", v.AsInt64())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A6: StepResult fields (Response.Model, Response.ID)
+// ---------------------------------------------------------------------------
+
+func TestA6_StepResultFields(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	model := &mockModel{
+		id: "test-model",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         "ok",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 1, OutputTokens: 1},
+				Response:     provider.ResponseMetadata{Model: "gpt-4o-2024-05-13", ID: "chatcmpl-abc123"},
+			}, nil
+		},
+	}
+
+	_, err := goai.GenerateText(context.Background(), model,
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("hi"),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	root := spanByName(sr, "chat")
+	if root.Name == "" {
+		t.Fatal("root span not found")
+	}
+
+	if v := attrValue(root.Attributes, "gen_ai.response.model"); v.AsString() != "gpt-4o-2024-05-13" {
+		t.Errorf("gen_ai.response.model = %q, want %q", v.AsString(), "gpt-4o-2024-05-13")
+	}
+	if v := attrValue(root.Attributes, "gen_ai.response.id"); v.AsString() != "chatcmpl-abc123" {
+		t.Errorf("gen_ai.response.id = %q, want %q", v.AsString(), "chatcmpl-abc123")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A7: Tool output recording
+// ---------------------------------------------------------------------------
+
+func TestA7_ToolOutputRecording(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	model := toolLoopModel("my_tool", "tc1", "done")
+	tool := simpleTool("my_tool", `{"temp":72}`)
+
+	_, err := goai.GenerateText(context.Background(), model,
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp), RecordToolIO(true)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	toolSpan := spanByName(sr, "execute_tool my_tool")
+	if toolSpan.Name == "" {
+		t.Fatal("tool span not found")
+	}
+
+	// Assert goai.tool.output event exists.
+	if !hasEvent(toolSpan, "goai.tool.output") {
+		t.Error("expected goai.tool.output event on tool span")
+	}
+	if v := eventAttrValue(toolSpan, "goai.tool.output", "goai.tool.output"); v.AsString() != `{"temp":72}` {
+		t.Errorf("goai.tool.output = %q, want %q", v.AsString(), `{"temp":72}`)
+	}
+
+	// Also verify tool input event.
+	if !hasEvent(toolSpan, "goai.tool.input") {
+		t.Error("expected goai.tool.input event on tool span")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// B1: Skip reason
+// ---------------------------------------------------------------------------
+
+func TestB1_SkipReason(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	model := toolLoopModel("my_tool", "tc1", "done")
+	tool := simpleTool("my_tool", "result")
+
+	skipErr := errors.New("permission denied: admin only")
+	_, err := goai.GenerateText(context.Background(), model,
+		goai.WithOnBeforeToolExecute(func(_ goai.BeforeToolExecuteInfo) goai.BeforeToolExecuteResult {
+			return goai.BeforeToolExecuteResult{Skip: true, Error: skipErr}
+		}),
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	toolSpan := spanByName(sr, "execute_tool my_tool")
+	if toolSpan.Name == "" {
+		t.Fatal("tool span not found")
+	}
+
+	// Assert goai.tool.skipped attribute.
+	if v := attrValue(toolSpan.Attributes, "goai.tool.skipped"); v.AsBool() != true {
+		t.Error("expected goai.tool.skipped=true")
+	}
+
+	// Assert goai.tool.skipped event with skip_reason.
+	if !hasEvent(toolSpan, "goai.tool.skipped") {
+		t.Fatal("expected goai.tool.skipped event")
+	}
+	if v := eventAttrValue(toolSpan, "goai.tool.skipped", "goai.tool.skip_reason"); v.AsString() != "permission denied: admin only" {
+		t.Errorf("skip_reason = %q, want %q", v.AsString(), "permission denied: admin only")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// B2: Input override
+// ---------------------------------------------------------------------------
+
+func TestB2_InputOverride(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	model := toolLoopModel("my_tool", "tc1", "done")
+	tool := simpleTool("my_tool", "result")
+
+	_, err := goai.GenerateText(context.Background(), model,
+		goai.WithOnBeforeToolExecute(func(_ goai.BeforeToolExecuteInfo) goai.BeforeToolExecuteResult {
+			return goai.BeforeToolExecuteResult{Input: json.RawMessage(`{"overridden":true}`)}
+		}),
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	toolSpan := spanByName(sr, "execute_tool my_tool")
+	if toolSpan.Name == "" {
+		t.Fatal("tool span not found")
+	}
+
+	if v := attrValue(toolSpan.Attributes, "goai.tool.input_overridden"); v.AsBool() != true {
+		t.Errorf("goai.tool.input_overridden = %v, want true", v.AsBool())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// B3: Context override
+// ---------------------------------------------------------------------------
+
+func TestB3_ContextOverride(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	model := toolLoopModel("my_tool", "tc1", "done")
+	tool := simpleTool("my_tool", "result")
+
+	deadline := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	ctxWithDeadline, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+
+	_, err := goai.GenerateText(context.Background(), model,
+		goai.WithOnBeforeToolExecute(func(_ goai.BeforeToolExecuteInfo) goai.BeforeToolExecuteResult {
+			return goai.BeforeToolExecuteResult{Ctx: ctxWithDeadline}
+		}),
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	toolSpan := spanByName(sr, "execute_tool my_tool")
+	if toolSpan.Name == "" {
+		t.Fatal("tool span not found")
+	}
+
+	if v := attrValue(toolSpan.Attributes, "goai.tool.context_overridden"); v.AsBool() != true {
+		t.Errorf("goai.tool.context_overridden = %v, want true", v.AsBool())
+	}
+	if v := attrValue(toolSpan.Attributes, "goai.tool.deadline"); v.AsString() == "" {
+		t.Error("goai.tool.deadline should be set when context has deadline")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// B4: Pre-execution span event
+// ---------------------------------------------------------------------------
+
+func TestB4_PreExecutionSpanEvent(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	model := toolLoopModel("my_tool", "tc1", "done")
+	tool := simpleTool("my_tool", "result")
+
+	_, err := goai.GenerateText(context.Background(), model,
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	toolSpan := spanByName(sr, "execute_tool my_tool")
+	if toolSpan.Name == "" {
+		t.Fatal("tool span not found")
+	}
+
+	if !hasEvent(toolSpan, "goai.tool.execute_start") {
+		t.Error("expected goai.tool.execute_start event on tool span")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// C1: Output modified
+// ---------------------------------------------------------------------------
+
+func TestC1_OutputModified(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	model := toolLoopModel("my_tool", "tc1", "done")
+	tool := simpleTool("my_tool", "original_output")
+
+	_, err := goai.GenerateText(context.Background(), model,
+		goai.WithOnAfterToolExecute(func(_ goai.AfterToolExecuteInfo) goai.AfterToolExecuteResult {
+			return goai.AfterToolExecuteResult{Output: "modified_output"}
+		}),
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	toolSpan := spanByName(sr, "execute_tool my_tool")
+	if toolSpan.Name == "" {
+		t.Fatal("tool span not found")
+	}
+
+	if v := attrValue(toolSpan.Attributes, "goai.tool.output_modified"); v.AsBool() != true {
+		t.Errorf("goai.tool.output_modified = %v, want true", v.AsBool())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// C2: Error injected
+// ---------------------------------------------------------------------------
+
+func TestC2_ErrorInjected(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	model := toolLoopModel("my_tool", "tc1", "done")
+	tool := simpleTool("my_tool", "result")
+
+	_, err := goai.GenerateText(context.Background(), model,
+		goai.WithOnAfterToolExecute(func(_ goai.AfterToolExecuteInfo) goai.AfterToolExecuteResult {
+			return goai.AfterToolExecuteResult{Error: errors.New("injected error")}
+		}),
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	toolSpan := spanByName(sr, "execute_tool my_tool")
+	if toolSpan.Name == "" {
+		t.Fatal("tool span not found")
+	}
+
+	if !hasEvent(toolSpan, "goai.tool.error_modified") {
+		t.Fatal("expected goai.tool.error_modified event")
+	}
+	if v := eventAttrValue(toolSpan, "goai.tool.error_modified", "goai.tool.error_modification"); v.AsString() != "injected" {
+		t.Errorf("error_modification = %q, want %q", v.AsString(), "injected")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// C3: Timing boundary
+// ---------------------------------------------------------------------------
+
+func TestC3_TimingBoundary(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	model := toolLoopModel("my_tool", "tc1", "done")
+	tool := simpleTool("my_tool", "result")
+
+	_, err := goai.GenerateText(context.Background(), model,
+		goai.WithOnAfterToolExecute(func(_ goai.AfterToolExecuteInfo) goai.AfterToolExecuteResult {
+			return goai.AfterToolExecuteResult{}
+		}),
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	toolSpan := spanByName(sr, "execute_tool my_tool")
+	if toolSpan.Name == "" {
+		t.Fatal("tool span not found")
+	}
+
+	if !hasEvent(toolSpan, "goai.tool.after_execute") {
+		t.Error("expected goai.tool.after_execute event on tool span")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// D1: Hook stopped
+// ---------------------------------------------------------------------------
+
+func TestD1_HookStopped(t *testing.T) {
+	tp, sr, mp, mr := newTestProviders(t)
+
+	// Use a model that does two tool-call rounds so OnBeforeStep fires.
+	call := 0
+	model := &mockModel{
+		id: "test-model",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			call++
+			if call <= 2 {
+				return &provider.GenerateResult{
+					FinishReason: provider.FinishToolCalls,
+					ToolCalls: []provider.ToolCall{
+						{ID: "tc" + strings.Repeat("x", call), Name: "my_tool", Input: []byte(`{}`)},
+					},
+					Usage:    provider.Usage{InputTokens: 10, OutputTokens: 5},
+					Response: provider.ResponseMetadata{Model: "test-model-actual", ID: "resp-001"},
+				}, nil
+			}
+			return &provider.GenerateResult{
+				Text:         "done",
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 20, OutputTokens: 10},
+				Response:     provider.ResponseMetadata{Model: "test-model-actual", ID: "resp-002"},
+			}, nil
+		},
+	}
+	tool := simpleTool("my_tool", "result")
+
+	stopped := false
+	_, err := goai.GenerateText(context.Background(), model,
+		goai.WithOnBeforeStep(func(info goai.BeforeStepInfo) goai.BeforeStepResult {
+			// Stop on step 2 (first OnBeforeStep invocation).
+			if info.Step == 2 {
+				stopped = true
+				return goai.BeforeStepResult{Stop: true}
+			}
+			return goai.BeforeStepResult{}
+		}),
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(5),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+	if !stopped {
+		t.Fatal("OnBeforeStep hook was not called")
+	}
+
+	// The WrapOnBeforeStep wrapper calls end() when Stop=true, so the root span
+	// is ended with hook_stopped attributes.
+	root := spanByName(sr, "chat")
+	if root.Name == "" {
+		t.Fatal("root span not found")
+	}
+	if v := attrValue(root.Attributes, "goai.stopped_by_hook"); v.AsBool() != true {
+		t.Errorf("goai.stopped_by_hook = %v, want true", v.AsBool())
+	}
+	if v := attrValue(root.Attributes, "goai.stopped_at_step"); v.AsInt64() != 2 {
+		t.Errorf("goai.stopped_at_step = %d, want 2", v.AsInt64())
+	}
+	if v := attrValue(root.Attributes, "goai.termination_reason"); v.AsString() != "hook_stopped" {
+		t.Errorf("goai.termination_reason = %q, want %q", v.AsString(), "hook_stopped")
+	}
+	// Also verify the span event and metric.
+	if !hasEvent(root, "goai.loop.stopped") {
+		t.Error("root span missing goai.loop.stopped event")
+	}
+	rm := collectMetrics(t, mr)
+	earlyStopMetric := findMetric(rm, "goai.loop.early_stop")
+	if earlyStopMetric == nil {
+		t.Fatal("goai.loop.early_stop metric not found")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// D2: Termination reason
+// ---------------------------------------------------------------------------
+
+func TestD2_TerminationReason_Natural(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	model := toolLoopModel("my_tool", "tc1", "done")
+	tool := simpleTool("my_tool", "result")
+
+	_, err := goai.GenerateText(context.Background(), model,
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	root := spanByName(sr, "chat")
+	if root.Name == "" {
+		t.Fatal("root span not found")
+	}
+	if v := attrValue(root.Attributes, "goai.termination_reason"); v.AsString() != "natural" {
+		t.Errorf("goai.termination_reason = %q, want %q", v.AsString(), "natural")
+	}
+}
+
+func TestD2_TerminationReason_HookStopped(t *testing.T) {
+	tp, sr, mp, mr := newTestProviders(t)
+
+	model := toolLoopModel("my_tool", "tc1", "done")
+	tool := simpleTool("my_tool", "result")
+
+	stopped := false
+	_, err := goai.GenerateText(context.Background(), model,
+		goai.WithOnBeforeStep(func(_ goai.BeforeStepInfo) goai.BeforeStepResult {
+			stopped = true
+			return goai.BeforeStepResult{Stop: true}
+		}),
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+	if !stopped {
+		t.Fatal("OnBeforeStep hook was not called")
+	}
+
+	// The WrapOnBeforeStep wrapper calls end() when Stop=true, ending the root span
+	// with termination_reason="hook_stopped".
+	root := spanByName(sr, "chat")
+	if root.Name == "" {
+		t.Fatal("root span not found")
+	}
+	if v := attrValue(root.Attributes, "goai.termination_reason"); v.AsString() != "hook_stopped" {
+		t.Errorf("goai.termination_reason = %q, want %q", v.AsString(), "hook_stopped")
+	}
+	// Also verify the metric.
+	rm := collectMetrics(t, mr)
+	earlyStopMetric := findMetric(rm, "goai.loop.early_stop")
+	if earlyStopMetric == nil {
+		t.Fatal("goai.loop.early_stop metric not found -- hook_stopped should increment counter")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// D3: ExtraMessages
+// ---------------------------------------------------------------------------
+
+func TestD3_ExtraMessages(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	model := toolLoopModel("my_tool", "tc1", "done")
+	tool := simpleTool("my_tool", "result")
+
+	_, err := goai.GenerateText(context.Background(), model,
+		goai.WithOnBeforeStep(func(_ goai.BeforeStepInfo) goai.BeforeStepResult {
+			return goai.BeforeStepResult{
+				ExtraMessages: []provider.Message{
+					{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "extra context"}}},
+				},
+			}
+		}),
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	// The second LLM span should have goai.step.injected_messages attribute.
+	llmSpans := spansByName(sr, "chat test-model")
+	if len(llmSpans) < 2 {
+		t.Fatalf("expected at least 2 LLM spans, got %d", len(llmSpans))
+	}
+
+	second := llmSpans[1]
+	if v := attrValue(second.Attributes, "goai.step.injected_messages"); v.AsInt64() != 1 {
+		t.Errorf("goai.step.injected_messages = %d, want 1", v.AsInt64())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// D4: Message count gauge
+// ---------------------------------------------------------------------------
+
+func TestD4_MessageCountGauge(t *testing.T) {
+	tp, _, mp, mr := newTestProviders(t)
+
+	model := toolLoopModel("my_tool", "tc1", "done")
+	tool := simpleTool("my_tool", "result")
+
+	_, err := goai.GenerateText(context.Background(), model,
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	rm := collectMetrics(t, mr)
+	msgMetric := findMetric(rm, "goai.conversation.message_count")
+	if msgMetric == nil {
+		t.Fatal("goai.conversation.message_count metric not found")
+	}
+	// Verify the gauge has data points with non-zero values.
+	// OnBeforeStep fires at step 2 with the accumulated messages from step 1.
+	gauge, ok := msgMetric.Data.(metricdata.Gauge[int64])
+	if !ok {
+		t.Fatalf("expected Gauge[int64], got %T", msgMetric.Data)
+	}
+	if len(gauge.DataPoints) == 0 {
+		t.Fatal("goai.conversation.message_count has no data points")
+	}
+	// The message count should be > 0 (at least the original prompt + tool round-trip).
+	for _, dp := range gauge.DataPoints {
+		if dp.Value <= 0 {
+			t.Errorf("goai.conversation.message_count data point value = %d, want > 0", dp.Value)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Wrapper pattern: User OnBeforeToolExecute + WithTracing
+// ---------------------------------------------------------------------------
+
+func TestWrapperPattern_UserSkipHonored(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	model := toolLoopModel("my_tool", "tc1", "done")
+	tool := simpleTool("my_tool", "result")
+
+	userHookCalled := false
+	_, err := goai.GenerateText(context.Background(), model,
+		// User hook registered BEFORE WithTracing.
+		goai.WithOnBeforeToolExecute(func(_ goai.BeforeToolExecuteInfo) goai.BeforeToolExecuteResult {
+			userHookCalled = true
+			return goai.BeforeToolExecuteResult{Skip: true, Result: "user-skip", Error: errors.New("blocked")}
+		}),
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(3),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	if !userHookCalled {
+		t.Error("user's OnBeforeToolExecute hook was not called")
+	}
+
+	toolSpan := spanByName(sr, "execute_tool my_tool")
+	if toolSpan.Name == "" {
+		t.Fatal("tool span not found")
+	}
+
+	// User's Skip=true should be honored.
+	if v := attrValue(toolSpan.Attributes, "goai.tool.skipped"); v.AsBool() != true {
+		t.Errorf("goai.tool.skipped = %v, want true (user skip should be honored)", v.AsBool())
+	}
+
+	// Observability annotations should still be present.
+	if !hasEvent(toolSpan, "goai.tool.execute_start") {
+		t.Error("expected goai.tool.execute_start event (observability wrapper)")
+	}
+
+	// B1: skip reason from user's error should be captured.
+	if !hasEvent(toolSpan, "goai.tool.skipped") {
+		t.Fatal("expected goai.tool.skipped event")
+	}
+	if v := eventAttrValue(toolSpan, "goai.tool.skipped", "goai.tool.skip_reason"); v.AsString() != "blocked" {
+		t.Errorf("skip_reason = %q, want %q", v.AsString(), "blocked")
+	}
+}
+
+func TestD2_TerminationReason_MaxSteps(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	// Model always returns tool calls, so MaxSteps will be exhausted.
+	model := &mockModel{
+		id: "test-model",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				ToolCalls:    []provider.ToolCall{{ID: "tc1", Name: "my_tool", Input: json.RawMessage(`{}`)}},
+				FinishReason: provider.FinishToolCalls,
+				Usage:        provider.Usage{InputTokens: 10, OutputTokens: 5},
+			}, nil
+		},
+	}
+	tool := simpleTool("my_tool", "result")
+
+	_, err := goai.GenerateText(context.Background(), model,
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("go"),
+		goai.WithMaxSteps(2),
+		goai.WithTools(tool),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	root := spanByName(sr, "chat")
+	if root.Name == "" {
+		t.Fatal("root span not found")
+	}
+	if v := attrValue(root.Attributes, "goai.termination_reason"); v.AsString() != "max_steps" {
+		t.Errorf("goai.termination_reason = %q, want %q", v.AsString(), "max_steps")
+	}
+}
+
+func TestA6_SourcesAndProviderMetadata(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	model := &mockModel{
+		id: "test-model",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         "hello",
+				FinishReason: provider.FinishStop,
+				Usage: provider.Usage{
+					InputTokens:  10,
+					OutputTokens: 5,
+				},
+				Sources: []provider.Source{
+					{Title: "Wikipedia", URL: "https://en.wikipedia.org"},
+				},
+				ProviderMetadata: map[string]map[string]any{
+					"openai": {"system_fingerprint": "fp_abc123"},
+				},
+			}, nil
+		},
+	}
+
+	_, err := goai.GenerateText(context.Background(), model,
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("hi"),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	root := spanByName(sr, "chat")
+	if root.Name == "" {
+		t.Fatal("root span not found")
+	}
+
+	// A6: Sources should produce a gen_ai.content.sources event with URLs.
+	if !hasEvent(root, "gen_ai.content.sources") {
+		t.Fatal("expected gen_ai.content.sources event on root span")
+	}
+	sourcesVal := eventAttrValue(root, "gen_ai.content.sources", "gen_ai.sources")
+	sources := sourcesVal.AsStringSlice()
+	if len(sources) != 1 || sources[0] != "https://en.wikipedia.org" {
+		t.Errorf("gen_ai.sources = %v, want [https://en.wikipedia.org]", sources)
+	}
+
+	// A6: ProviderMetadata should produce goai.provider_metadata.* attributes.
+	if v := attrValue(root.Attributes, "goai.provider_metadata.openai.system_fingerprint"); v.AsString() != "fp_abc123" {
+		t.Errorf("provider_metadata attr = %q, want %q", v.AsString(), "fp_abc123")
+	}
+}
+
+func TestWithTracing_CacheTokens(t *testing.T) {
+	tp, sr, mp, _ := newTestProviders(t)
+
+	model := &mockModel{
+		id: "test-model",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         "hello",
+				FinishReason: provider.FinishStop,
+				Usage: provider.Usage{
+					InputTokens:     10,
+					OutputTokens:    5,
+					CacheReadTokens:  100,
+					CacheWriteTokens: 50,
+				},
+			}, nil
+		},
+	}
+
+	_, err := goai.GenerateText(context.Background(), model,
+		WithTracing(WithTracerProvider(tp), WithMeterProvider(mp)),
+		goai.WithPrompt("hi"),
+	)
+	if err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+
+	llm := spanByName(sr, "chat test-model")
+	if llm.Name == "" {
+		t.Fatal("llm span not found")
+	}
+
+	if v := attrValue(llm.Attributes, "gen_ai.usage.cache_read.input_tokens"); v.AsInt64() != 100 {
+		t.Errorf("cache_read.input_tokens = %d, want 100", v.AsInt64())
+	}
+	if v := attrValue(llm.Attributes, "gen_ai.usage.cache_creation.input_tokens"); v.AsInt64() != 50 {
+		t.Errorf("cache_creation.input_tokens = %d, want 50", v.AsInt64())
+	}
+}

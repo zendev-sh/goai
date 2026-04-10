@@ -278,7 +278,7 @@ func WithProviderOptions(opts map[string]any) Option
 > **Panic handling:** Hooks use two panic strategies depending on execution context:
 >
 > - **Caller goroutine** (`OnRequest`): panics propagate in `GenerateText`, `GenerateObject`, and `StreamText` first step. In `StreamText` step 2+ (goroutine), each callback is individually recovered.
-> - **Mixed** (`OnResponse`): recovered in `GenerateText` and background goroutines; propagates in `GenerateObject`, `StreamObject` error path, and `StreamText` first-step error path. See per-hook docs below.
+> - **Mixed** (`OnResponse`): recovered in `GenerateText`, `GenerateObject`, `StreamObject`, and background goroutines; propagates in `StreamText` first-step error path. See per-hook docs below.
 > - **Worker goroutines** (`OnStepFinish`, `OnToolCallStart`, `OnToolCall`): panics are recovered, logged to stderr, and do not propagate.
 > - **Interceptor hooks** (`OnBeforeToolExecute`, `OnAfterToolExecute`, `OnBeforeStep`): always panic-recovered with hook-specific behavior (skip tool, preserve result, or proceed normally).
 
@@ -304,7 +304,7 @@ func WithOnResponse(fn func(ResponseInfo)) Option
 
 **Default:** `nil`.
 
-> **Panic behavior:** In `GenerateText`, all `StreamText` success paths, and `StreamObject` (success path), panics are individually recovered and logged to stderr. In `GenerateObject`, `StreamObject` (error path), and `StreamText`'s first-step error path, panics propagate to the caller.
+> **Panic behavior:** In `GenerateText`, all `StreamText` success paths, `GenerateObject`, `StreamObject` (success path), and `StreamObject` (error path), panics are individually recovered and logged to stderr. In `StreamText`'s first-step error path, panics propagate to the caller.
 
 ### WithOnStepFinish
 
@@ -378,6 +378,18 @@ goai.WithOnBeforeStep(func(info goai.BeforeStepInfo) goai.BeforeStepResult {
 Called before each LLM call in a multi-step tool loop (step 2+ only, not step 1). Can inject additional messages or stop the loop early. `info.Ctx` carries the generation context for cancellation checks or external calls. Only one callback supported. Panic-recovered: a panic is logged and the step proceeds normally.
 
 > **Panic handling note:** Interceptor hooks (`OnBeforeToolExecute`, `OnAfterToolExecute`, `OnBeforeStep`): always panic-recovered with hook-specific behavior (skip tool, preserve result, or proceed normally).
+
+### WithOnFinish
+
+```go
+goai.WithOnFinish(func(info goai.FinishInfo) {
+    // info.StepsExhausted, info.TotalSteps, info.TotalUsage, info.FinishReason
+})
+```
+
+Called once after all generation steps complete. Fires in all code paths: `GenerateText`, `StreamText`, `GenerateObject` (including max_steps error), and `StreamObject`. Does NOT fire when DoGenerate/DoStream returns a provider error. Multiple callbacks supported (append). Panic-recovered.
+
+`FinishInfo.StepsExhausted` is the authoritative signal for max-steps exhaustion -- it is not available from any per-step hook.
 
 ---
 

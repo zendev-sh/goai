@@ -35,7 +35,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 2. Calls `model.DoGenerate` with automatic retry on transient errors.
 3. If the model returns tool calls and executable tools are registered, executes them and appends results to the conversation.
 4. Repeats up to `MaxSteps` times (default 1 = single model step; if that step requests executable tools, they can still be executed before returning).
-5. Fires telemetry hooks (`OnRequest`, `OnResponse`, `OnStepFinish`, `OnToolCall`) at appropriate points.
+5. Fires lifecycle hooks at appropriate points: observability hooks (`OnRequest`, `OnResponse`, `OnToolCallStart`, `OnToolCall`, `OnStepFinish`, `OnFinish`) and interceptor hooks (`OnBeforeToolExecute`, `OnAfterToolExecute`, `OnBeforeStep`).
 
 **Example:**
 

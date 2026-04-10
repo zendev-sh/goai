@@ -90,6 +90,9 @@ type options struct {
 	// OnStepFinish is called after each generation step completes (including tool execution).
 	OnStepFinish []func(StepResult)
 
+	// OnFinish is called once after all generation steps complete.
+	OnFinish []func(FinishInfo)
+
 	// OnRequest is called before each model API call.
 	OnRequest []func(RequestInfo)
 

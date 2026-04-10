@@ -5,7 +5,7 @@ description: "Intercept and control GoAI's tool loop with lifecycle hooks. Permi
 
 # Lifecycle Hooks
 
-GoAI provides eight lifecycle hooks that let you observe, intercept, and control the generation process without modifying core SDK code.
+GoAI provides nine lifecycle hooks that let you observe, intercept, and control the generation process without modifying core SDK code.
 
 ## Hook Categories
 
@@ -13,7 +13,7 @@ Hooks fall into two categories:
 
 | Category | Hooks | Callbacks | Purpose |
 |----------|-------|-----------|---------|
-| **Observability** | `OnRequest`, `OnResponse`, `OnToolCallStart`, `OnToolCall`, `OnStepFinish` | Multiple (append) | Logging, metrics, tracing |
+| **Observability** | `OnRequest`, `OnResponse`, `OnToolCallStart`, `OnToolCall`, `OnStepFinish`, `OnFinish` | Multiple (append) | Logging, metrics, tracing |
 | **Interceptor** | `OnBeforeToolExecute`, `OnAfterToolExecute`, `OnBeforeStep` | Single (replace) | Permission, transformation, control flow |
 
 Observability hooks are fire-and-forget: they receive data but cannot change behavior. Interceptor hooks return values that control execution.
@@ -40,6 +40,9 @@ Step 2+ --Transition and next LLM call:
   OnBeforeStep         → can inject messages or stop loop
   OnRequest            → before LLM call
   ... (same pattern as Step 1)
+
+After all steps:
+  OnFinish             → once, with StepsExhausted, TotalSteps, TotalUsage
 ```
 
 Note: "step" = one LLM call. Tool execution happens between steps -- results feed into the next step's messages. By default, tools within a step execute in parallel. Use `WithSequentialToolExecution()` to force one-at-a-time execution when tools share non-thread-safe resources or when execution order matters.
@@ -171,6 +174,20 @@ goai.WithOnStepFinish(func(step goai.StepResult) {
 }),
 ```
 
+### OnFinish
+
+```go
+goai.WithOnFinish(func(info goai.FinishInfo) {
+    if info.StepsExhausted {
+        log.Printf("Loop exhausted after %d steps", info.TotalSteps)
+    }
+    log.Printf("Finished: %d steps, %d total tokens, reason=%s",
+        info.TotalSteps, info.TotalUsage.InputTokens+info.TotalUsage.OutputTokens, info.FinishReason)
+}),
+```
+
+Fires once after all generation steps complete. This is the only hook that receives `StepsExhausted`, making it the authoritative signal for "max steps exhaustion" detection.
+
 ## Panic Recovery
 
 Hook panics are recovered in most paths. "Propagates" = crashes the caller. "Recovered" = caught, logged to stderr, execution continues.
@@ -178,15 +195,16 @@ Hook panics are recovered in most paths. "Propagates" = crashes the caller. "Rec
 | Hook | GenerateText | StreamText (step 1)* | StreamText (step 2+) | GenerateObject |
 |------|-------------|---------------------|---------------------|----------------|
 | OnRequest | Propagates | Propagates | Recovered | Propagates |
-| OnResponse | Recovered | Propagates (error) | Recovered | Propagates |
+| OnResponse | Recovered | Propagates (error) | Recovered | Recovered |
 | OnToolCallStart | Recovered | Recovered | Recovered | Recovered |
 | OnToolCall | Recovered | Recovered | Recovered | Recovered |
 | OnStepFinish | Recovered | Recovered | Recovered | Recovered |
 | OnBeforeToolExecute | Recovered (skips tool) | Recovered (skips tool) | Recovered (skips tool) | Recovered (skips tool) |
 | OnAfterToolExecute | Recovered (preserves result) | Recovered (preserves result) | Recovered (preserves result) | Recovered (preserves result) |
 | OnBeforeStep | Recovered (proceeds) | N/A | Recovered (proceeds) | Recovered (proceeds) |
+| OnFinish | Recovered | Recovered | Recovered | Recovered |
 
-*\* StreamText step 1 runs synchronously in the caller's goroutine (before the background goroutine starts). Step 2+ runs in a background goroutine where all panics are recovered. StreamObject OnRequest propagates like GenerateObject. StreamObject OnResponse propagates on the error path but is recovered on the success path (consume goroutine).*
+*\* StreamText step 1 runs synchronously in the caller's goroutine (before the background goroutine starts). Step 2+ runs in a background goroutine where all panics are recovered. StreamObject OnRequest propagates like GenerateObject. StreamObject OnResponse is recovered on both success and error paths.*
 
 ## Complete Example
 
@@ -194,4 +212,4 @@ See [`examples/hooks/main.go`](https://github.com/zendev-sh/goai/blob/main/examp
 
 ## Integration with Observability Providers
 
-GoAI's [OpenTelemetry](observability.md#opentelemetry) and [Langfuse](observability.md#langfuse) integrations use the observability hooks internally. The interceptor hooks are not yet integrated into these providers --use them directly in your application code.
+GoAI's [OpenTelemetry](observability.md#opentelemetry) and [Langfuse](observability.md#langfuse) integrations use the observability hooks internally. The interceptor hooks are integrated via the wrapper pattern (`WrapOnBeforeToolExecute`, `WrapOnAfterToolExecute`, `WrapOnBeforeStep`) -- observability providers wrap user hooks to add annotations without replacing them. Apply `WithTracing` after user hooks for correct wrapping.

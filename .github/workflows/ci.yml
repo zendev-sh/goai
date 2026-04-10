@@ -28,15 +28,25 @@ jobs:
       - name: Test
         run: go test -race -coverprofile=coverage.out ./...
 
+      - name: Test observability/langfuse
+        run: cd observability/langfuse && go test -race -coverprofile=coverage-langfuse.out ./...
+
+      - name: Test observability/otel
+        run: cd observability/otel && go test -race -coverprofile=coverage-otel.out ./...
+
       - name: Coverage Summary
         run: |
           total=$(go tool cover -func=coverage.out | grep ^total | awk '{print $3}')
-          echo "Coverage: $total"
+          echo "Coverage (core): $total"
+          langfuse=$(cd observability/langfuse && go tool cover -func=coverage-langfuse.out | grep ^total | awk '{print $3}')
+          echo "Coverage (langfuse): $langfuse"
+          otel=$(cd observability/otel && go tool cover -func=coverage-otel.out | grep ^total | awk '{print $3}')
+          echo "Coverage (otel): $otel"
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5
         with:
-          files: coverage.out
+          files: coverage.out,observability/langfuse/coverage-langfuse.out,observability/otel/coverage-otel.out
           fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
 
