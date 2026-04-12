@@ -1,14 +1,92 @@
 // Package gemini provides shared utilities for Google Gemini API providers.
 package gemini
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
+
+// maxRefInlineDepth caps recursive $ref resolution to prevent infinite loops
+// on cyclic schemas. Real-world schemas rarely exceed 3-4 levels of nesting.
+const maxRefInlineDepth = 10
 
 // SanitizeSchema sanitizes a JSON Schema for Gemini compatibility.
 // It converts enum integer/number types to string, filters invalid required fields,
-// and ensures array items have a type.
+// ensures array items have a type, inlines $ref/$defs (which Gemini rejects),
+// and strips JSON Schema conditionals (if/then/else) which Gemini's OpenAPI
+// validator does not understand.
 func SanitizeSchema(schema map[string]any) map[string]any {
-	// sanitizeImpl always returns map[string]any for map input; cast is safe.
+	// Step 1: resolve $ref → $defs and strip unsupported keywords.
+	// Gemini's function_declarations validator cannot resolve
+	// "#/$defs/X" references and rejects JSON Schema conditional keywords
+	// (if/then/else) even inside allOf clauses. This preprocess pass
+	// handles both issues before the existing compatibility sanitizer runs.
+	defs, _ := schema["$defs"].(map[string]any)
+	processed := inlineRefsAndStripDrafts(schema, defs, 0)
+	if m, ok := processed.(map[string]any); ok {
+		schema = m
+	}
+	// Step 2: existing compatibility pass (nullables, enums, array items, etc.).
 	return sanitizeImpl(schema).(map[string]any)
+}
+
+// inlineRefsAndStripDrafts walks an arbitrary schema value and:
+//   - Replaces every {"$ref": "#/$defs/X"} with a deep copy of $defs.X
+//     (recursively, so nested refs are also resolved).
+//   - Strips "$defs", "if", "then", "else" keys anywhere they appear.
+//   - Bails out at maxRefInlineDepth to prevent cyclic-ref infinite loops;
+//     at the depth cap, unresolved refs become {type: "object"}.
+//
+// The function does not mutate its input: new maps/slices are allocated
+// for every container so callers can safely reuse the original schema.
+func inlineRefsAndStripDrafts(obj any, defs map[string]any, depth int) any {
+	switch v := obj.(type) {
+	case map[string]any:
+		// $ref resolution: replace with the deep-cloned target.
+		if ref, ok := v["$ref"].(string); ok {
+			if depth >= maxRefInlineDepth {
+				// Cap reached: fall back to a generic type rather than
+				// infinite-recurse or panic.
+				return map[string]any{"type": "object"}
+			}
+			if target := resolveDefRef(ref, defs); target != nil {
+				return inlineRefsAndStripDrafts(target, defs, depth+1)
+			}
+			// Dangling ref (not in $defs): fall through to generic type.
+			return map[string]any{"type": "object"}
+		}
+		// Recurse into every key except the blocklisted ones.
+		result := make(map[string]any, len(v))
+		for k, val := range v {
+			if k == "$defs" || k == "if" || k == "then" || k == "else" {
+				continue
+			}
+			result[k] = inlineRefsAndStripDrafts(val, defs, depth)
+		}
+		return result
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = inlineRefsAndStripDrafts(item, defs, depth)
+		}
+		return out
+	default:
+		return obj
+	}
+}
+
+// resolveDefRef returns the target map for a "#/$defs/X" reference, or nil
+// if the ref does not point into the provided $defs table. Only the local
+// "#/$defs/" JSON Pointer form is supported: external URIs and deep
+// pointers are returned as nil (and inlineRefsAndStripDrafts will fall
+// back to a generic type).
+func resolveDefRef(ref string, defs map[string]any) any {
+	const prefix = "#/$defs/"
+	if defs == nil || !strings.HasPrefix(ref, prefix) {
+		return nil
+	}
+	key := ref[len(prefix):]
+	return defs[key]
 }
 
 func sanitizeImpl(obj any) any {

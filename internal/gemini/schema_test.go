@@ -486,6 +486,227 @@ func TestSanitizeSchema_NoInputMutation(t *testing.T) {
 	}
 }
 
+// TestSanitizeSchema_InlinesDefsRef verifies that $ref pointing into $defs
+// is replaced with the target schema and $defs is stripped from the output.
+// Regression: Gemini rejects schemas containing #/$defs/X references with
+// "the referenced name does not match display_name".
+func TestSanitizeSchema_InlinesDefsRef(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"agent": map[string]any{
+				"$ref": "#/$defs/AgentConfig",
+			},
+		},
+		"required": []any{"agent"},
+		"$defs": map[string]any{
+			"AgentConfig": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string"},
+				},
+				"required": []any{"name"},
+			},
+		},
+	}
+	result := SanitizeSchema(schema)
+
+	if _, ok := result["$defs"]; ok {
+		t.Error("$defs should be stripped from output")
+	}
+	props, ok := result["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("properties missing or wrong type: %v", result["properties"])
+	}
+	agent, ok := props["agent"].(map[string]any)
+	if !ok {
+		t.Fatalf("properties.agent missing or wrong type: %v", props["agent"])
+	}
+	if _, hasRef := agent["$ref"]; hasRef {
+		t.Error("$ref should be resolved/removed")
+	}
+	if agent["type"] != "object" {
+		t.Errorf("inlined agent.type = %v, want 'object'", agent["type"])
+	}
+	agentProps, ok := agent["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("inlined agent.properties missing: %v", agent["properties"])
+	}
+	if _, ok := agentProps["name"]; !ok {
+		t.Error("inlined agent.properties.name missing")
+	}
+}
+
+// TestSanitizeSchema_StripsAllOfIfThenElse verifies that if/then/else
+// conditionals inside allOf are stripped. Regression: Gemini errors with
+// 'Unknown name "if" at function_declarations[N].parameters.all_of[0]'.
+func TestSanitizeSchema_StripsAllOfIfThenElse(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"mode": map[string]any{"type": "string"},
+		},
+		"allOf": []any{
+			map[string]any{
+				"if":   map[string]any{"properties": map[string]any{"mode": map[string]any{"const": "advanced"}}},
+				"then": map[string]any{"required": []any{"extra_field"}},
+				"else": map[string]any{},
+			},
+		},
+	}
+	result := SanitizeSchema(schema)
+
+	allOf, ok := result["allOf"].([]any)
+	if !ok {
+		t.Fatalf("allOf missing or wrong type: %v", result["allOf"])
+	}
+	if len(allOf) != 1 {
+		t.Fatalf("allOf length = %d, want 1", len(allOf))
+	}
+	item, ok := allOf[0].(map[string]any)
+	if !ok {
+		t.Fatalf("allOf[0] not a map: %v", allOf[0])
+	}
+	for _, k := range []string{"if", "then", "else"} {
+		if _, found := item[k]; found {
+			t.Errorf("allOf[0] still contains %q after sanitization", k)
+		}
+	}
+}
+
+// TestSanitizeSchema_NestedDefsRef verifies that a $ref nested deep inside
+// items/properties still gets resolved.
+func TestSanitizeSchema_NestedDefsRef(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"items": map[string]any{
+				"type":  "array",
+				"items": map[string]any{"$ref": "#/$defs/Item"},
+			},
+		},
+		"$defs": map[string]any{
+			"Item": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"id": map[string]any{"type": "integer"},
+				},
+			},
+		},
+	}
+	result := SanitizeSchema(schema)
+
+	props := result["properties"].(map[string]any)
+	itemsField := props["items"].(map[string]any)
+	itemSchema, ok := itemsField["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("nested items missing: %v", itemsField["items"])
+	}
+	if itemSchema["type"] != "object" {
+		t.Errorf("nested ref not inlined: %v", itemSchema)
+	}
+	if _, hasRef := itemSchema["$ref"]; hasRef {
+		t.Error("nested $ref not resolved")
+	}
+}
+
+// TestSanitizeSchema_DanglingRef verifies that an unresolvable $ref falls
+// back to a generic object type rather than leaking the $ref.
+func TestSanitizeSchema_DanglingRef(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"thing": map[string]any{"$ref": "#/$defs/DoesNotExist"},
+		},
+		"$defs": map[string]any{
+			"OnlyOther": map[string]any{"type": "string"},
+		},
+	}
+	result := SanitizeSchema(schema)
+
+	props := result["properties"].(map[string]any)
+	thing := props["thing"].(map[string]any)
+	if _, hasRef := thing["$ref"]; hasRef {
+		t.Error("dangling $ref should not be preserved")
+	}
+	if thing["type"] != "object" {
+		t.Errorf("dangling $ref fallback = %v, want type:object", thing)
+	}
+}
+
+// TestSanitizeSchema_RefWithoutDefs verifies that a $ref in a schema with
+// no $defs table at all falls back to the generic object type. Also covers
+// non-local refs (external URIs) which are not resolvable.
+func TestSanitizeSchema_RefWithoutDefs(t *testing.T) {
+	cases := []struct {
+		name   string
+		schema map[string]any
+	}{
+		{
+			name: "no $defs at all",
+			schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"x": map[string]any{"$ref": "#/$defs/Missing"},
+				},
+			},
+		},
+		{
+			name: "external URI ref",
+			schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"x": map[string]any{"$ref": "https://example.com/schema.json#/X"},
+				},
+				"$defs": map[string]any{
+					"Y": map[string]any{"type": "string"},
+				},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := SanitizeSchema(tc.schema)
+			props := result["properties"].(map[string]any)
+			x := props["x"].(map[string]any)
+			if _, hasRef := x["$ref"]; hasRef {
+				t.Error("$ref should not be preserved")
+			}
+			if x["type"] != "object" {
+				t.Errorf("fallback = %v, want type:object", x)
+			}
+		})
+	}
+}
+
+// TestSanitizeSchema_CyclicRefsDepthCap verifies that self-referencing
+// schemas don't infinite-loop the inliner.
+func TestSanitizeSchema_CyclicRefsDepthCap(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"node": map[string]any{"$ref": "#/$defs/Node"},
+		},
+		"$defs": map[string]any{
+			"Node": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"child": map[string]any{"$ref": "#/$defs/Node"},
+				},
+			},
+		},
+	}
+	// Should complete quickly without stack overflow.
+	result := SanitizeSchema(schema)
+	if result == nil {
+		t.Fatal("got nil, want a schema")
+	}
+	// The top-level $defs should be stripped.
+	if _, ok := result["$defs"]; ok {
+		t.Error("$defs should be stripped")
+	}
+}
+
 func TestSanitizeSchema_NoInputMutation_AnySlice(t *testing.T) {
 	// Test the []any path (from JSON unmarshal) also does not mutate input.
 	input := map[string]any{
