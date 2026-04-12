@@ -634,6 +634,51 @@ func TestSanitizeSchema_DanglingRef(t *testing.T) {
 	}
 }
 
+// TestSanitizeSchema_RefWithoutDefs verifies that a $ref in a schema with
+// no $defs table at all falls back to the generic object type. Also covers
+// non-local refs (external URIs) which are not resolvable.
+func TestSanitizeSchema_RefWithoutDefs(t *testing.T) {
+	cases := []struct {
+		name   string
+		schema map[string]any
+	}{
+		{
+			name: "no $defs at all",
+			schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"x": map[string]any{"$ref": "#/$defs/Missing"},
+				},
+			},
+		},
+		{
+			name: "external URI ref",
+			schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"x": map[string]any{"$ref": "https://example.com/schema.json#/X"},
+				},
+				"$defs": map[string]any{
+					"Y": map[string]any{"type": "string"},
+				},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := SanitizeSchema(tc.schema)
+			props := result["properties"].(map[string]any)
+			x := props["x"].(map[string]any)
+			if _, hasRef := x["$ref"]; hasRef {
+				t.Error("$ref should not be preserved")
+			}
+			if x["type"] != "object" {
+				t.Errorf("fallback = %v, want type:object", x)
+			}
+		})
+	}
+}
+
 // TestSanitizeSchema_CyclicRefsDepthCap verifies that self-referencing
 // schemas don't infinite-loop the inliner.
 func TestSanitizeSchema_CyclicRefsDepthCap(t *testing.T) {

@@ -40,9 +40,6 @@ func SanitizeSchema(schema map[string]any) map[string]any {
 // The function does not mutate its input: new maps/slices are allocated
 // for every container so callers can safely reuse the original schema.
 func inlineRefsAndStripDrafts(obj any, defs map[string]any, depth int) any {
-	if obj == nil {
-		return nil
-	}
 	switch v := obj.(type) {
 	case map[string]any:
 		// $ref resolution: replace with the deep-cloned target.
