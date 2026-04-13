@@ -331,6 +331,27 @@ func TestRetryAfterDuration(t *testing.T) {
 	}
 }
 
+func TestParseRetryFromBody(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  string
+		want time.Duration
+	}{
+		{"wait N seconds", "Please wait 30 seconds before retrying.", 30 * time.Second},
+		{"retry after N seconds", "retry after 10 seconds", 10 * time.Second},
+		{"zero seconds", "Please wait 0 seconds before retrying.", 0},
+		{"no match", "Rate limit exceeded.", 0},
+		{"empty string", "", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseRetryFromBody(tt.msg); got != tt.want {
+				t.Errorf("parseRetryFromBody(%q) = %v, want %v", tt.msg, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRetryDelay(t *testing.T) {
 	tests := []struct {
 		name    string
