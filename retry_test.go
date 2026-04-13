@@ -185,13 +185,13 @@ func TestRetryAfterDuration(t *testing.T) {
 			want: 500 * time.Millisecond,
 		},
 		{
-			name: "retry-after-ms too large (>60s)",
+			name: "retry-after-ms large value returned as-is",
 			err: &APIError{
 				StatusCode:      http.StatusTooManyRequests,
 				IsRetryable:     true,
-				ResponseHeaders: map[string]string{"retry-after-ms": "120000"},
+				ResponseHeaders: map[string]string{"retry-after-ms": "200000"},
 			},
-			want: 60000 * time.Millisecond,
+			want: 200000 * time.Millisecond,
 		},
 		{
 			name: "retry-after-ms zero",
@@ -230,13 +230,13 @@ func TestRetryAfterDuration(t *testing.T) {
 			want: 5 * time.Second,
 		},
 		{
-			name: "retry-after seconds too large (>60)",
+			name: "retry-after seconds large value returned as-is",
 			err: &APIError{
 				StatusCode:      http.StatusTooManyRequests,
 				IsRetryable:     true,
-				ResponseHeaders: map[string]string{"retry-after": "120"},
+				ResponseHeaders: map[string]string{"retry-after": "200"},
 			},
-			want: 60 * time.Second,
+			want: 200 * time.Second,
 		},
 		{
 			name: "retry-after seconds zero",
@@ -274,12 +274,124 @@ func TestRetryAfterDuration(t *testing.T) {
 			},
 			want: 3 * time.Second,
 		},
+		{
+			name: "body fallback: Please wait 60 seconds",
+			err: &APIError{
+				StatusCode:  http.StatusTooManyRequests,
+				IsRetryable: true,
+				Message:     "Rate limit of 250000 per 60s exceeded. Please wait 60 seconds before retrying.",
+			},
+			want: 60 * time.Second,
+		},
+		{
+			name: "body fallback: retry after 30 seconds",
+			err: &APIError{
+				StatusCode:  http.StatusTooManyRequests,
+				IsRetryable: true,
+				Message:     "Too many requests, retry after 30 seconds.",
+			},
+			want: 30 * time.Second,
+		},
+		{
+			name: "body fallback: Wait 300 seconds returned as-is",
+			err: &APIError{
+				StatusCode:  http.StatusTooManyRequests,
+				IsRetryable: true,
+				Message:     "Please wait 300 seconds before retrying.",
+			},
+			want: 300 * time.Second,
+		},
+		{
+			name: "body fallback: no match",
+			err: &APIError{
+				StatusCode:  http.StatusTooManyRequests,
+				IsRetryable: true,
+				Message:     "Rate limit exceeded.",
+			},
+			want: 0,
+		},
+		{
+			name: "headers take priority over body",
+			err: &APIError{
+				StatusCode:      http.StatusTooManyRequests,
+				IsRetryable:     true,
+				ResponseHeaders: map[string]string{"retry-after": "5"},
+				Message:         "Please wait 60 seconds before retrying.",
+			},
+			want: 5 * time.Second,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := retryAfterDuration(tt.err)
 			if got != tt.want {
 				t.Errorf("retryAfterDuration() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRetryDelay(t *testing.T) {
+	tests := []struct {
+		name    string
+		err     error
+		attempt int
+		useExp  bool // true = expect exponential backoff, false = expect server delay
+	}{
+		{
+			name:    "no server hint - use exponential",
+			err:     &APIError{StatusCode: http.StatusTooManyRequests, IsRetryable: true},
+			attempt: 0,
+			useExp:  true,
+		},
+		{
+			name: "server says 5s (< 60s) - use server",
+			err: &APIError{
+				StatusCode:      http.StatusTooManyRequests,
+				IsRetryable:     true,
+				ResponseHeaders: map[string]string{"retry-after": "5"},
+			},
+			attempt: 0,
+			useExp:  false,
+		},
+		{
+			name: "server says 60s (>= 60s) - ignore, use exponential",
+			err: &APIError{
+				StatusCode:  http.StatusTooManyRequests,
+				IsRetryable: true,
+				Message:     "Please wait 60 seconds before retrying.",
+			},
+			attempt: 0,
+			useExp:  true,
+		},
+		{
+			name: "server says 120s (>= 60s) - ignore, use exponential",
+			err: &APIError{
+				StatusCode:      http.StatusTooManyRequests,
+				IsRetryable:     true,
+				ResponseHeaders: map[string]string{"retry-after": "120"},
+			},
+			attempt: 0,
+			useExp:  true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := retryDelay(tt.err, tt.attempt)
+			serverDelay := retryAfterDuration(tt.err)
+			if tt.useExp {
+				// Should be in exponential range (attempt 0: 1s-3s with jitter).
+				if got < 1*time.Second || got > 3*time.Second {
+					t.Errorf("retryDelay() = %v, want exponential range 1s-3s", got)
+				}
+				// Should NOT be the server delay.
+				if serverDelay >= 60*time.Second && got == serverDelay {
+					t.Errorf("retryDelay() = %v, should not use server delay %v", got, serverDelay)
+				}
+			} else {
+				if got != serverDelay {
+					t.Errorf("retryDelay() = %v, want server delay %v", got, serverDelay)
+				}
 			}
 		})
 	}

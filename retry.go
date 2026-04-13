@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"regexp"
 	"strconv"
 	"time"
 )
@@ -47,33 +48,71 @@ func sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// retryAfterDuration extracts a Retry-After delay from an APIError's response headers.
-// Supports retry-after-ms (OpenAI) and retry-after (seconds). Returns 0 if not present
-// or exceeds 60s (to avoid absurdly long waits).
+// retryAfterDuration extracts a Retry-After delay from an APIError.
+// Checks (in order): retry-after-ms header (OpenAI), retry-after header (standard),
+// then falls back to parsing "wait N seconds" from the error message body (Azure).
+//
+// Following the Vercel AI SDK pattern: the server-requested delay is only used
+// when it is "reasonable" - under 60s or less than the caller's exponential
+// backoff. Long delays (≥60s) are ignored so the caller can fail fast and let
+// the exponential schedule take over. The caller is responsible for applying
+// this threshold via retryDelay().
 func retryAfterDuration(err error) time.Duration {
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.ResponseHeaders == nil {
+	if !errors.As(err, &apiErr) {
 		return 0
 	}
 	// OpenAI uses retry-after-ms (milliseconds).
-	if ms, ok := apiErr.ResponseHeaders["retry-after-ms"]; ok {
-		if v, parseErr := strconv.ParseInt(ms, 10, 64); parseErr == nil && v > 0 {
-			if v > 60000 {
-				v = 60000
+	if apiErr.ResponseHeaders != nil {
+		if ms, ok := apiErr.ResponseHeaders["retry-after-ms"]; ok {
+			if v, parseErr := strconv.ParseInt(ms, 10, 64); parseErr == nil && v > 0 {
+				return time.Duration(v) * time.Millisecond
 			}
-			return time.Duration(v) * time.Millisecond
+		}
+		// Standard Retry-After (seconds).
+		if secs, ok := apiErr.ResponseHeaders["retry-after"]; ok {
+			if v, parseErr := strconv.ParseInt(secs, 10, 64); parseErr == nil && v > 0 {
+				return time.Duration(v) * time.Second
+			}
 		}
 	}
-	// Standard Retry-After (seconds).
-	if secs, ok := apiErr.ResponseHeaders["retry-after"]; ok {
-		if v, parseErr := strconv.ParseInt(secs, 10, 64); parseErr == nil && v > 0 {
-			if v > 60 {
-				v = 60
-			}
-			return time.Duration(v) * time.Second
-		}
+	// Fallback: parse "wait N seconds" or "retry after N seconds" from error body.
+	// Azure AI Services embeds the retry hint in the error message rather than headers.
+	if d := parseRetryFromBody(apiErr.Message); d > 0 {
+		return d
 	}
 	return 0
+}
+
+// retryDelay returns the delay to use before the next retry attempt.
+// Follows the Vercel AI SDK pattern: the server-requested delay (from headers
+// or error body) is used only when it is under 60s or less than the calculated
+// exponential backoff. Otherwise the exponential backoff is used. This ensures
+// fast failure for long rate-limit windows instead of blocking for minutes.
+func retryDelay(err error, attempt int) time.Duration {
+	serverDelay := retryAfterDuration(err)
+	expDelay := backoffDuration(attempt)
+	if serverDelay > 0 && (serverDelay < 60*time.Second || serverDelay < expDelay) {
+		return serverDelay
+	}
+	return expDelay
+}
+
+// waitSecondsRe matches patterns like "wait 60 seconds", "retry after 30 seconds",
+// "Please wait 60 seconds before retrying".
+var waitSecondsRe = regexp.MustCompile(`(?i)(?:wait|retry after)\s+(\d+)\s+seconds?`)
+
+// parseRetryFromBody extracts a retry delay from an error message body.
+func parseRetryFromBody(msg string) time.Duration {
+	m := waitSecondsRe.FindStringSubmatch(msg)
+	if m == nil {
+		return 0
+	}
+	v, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil || v <= 0 {
+		return 0
+	}
+	return time.Duration(v) * time.Second
 }
 
 // withRetry executes fn up to maxRetries+1 times, retrying on retryable errors.
@@ -83,10 +122,7 @@ func withRetry[T any](ctx context.Context, maxRetries int, fn func() (T, error))
 	result, err := fn()
 	attempt := 0
 	for ; err != nil && retryable(err) && attempt < maxRetries; attempt++ {
-		delay := retryAfterDuration(err)
-		if delay == 0 {
-			delay = backoffDuration(attempt)
-		}
+		delay := retryDelay(err, attempt)
 		if sleepErr := sleep(ctx, delay); sleepErr != nil {
 			var zero T
 			return zero, sleepErr
