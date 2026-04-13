@@ -5,71 +5,27 @@ const ready = ref(false);
 const installCopied = ref(false);
 
 const providers = [
-  { name: "OpenAI", icon: "/providers/openai.svg", link: "/providers/openai" },
-  {
-    name: "Anthropic",
-    icon: "/providers/anthropic.svg",
-    link: "/providers/anthropic",
-  },
-  { name: "Google", icon: "/providers/google.svg", link: "/providers/google" },
-  { name: "Bedrock", icon: "/providers/aws.svg", link: "/providers/bedrock" },
-  { name: "Azure", icon: "/providers/azure.svg", link: "/providers/azure" },
-  { name: "Vertex", icon: "/providers/vertex.svg", link: "/providers/vertex" },
-  {
-    name: "Mistral",
-    icon: "/providers/mistral.svg",
-    link: "/providers/mistral",
-  },
-  { name: "xAI", icon: "/providers/xai.svg", link: "/providers/xai" },
-  { name: "Groq", icon: "/providers/groq.svg", link: "/providers/groq" },
-  { name: "Cohere", icon: "/providers/cohere.svg", link: "/providers/cohere" },
-  {
-    name: "DeepSeek",
-    icon: "/providers/deepseek.svg",
-    link: "/providers/deepseek",
-  },
-  {
-    name: "MiniMax",
-    icon: "/providers/minimax.svg",
-    link: "/providers/minimax",
-  },
-  { name: "Ollama", icon: "/providers/ollama.svg", link: "/providers/ollama" },
-  {
-    name: "Fireworks",
-    icon: "/providers/fireworks.svg",
-    link: "/providers/fireworks",
-  },
-  {
-    name: "Together",
-    icon: "/providers/together.svg",
-    link: "/providers/together",
-  },
-  {
-    name: "DeepInfra",
-    icon: "/providers/deepinfra.svg",
-    link: "/providers/deepinfra",
-  },
-  {
-    name: "OpenRouter",
-    icon: "/providers/openrouter.svg",
-    link: "/providers/openrouter",
-  },
-  {
-    name: "Perplexity",
-    icon: "/providers/perplexity.svg",
-    link: "/providers/perplexity",
-  },
-  {
-    name: "Cerebras",
-    icon: "/providers/cerebras.svg",
-    link: "/providers/cerebras",
-  },
+  { name: "OpenAI", icon: "https://models.dev/logos/openai.svg", link: "/providers/openai" },
+  { name: "Anthropic", icon: "https://models.dev/logos/anthropic.svg", link: "/providers/anthropic" },
+  { name: "Google", icon: "https://models.dev/logos/google.svg", link: "/providers/google" },
+  { name: "Bedrock", icon: "https://models.dev/logos/amazon-bedrock.svg", link: "/providers/bedrock" },
+  { name: "Azure", icon: "https://models.dev/logos/azure.svg", link: "/providers/azure" },
+  { name: "Vertex", icon: "https://models.dev/logos/google-vertex.svg", link: "/providers/vertex" },
+  { name: "Mistral", icon: "https://models.dev/logos/mistral.svg", link: "/providers/mistral" },
+  { name: "xAI", icon: "https://models.dev/logos/xai.svg", link: "/providers/xai" },
+  { name: "Groq", icon: "https://models.dev/logos/groq.svg", link: "/providers/groq" },
+  { name: "Cohere", icon: "https://models.dev/logos/cohere.svg", link: "/providers/cohere" },
+  { name: "DeepSeek", icon: "https://models.dev/logos/deepseek.svg", link: "/providers/deepseek" },
+  { name: "MiniMax", icon: "https://models.dev/logos/minimax.svg", link: "/providers/minimax" },
+  { name: "Ollama", icon: "https://models.dev/logos/ollama-cloud.svg", link: "/providers/ollama" },
+  { name: "Fireworks", icon: "https://models.dev/logos/fireworks-ai.svg", link: "/providers/fireworks" },
+  { name: "Together", icon: "https://models.dev/logos/togetherai.svg", link: "/providers/together" },
+  { name: "DeepInfra", icon: "https://models.dev/logos/deepinfra.svg", link: "/providers/deepinfra" },
+  { name: "OpenRouter", icon: "https://models.dev/logos/openrouter.svg", link: "/providers/openrouter" },
+  { name: "Perplexity", icon: "https://models.dev/logos/perplexity.svg", link: "/providers/perplexity" },
+  { name: "Cerebras", icon: "https://models.dev/logos/cerebras.svg", link: "/providers/cerebras" },
   { name: "vLLM", icon: "/providers/vllm.svg", link: "/providers/vllm" },
-  {
-    name: "Compatible",
-    icon: "/providers/compatible.svg",
-    link: "/providers/compat",
-  },
+  { name: "Compatible", icon: "/providers/compatible.svg", link: "/providers/compat" },
 ];
 
 function copyInstall() {
