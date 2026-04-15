@@ -34,6 +34,9 @@ func TestRetryable(t *testing.T) {
 		{"TLS timeout string", fmt.Errorf("net/http: TLS handshake timeout"), true},
 		{"i/o timeout string", fmt.Errorf("i/o timeout"), true},
 		{"no such host string", fmt.Errorf("dial tcp: lookup api.example.com: no such host"), true},
+		{"context deadline", context.DeadlineExceeded, false},
+		{"context canceled", context.Canceled, false},
+		{"wrapped context deadline", fmt.Errorf("request: %w", context.DeadlineExceeded), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

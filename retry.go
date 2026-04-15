@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -29,23 +28,22 @@ func retryable(err error) bool {
 	return isNetworkError(err)
 }
 
-// isNetworkError returns true for transient network errors that should be retried:
-// connection reset, connection refused, DNS failures, TLS handshake timeouts, etc.
+// isNetworkError reports whether err is a transient network error (connection
+// reset, refused, DNS, TLS handshake timeout). Context errors are excluded
+// because they represent caller-initiated cancellation.
 func isNetworkError(err error) bool {
 	if err == nil {
 		return false
 	}
-	// net.Error covers timeouts and temporary network errors.
+	// Context errors are intentional cancellations, not network errors.
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	// net.Error covers timeouts, DNS failures, connection resets, refused
+	// connections, and broken pipes (net.OpError and syscall.Errno both
+	// implement net.Error).
 	var netErr net.Error
 	if errors.As(err, &netErr) {
-		return true
-	}
-	// syscall errors: connection reset, connection refused, broken pipe.
-	var sysErr *net.OpError
-	if errors.As(err, &sysErr) {
-		return true
-	}
-	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE) {
 		return true
 	}
 	// Fallback: string match for common network error messages that may be
