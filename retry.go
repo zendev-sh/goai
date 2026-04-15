@@ -32,9 +32,6 @@ func retryable(err error) bool {
 // reset, refused, DNS, TLS handshake timeout). Context errors are excluded
 // because they represent caller-initiated cancellation.
 func isNetworkError(err error) bool {
-	if err == nil {
-		return false
-	}
 	// Context errors are intentional cancellations, not network errors.
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return false
