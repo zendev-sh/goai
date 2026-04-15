@@ -2247,13 +2247,38 @@ func TestWithMaxRetries_ClampNegative(t *testing.T) {
 		},
 	}
 
-	_, err := GenerateText(t.Context(), model, WithPrompt("hi"), WithMaxRetries(-1))
-	// WithMaxRetries(-1) clamps to 0 - no retries, just one attempt, error returned.
+	// Values below -1 are clamped to 0 (no retries).
+	_, err := GenerateText(t.Context(), model, WithPrompt("hi"), WithMaxRetries(-2))
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	if callCount != 1 {
 		t.Errorf("model called %d times, want 1 (MaxRetries clamped to 0)", callCount)
+	}
+}
+
+func TestWithMaxRetries_UnlimitedMinusOne(t *testing.T) {
+	callCount := 0
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			callCount++
+			if callCount <= 3 {
+				return nil, &APIError{Message: "service error", StatusCode: 503, IsRetryable: true}
+			}
+			return &provider.GenerateResult{Text: "ok"}, nil
+		},
+	}
+
+	result, err := GenerateText(t.Context(), model, WithPrompt("hi"), WithMaxRetries(-1))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Text != "ok" {
+		t.Errorf("got text %q, want %q", result.Text, "ok")
+	}
+	if callCount != 4 {
+		t.Errorf("model called %d times, want 4 (3 retries + 1 success)", callCount)
 	}
 }
 

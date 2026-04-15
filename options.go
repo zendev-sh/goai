@@ -228,13 +228,18 @@ func WithMaxSteps(n int) Option {
 }
 
 // WithMaxRetries sets the retry count for transient errors.
-// Values below 0 are clamped to 0 (no retries).
+// Pass -1 for unlimited retries (useful when the application manages its own
+// timeout/cancellation via context). Values below -1 are clamped to 0.
 func WithMaxRetries(n int) Option {
 	return func(o *options) {
-		if n < 0 {
-			n = 0
+		switch {
+		case n == -1:
+			o.MaxRetries = 1<<31 - 1 // unlimited
+		case n < 0:
+			o.MaxRetries = 0
+		default:
+			o.MaxRetries = n
 		}
-		o.MaxRetries = n
 	}
 }
 
