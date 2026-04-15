@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -22,10 +24,16 @@ func TestRetryable(t *testing.T) {
 		{"non-API random", fmt.Errorf("random"), false},
 		{"retryable API", &APIError{StatusCode: http.StatusTooManyRequests, IsRetryable: true}, true},
 		{"not retryable API", &APIError{StatusCode: http.StatusBadRequest, IsRetryable: false}, false},
-		{"connection reset", fmt.Errorf("read tcp: connection reset by peer"), true},
-		{"connection refused", fmt.Errorf("dial tcp: connection refused"), true},
-		{"TLS timeout", fmt.Errorf("net/http: TLS handshake timeout"), true},
-		{"i/o timeout", fmt.Errorf("i/o timeout"), true},
+		{"net.OpError", &net.OpError{Op: "dial", Net: "tcp", Err: fmt.Errorf("connect refused")}, true},
+		{"net timeout", &net.DNSError{Err: "timeout", Name: "api.example.com", IsTimeout: true}, true},
+		{"syscall ECONNRESET", fmt.Errorf("read: %w", syscall.ECONNRESET), true},
+		{"syscall ECONNREFUSED", fmt.Errorf("dial: %w", syscall.ECONNREFUSED), true},
+		{"syscall EPIPE", fmt.Errorf("write: %w", syscall.EPIPE), true},
+		{"connection reset string", fmt.Errorf("read tcp: connection reset by peer"), true},
+		{"connection refused string", fmt.Errorf("dial tcp: connection refused"), true},
+		{"TLS timeout string", fmt.Errorf("net/http: TLS handshake timeout"), true},
+		{"i/o timeout string", fmt.Errorf("i/o timeout"), true},
+		{"no such host string", fmt.Errorf("dial tcp: lookup api.example.com: no such host"), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
