@@ -19,9 +19,13 @@ func TestRetryable(t *testing.T) {
 		want bool
 	}{
 		{"nil", nil, false},
-		{"non-API", fmt.Errorf("random"), false},
-		{"retryable", &APIError{StatusCode: http.StatusTooManyRequests, IsRetryable: true}, true},
-		{"not retryable", &APIError{StatusCode: http.StatusBadRequest, IsRetryable: false}, false},
+		{"non-API random", fmt.Errorf("random"), false},
+		{"retryable API", &APIError{StatusCode: http.StatusTooManyRequests, IsRetryable: true}, true},
+		{"not retryable API", &APIError{StatusCode: http.StatusBadRequest, IsRetryable: false}, false},
+		{"connection reset", fmt.Errorf("read tcp: connection reset by peer"), true},
+		{"connection refused", fmt.Errorf("dial tcp: connection refused"), true},
+		{"TLS timeout", fmt.Errorf("net/http: TLS handshake timeout"), true},
+		{"i/o timeout", fmt.Errorf("i/o timeout"), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

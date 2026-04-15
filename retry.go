@@ -6,12 +6,18 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"net"
 	"regexp"
 	"strconv"
+	"strings"
+	"syscall"
 	"time"
 )
 
 // retryable checks if an error should be retried.
+// API errors use the IsRetryable flag. Network-level errors (connection reset,
+// timeout, DNS failure) are always retryable since they indicate transient
+// infrastructure issues, not permanent request problems.
 func retryable(err error) bool {
 	if err == nil {
 		return false
@@ -20,7 +26,36 @@ func retryable(err error) bool {
 	if errors.As(err, &apiErr) {
 		return apiErr.IsRetryable
 	}
-	return false
+	return isNetworkError(err)
+}
+
+// isNetworkError returns true for transient network errors that should be retried:
+// connection reset, connection refused, DNS failures, TLS handshake timeouts, etc.
+func isNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// net.Error covers timeouts and temporary network errors.
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	// syscall errors: connection reset, connection refused, broken pipe.
+	var sysErr *net.OpError
+	if errors.As(err, &sysErr) {
+		return true
+	}
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	// Fallback: string match for common network error messages that may be
+	// wrapped in ways that don't implement net.Error.
+	msg := err.Error()
+	return strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "TLS handshake timeout") ||
+		strings.Contains(msg, "no such host") ||
+		strings.Contains(msg, "i/o timeout")
 }
 
 // backoffDuration returns the delay for attempt n (0-indexed) with jitter.
