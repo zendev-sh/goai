@@ -2022,6 +2022,38 @@ func TestTryCrossRegionFallback_OnDemandThroughput(t *testing.T) {
 	}
 }
 
+func TestTryCrossRegionFallback_ParallelRequests(t *testing.T) {
+	// Regression: parallel requests should all get true after fallback is applied.
+	// Before fix, request B would see the mutated m.id ("us.m"), check
+	// inferRegionFromModel("us.m") != "" → return false, skipping the retry.
+	m := &chatModel{id: "anthropic.claude-sonnet-4-6", originalID: "anthropic.claude-sonnet-4-6", opts: options{region: "us-east-1"}}
+	err := &goai.APIError{Message: "on-demand throughput isn\u2019t supported"}
+
+	// First call triggers the fallback.
+	if !m.tryCrossRegionFallback(err) {
+		t.Fatal("first call should return true")
+	}
+	if m.ModelID() != "us.anthropic.claude-sonnet-4-6" {
+		t.Fatalf("id = %q after first fallback", m.ModelID())
+	}
+
+	// Second call (parallel request with same error) should ALSO return true
+	// so the caller retries with the updated model ID.
+	if !m.tryCrossRegionFallback(err) {
+		t.Error("second call should return true (parallel request needs retry with updated ID)")
+	}
+
+	// Third call with same error - still true.
+	if !m.tryCrossRegionFallback(err) {
+		t.Error("third call should return true")
+	}
+
+	// Call with nil error - should return false.
+	if m.tryCrossRegionFallback(nil) {
+		t.Error("nil error should return false even after fallback")
+	}
+}
+
 // --- #9: applyBedrockOptions ---
 
 func TestApplyBedrockOptions_NonAnthropicReasoningNoType(t *testing.T) {

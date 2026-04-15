@@ -579,9 +579,23 @@ func (m *chatModel) tryBareUSFallback(err error) bool {
 // routes the request through a US endpoint. Returns true (and mutates m) if
 // the fallback should be attempted. Only runs once per model instance.
 func (m *chatModel) tryCrossRegionFallback(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// If fallback was already applied by a parallel request, return true
+	// so the caller retries with the updated model ID. The caller's HTTP
+	// request used the pre-fallback ID, so it needs a retry.
+	m.mu.RLock()
+	alreadyDone := m.fallbackDone
+	m.mu.RUnlock()
+	if alreadyDone {
+		return true
+	}
+
 	currentID := m.ModelID()
-	if err == nil || inferRegionFromModel(currentID) != "" {
-		return false // already has geo prefix, or no error
+	if inferRegionFromModel(currentID) != "" {
+		return false // already has geo prefix at construction time
 	}
 	var apiErr *goai.APIError
 	if !errors.As(err, &apiErr) {
@@ -593,7 +607,8 @@ func (m *chatModel) tryCrossRegionFallback(err error) bool {
 	if !isInvalidModel {
 		return false
 	}
-	// Only attempt fallback once.
+	// Only attempt mutation once. sync.Once.Do blocks concurrent callers
+	// until the function completes, ensuring all see the updated state.
 	m.fallbackAttempted.Do(func() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
