@@ -124,6 +124,7 @@ export default defineConfig({
             { text: 'Prompt Caching', link: '/concepts/prompt-caching' },
             { text: 'Observability', link: '/concepts/observability' },
             { text: 'Lifecycle Hooks', link: '/concepts/hooks' },
+            { text: 'Agent State & Stop Conditions', link: '/concepts/agent-state' },
           ],
         },
         {

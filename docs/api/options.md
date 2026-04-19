@@ -104,6 +104,48 @@ Set to 2 or higher to enable multi-step auto loops. For example, `WithMaxSteps(2
 
 With `GenerateText`, tools with `Execute` can still be executed at step 1 if the model requests them. With `MaxSteps(1)`, GoAI executes those tools and returns without a follow-up generation step.
 
+### WithStopWhen
+
+Registers a stop predicate evaluated AFTER each step's LLM call and tool executions complete, and BEFORE the next LLM call. Returning `true` exits the loop cleanly.
+
+```go
+func WithStopWhen(predicate StopCondition) Option
+
+type StopCondition func(steps []StepResult) bool
+```
+
+**Default:** `nil` (no predicate).
+
+```go
+goai.WithStopWhen(func(steps []goai.StepResult) bool {
+    return len(steps[len(steps)-1].ToolCalls) > 0
+})
+```
+
+Tool calls on the stopping step ARE executed before the break, so `ResponseMessages` remains replay-safe against strict providers. See [Agent State & Stop Conditions](/concepts/agent-state#withstopwhen) for placement semantics, aliasing contract, and stream `StoppedBy` details.
+
+Ignored by `GenerateObject` / `StreamObject` (one-shot stderr warning).
+
+### WithStateRef
+
+Exposes goai's tool-loop lifecycle state via a caller-owned `AgentState`.
+
+```go
+func WithStateRef(ref *AgentState) Option
+```
+
+**Default:** `nil`.
+
+```go
+var state goai.AgentState
+go pollLoop(&state)
+_, err := goai.GenerateText(ctx, model, goai.WithStateRef(&state), ...)
+```
+
+Pollers in another goroutine call `state.Observe()` for an atomic `(kind, step)` read. See [Agent State & Stop Conditions](/concepts/agent-state) for the full lifecycle, observation hazards, and terminal-state protocol.
+
+Ignored by `GenerateObject` / `StreamObject` (one-shot stderr warning).
+
 ### WithSequentialToolExecution
 
 Forces tool calls to execute one at a time instead of in parallel.
