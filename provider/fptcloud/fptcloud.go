@@ -7,25 +7,11 @@
 package fptcloud
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
 	"net/http"
 	"os"
 
-	"github.com/zendev-sh/goai"
-	"github.com/zendev-sh/goai/internal/httpc"
 	"github.com/zendev-sh/goai/internal/openaicompat"
 	"github.com/zendev-sh/goai/provider"
-)
-
-// Compile-time interface compliance checks.
-var (
-	_ provider.LanguageModel  = (*chatModel)(nil)
-	_ provider.CapableModel   = (*chatModel)(nil)
-	_ provider.EmbeddingModel = (*embeddingModel)(nil)
 )
 
 const (
@@ -38,8 +24,8 @@ type Option func(*options)
 
 type options struct {
 	tokenSource provider.TokenSource
-	region      string // "global" | "jp"
-	baseURL     string // explicit override
+	region      string
+	baseURL     string
 	headers     map[string]string
 	httpClient  *http.Client
 }
@@ -109,170 +95,38 @@ func resolveOptions(opts []Option) options {
 
 // Chat creates an FPT Smart Cloud language model for the given model ID.
 func Chat(modelID string, opts ...Option) provider.LanguageModel {
-	return &chatModel{id: modelID, opts: resolveOptions(opts)}
+	o := resolveOptions(opts)
+	return openaicompat.NewChatModel(openaicompat.ChatModelConfig{
+		ProviderID:           "fptcloud",
+		ModelID:              modelID,
+		BaseURL:              o.baseURL,
+		TokenSource:          o.tokenSource,
+		TokenRequired:        true,
+		Headers:              o.headers,
+		HTTPClient:           o.httpClient,
+		Capabilities:         chatCaps,
+		IncludeStreamOptions: true,
+		WarnPromptCaching:    true,
+	})
 }
 
 // Embedding creates an FPT Smart Cloud embedding model for the given model ID.
 func Embedding(modelID string, opts ...Option) provider.EmbeddingModel {
-	return &embeddingModel{id: modelID, opts: resolveOptions(opts)}
-}
-
-// --- Chat Model ---
-
-type chatModel struct {
-	id   string
-	opts options
-}
-
-func (m *chatModel) ModelID() string { return m.id }
-
-func (m *chatModel) Capabilities() provider.ModelCapabilities {
-	return provider.ModelCapabilities{
-		Temperature:      true,
-		ToolCall:         true,
-		InputModalities:  provider.ModalitySet{Text: true},
-		OutputModalities: provider.ModalitySet{Text: true},
-	}
-}
-
-func (m *chatModel) DoGenerate(ctx context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
-	if params.PromptCaching {
-		fmt.Fprintf(os.Stderr, "goai: fptcloud: WithPromptCaching is not supported and will be ignored\n")
-	}
-	body := openaicompat.BuildRequest(params, m.id, false, openaicompat.RequestConfig{})
-
-	resp, err := m.doHTTP(ctx, m.opts.baseURL+"/chat/completions", body)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
-	}
-	return openaicompat.ParseResponse(respBody)
-}
-
-func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams) (*provider.StreamResult, error) {
-	if params.PromptCaching {
-		fmt.Fprintf(os.Stderr, "goai: fptcloud: WithPromptCaching is not supported and will be ignored\n")
-	}
-	body := openaicompat.BuildRequest(params, m.id, true, openaicompat.RequestConfig{
-		IncludeStreamOptions: true,
+	o := resolveOptions(opts)
+	return openaicompat.NewEmbeddingModel(openaicompat.EmbeddingModelConfig{
+		ProviderID:    "fptcloud",
+		ModelID:       modelID,
+		BaseURL:       o.baseURL,
+		TokenSource:   o.tokenSource,
+		TokenRequired: true,
+		Headers:       o.headers,
+		HTTPClient:    o.httpClient,
 	})
-
-	resp, err := m.doHTTP(ctx, m.opts.baseURL+"/chat/completions", body)
-	if err != nil {
-		return nil, err
-	}
-	return openaicompat.NewSSEStream(ctx, resp.Body), nil
 }
 
-func (m *chatModel) doHTTP(ctx context.Context, url string, body map[string]any) (*http.Response, error) {
-	token, err := resolveToken(ctx, m.opts.tokenSource)
-	if err != nil {
-		return nil, err
-	}
-	return httpc.DoJSONRequest(ctx, httpc.RequestConfig{
-		URL:        url,
-		Token:      token,
-		Body:       body,
-		Headers:    m.opts.headers,
-		HTTPClient: m.opts.httpClient,
-		ProviderID: "fptcloud",
-	}, goai.ParseHTTPErrorWithHeaders)
-}
-
-// --- Embedding Model ---
-
-type embeddingModel struct {
-	id   string
-	opts options
-}
-
-func (m *embeddingModel) ModelID() string { return m.id }
-
-// MaxValuesPerCall returns the maximum batch size. 2048 is a safe default.
-func (m *embeddingModel) MaxValuesPerCall() int { return 2048 }
-
-func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params provider.EmbedParams) (*provider.EmbedResult, error) {
-	body := map[string]any{
-		"model":           m.id,
-		"input":           values,
-		"encoding_format": "float",
-	}
-	if params.ProviderOptions != nil {
-		if v, ok := params.ProviderOptions["dimensions"]; ok {
-			body["dimensions"] = v
-		}
-		if v, ok := params.ProviderOptions["user"]; ok {
-			body["user"] = v
-		}
-	}
-
-	token, err := resolveToken(ctx, m.opts.tokenSource)
-	if err != nil {
-		return nil, err
-	}
-
-	jsonBody := httpc.MustMarshalJSON(body)
-	req := httpc.MustNewRequest(ctx, "POST", m.opts.baseURL+"/embeddings", jsonBody)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	for k, v := range m.opts.headers {
-		req.Header.Set(k, v)
-	}
-
-	client := m.opts.httpClient
-	if client == nil {
-		client = http.DefaultClient
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("sending request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, goai.ParseHTTPErrorWithHeaders("fptcloud", resp.StatusCode, respBody, resp.Header)
-	}
-
-	var result struct {
-		Model string `json:"model"`
-		Data  []struct {
-			Embedding []float64 `json:"embedding"`
-			Index     int       `json:"index"`
-		} `json:"data"`
-		Usage struct {
-			PromptTokens int `json:"prompt_tokens"`
-			TotalTokens  int `json:"total_tokens"`
-		} `json:"usage"`
-	}
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("parsing response: %w", err)
-	}
-
-	embeddings := make([][]float64, len(result.Data))
-	for _, d := range result.Data {
-		if d.Index >= 0 && d.Index < len(embeddings) {
-			embeddings[d.Index] = d.Embedding
-		}
-	}
-	return &provider.EmbedResult{
-		Embeddings: embeddings,
-		Usage:      provider.Usage{InputTokens: result.Usage.PromptTokens, TotalTokens: result.Usage.TotalTokens},
-		Response:   provider.ResponseMetadata{Model: result.Model},
-	}, nil
-}
-
-func resolveToken(ctx context.Context, ts provider.TokenSource) (string, error) {
-	if ts == nil {
-		return "", errors.New("goai: no API key or token source configured")
-	}
-	return ts.Token(ctx)
+var chatCaps = provider.ModelCapabilities{
+	Temperature:      true,
+	ToolCall:         true,
+	InputModalities:  provider.ModalitySet{Text: true},
+	OutputModalities: provider.ModalitySet{Text: true},
 }

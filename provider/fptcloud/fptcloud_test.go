@@ -64,27 +64,60 @@ func TestChat_Stream(t *testing.T) {
 	}
 }
 
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func okResponse() *http.Response {
+	return &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"id":"x","model":"m","choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)),
+	}
+}
+
 func TestRegionDefault(t *testing.T) {
-	m := Chat("m", WithAPIKey("k"))
-	cm := m.(*chatModel)
-	if cm.opts.baseURL != baseURLGlobal {
-		t.Errorf("baseURL = %q, want %q", cm.opts.baseURL, baseURLGlobal)
+	var gotURL string
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		gotURL = req.URL.String()
+		return okResponse(), nil
+	})
+	m := Chat("m", WithAPIKey("k"), WithHTTPClient(&http.Client{Transport: tr}))
+	_, _ = m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if !strings.HasPrefix(gotURL, baseURLGlobal) {
+		t.Errorf("URL = %q, want prefix %q", gotURL, baseURLGlobal)
 	}
 }
 
 func TestRegionJP(t *testing.T) {
-	m := Chat("m", WithAPIKey("k"), WithRegion("jp"))
-	cm := m.(*chatModel)
-	if cm.opts.baseURL != baseURLJP {
-		t.Errorf("baseURL = %q, want %q", cm.opts.baseURL, baseURLJP)
+	var gotURL string
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		gotURL = req.URL.String()
+		return okResponse(), nil
+	})
+	m := Chat("m", WithAPIKey("k"), WithRegion("jp"), WithHTTPClient(&http.Client{Transport: tr}))
+	_, _ = m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if !strings.HasPrefix(gotURL, baseURLJP) {
+		t.Errorf("URL = %q, want prefix %q", gotURL, baseURLJP)
 	}
 }
 
 func TestRegionUnknownFallback(t *testing.T) {
-	m := Chat("m", WithAPIKey("k"), WithRegion("mars"))
-	cm := m.(*chatModel)
-	if cm.opts.baseURL != baseURLGlobal {
-		t.Errorf("baseURL = %q", cm.opts.baseURL)
+	var gotURL string
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		gotURL = req.URL.String()
+		return okResponse(), nil
+	})
+	m := Chat("m", WithAPIKey("k"), WithRegion("mars"), WithHTTPClient(&http.Client{Transport: tr}))
+	_, _ = m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if !strings.HasPrefix(gotURL, baseURLGlobal) {
+		t.Errorf("URL = %q", gotURL)
 	}
 }
 
@@ -154,10 +187,17 @@ func TestWithTokenSource(t *testing.T) {
 }
 
 func TestWithHTTPClient(t *testing.T) {
-	c := &http.Client{}
-	m := Chat("m", WithAPIKey("k"), WithHTTPClient(c))
-	if m.(*chatModel).opts.httpClient != c {
-		t.Error("client not set")
+	called := false
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		called = true
+		return okResponse(), nil
+	})
+	m := Chat("m", WithAPIKey("k"), WithHTTPClient(&http.Client{Transport: tr}))
+	_, _ = m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if !called {
+		t.Error("custom HTTP client transport was not invoked")
 	}
 }
 
@@ -177,35 +217,66 @@ func TestModelID(t *testing.T) {
 }
 
 func TestEnvVarResolution(t *testing.T) {
+	var gotURL, gotAuth string
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		gotURL = req.URL.String()
+		gotAuth = req.Header.Get("Authorization")
+		return okResponse(), nil
+	})
 	t.Setenv("FPT_API_KEY", "env-key")
 	t.Setenv("FPT_REGION", "jp")
-	m := Chat("m")
-	cm := m.(*chatModel)
-	if cm.opts.tokenSource == nil {
-		t.Error("tokenSource nil")
+	m := Chat("m", WithHTTPClient(&http.Client{Transport: tr}))
+	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if cm.opts.baseURL != baseURLJP {
-		t.Errorf("baseURL = %q", cm.opts.baseURL)
+	if gotAuth != "Bearer env-key" {
+		t.Errorf("auth = %q", gotAuth)
+	}
+	if !strings.HasPrefix(gotURL, baseURLJP) {
+		t.Errorf("URL = %q", gotURL)
 	}
 }
 
 func TestEnvVarBaseURL(t *testing.T) {
+	var gotURL string
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		gotURL = req.URL.String()
+		return okResponse(), nil
+	})
 	t.Setenv("FPT_API_KEY", "k")
 	t.Setenv("FPT_BASE_URL", "https://custom.example.com/v1")
-	m := Chat("m")
-	cm := m.(*chatModel)
-	if cm.opts.baseURL != "https://custom.example.com/v1" {
-		t.Errorf("baseURL = %q", cm.opts.baseURL)
+	m := Chat("m", WithHTTPClient(&http.Client{Transport: tr}))
+	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(gotURL, "https://custom.example.com/v1/") {
+		t.Errorf("URL = %q", gotURL)
 	}
 }
 
 func TestEnvVarNotOverrideExplicit(t *testing.T) {
+	var gotURL string
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		gotURL = req.URL.String()
+		return okResponse(), nil
+	})
 	t.Setenv("FPT_API_KEY", "env")
 	t.Setenv("FPT_BASE_URL", "https://env.example.com")
-	m := Chat("m", WithAPIKey("explicit"), WithBaseURL("https://explicit.example.com"))
-	cm := m.(*chatModel)
-	if cm.opts.baseURL != "https://explicit.example.com" {
-		t.Errorf("baseURL = %q", cm.opts.baseURL)
+	m := Chat("m", WithAPIKey("explicit"), WithBaseURL("https://explicit.example.com"), WithHTTPClient(&http.Client{Transport: tr}))
+	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(gotURL, "https://explicit.example.com/") {
+		t.Errorf("URL = %q", gotURL)
 	}
 }
 

@@ -75,26 +75,44 @@ func TestChat_MissingAccountID(t *testing.T) {
 	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
 		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "account ID") {
-		t.Fatalf("expected account ID error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "base URL") {
+		t.Fatalf("expected base URL error, got: %v", err)
 	}
 
 	_, err = model.DoStream(t.Context(), provider.GenerateParams{
 		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "account ID") {
-		t.Fatalf("expected account ID error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "base URL") {
+		t.Fatalf("expected base URL error, got: %v", err)
 	}
 }
 
 func TestChat_AccountIDBuildsURL(t *testing.T) {
-	m := Chat("m", WithAPIKey("k"), WithAccountID("acc123"))
-	cm := m.(*chatModel)
-	want := "https://api.cloudflare.com/client/v4/accounts/acc123/ai/v1"
-	if cm.opts.baseURL != want {
-		t.Errorf("baseURL = %q, want %q", cm.opts.baseURL, want)
+	var gotURL string
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		gotURL = req.URL.String()
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"x","model":"m","choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)),
+		}, nil
+	})
+	m := Chat("m", WithAPIKey("k"), WithAccountID("acc123"), WithHTTPClient(&http.Client{Transport: tr}))
+	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "https://api.cloudflare.com/client/v4/accounts/acc123/ai/v1/chat/completions"
+	if gotURL != want {
+		t.Errorf("URL = %q, want %q", gotURL, want)
 	}
 }
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestChat_HTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -162,11 +180,24 @@ func TestWithTokenSource(t *testing.T) {
 }
 
 func TestWithHTTPClient(t *testing.T) {
-	c := &http.Client{}
-	m := Chat("m", WithAPIKey("k"), WithHTTPClient(c), WithAccountID("a"))
-	cm := m.(*chatModel)
-	if cm.opts.httpClient != c {
-		t.Error("client not set")
+	called := false
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		called = true
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"x","model":"m","choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)),
+		}, nil
+	})
+	m := Chat("m", WithAPIKey("k"), WithAccountID("a"), WithHTTPClient(&http.Client{Transport: tr}))
+	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Error("custom HTTP client transport was not invoked")
 	}
 }
 
@@ -203,25 +234,54 @@ func TestPromptCachingIgnored(t *testing.T) {
 }
 
 func TestEnvVarResolution(t *testing.T) {
+	var gotAuth, gotURL string
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		gotAuth = req.Header.Get("Authorization")
+		gotURL = req.URL.String()
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"x","model":"m","choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)),
+		}, nil
+	})
 	t.Setenv("CLOUDFLARE_API_TOKEN", "env-tok")
 	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "env-acc")
-	m := Chat("m")
-	cm := m.(*chatModel)
-	if cm.opts.tokenSource == nil {
-		t.Error("tokenSource should be set")
+	m := Chat("m", WithHTTPClient(&http.Client{Transport: tr}))
+	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(cm.opts.baseURL, "env-acc") {
-		t.Errorf("baseURL should include account ID: %q", cm.opts.baseURL)
+	if gotAuth != "Bearer env-tok" {
+		t.Errorf("auth = %q", gotAuth)
+	}
+	if !strings.Contains(gotURL, "env-acc") {
+		t.Errorf("URL should include account ID: %q", gotURL)
 	}
 }
 
 func TestEnvVarBaseURL(t *testing.T) {
+	var gotURL string
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		gotURL = req.URL.String()
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"x","model":"m","choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)),
+		}, nil
+	})
 	t.Setenv("CLOUDFLARE_API_TOKEN", "k")
 	t.Setenv("CLOUDFLARE_BASE_URL", "https://gateway.example.com/v1")
-	m := Chat("m")
-	cm := m.(*chatModel)
-	if cm.opts.baseURL != "https://gateway.example.com/v1" {
-		t.Errorf("baseURL = %q", cm.opts.baseURL)
+	m := Chat("m", WithHTTPClient(&http.Client{Transport: tr}))
+	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(gotURL, "https://gateway.example.com/v1/") {
+		t.Errorf("URL = %q, expected prefix https://gateway.example.com/v1/", gotURL)
 	}
 }
 
@@ -302,8 +362,8 @@ func TestEmbed_MissingAccountID(t *testing.T) {
 	t.Setenv("CLOUDFLARE_BASE_URL", "")
 	m := Embedding("m", WithAPIKey("k"))
 	_, err := m.DoEmbed(t.Context(), []string{"a"}, provider.EmbedParams{})
-	if err == nil || !strings.Contains(err.Error(), "account ID") {
-		t.Fatalf("expected account ID error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "base URL") {
+		t.Fatalf("expected base URL error, got %v", err)
 	}
 }
 

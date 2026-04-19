@@ -223,11 +223,37 @@ func TestChat_ReadError(t *testing.T) {
 }
 
 func TestChat_WithHTTPClient(t *testing.T) {
-	c := &http.Client{}
-	model := Chat("model", WithHTTPClient(c))
-	cm := model.(*chatModel)
-	if cm.opts.httpClient != c {
-		t.Error("custom client not set")
+	called := false
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		called = true
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"x","model":"m","choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)),
+		}, nil
+	})
+	model := Chat("model", WithBaseURL("http://example.invalid"), WithHTTPClient(&http.Client{Transport: tr}))
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Error("custom HTTP client transport was not invoked")
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestWithProviderID(t *testing.T) {
+	// Smoke test: WithProviderID is a setter; behavior impact is internal (error
+	// tagging, logging). The option must not panic or break model construction.
+	m := Chat("m", WithBaseURL("http://example.invalid"), WithProviderID("custom-id"))
+	if m.ModelID() != "m" {
+		t.Errorf("ModelID = %q", m.ModelID())
 	}
 }
 
