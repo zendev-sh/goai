@@ -589,7 +589,7 @@ func TestBuildParams_ToolExecuteNotIncluded(t *testing.T) {
 	}))
 	params := buildParams(opts)
 
-	// provider.ToolDefinition should not have Execute -- verify by checking fields exist.
+	// provider.ToolDefinition should not have Execute - verify by checking fields exist.
 	if len(params.Tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(params.Tools))
 	}
@@ -871,7 +871,7 @@ func TestGenerateText_ToolLoop_MultiStep(t *testing.T) {
 }
 
 func TestGenerateText_ToolLoop_MaxStepsReached(t *testing.T) {
-	// Model always requests tool calls -- should stop at MaxSteps.
+	// Model always requests tool calls - should stop at MaxSteps.
 	callCount := 0
 	model := &mockModel{
 		id: "test",
@@ -1071,7 +1071,7 @@ func TestGenerateText_ToolLoop_NoExecuteNoLoop(t *testing.T) {
 			Name:        "read",
 			Description: "Read a file",
 			InputSchema: json.RawMessage(`{"type":"object"}`),
-			// No Execute -- tool definitions only, loop managed externally.
+			// No Execute - tool definitions only, loop managed externally.
 		}),
 	)
 	if err != nil {
@@ -1797,7 +1797,7 @@ func TestExecuteToolsParallel_ContextCancelled(t *testing.T) {
 
 	// With parallel execution, all tools run via goroutines and complete.
 	// The cancelled context is passed to Execute, but the tool ignores it.
-	msgs := executeToolsParallel(ctx, calls, toolMap, 1, toolHooks{})
+	msgs, _ := executeToolsParallel(ctx, calls, toolMap, 1, toolHooks{})
 	if len(msgs) != 2 {
 		t.Errorf("expected 2 messages (parallel execution completes all), got %d", len(msgs))
 	}
@@ -5167,7 +5167,7 @@ func TestGenerateText_ResponseMessages_NoToolExecute(t *testing.T) {
 			Name:        "search",
 			Description: "Search the web",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`),
-			// No Execute function -- tool loop should not proceed.
+			// No Execute function - tool loop should not proceed.
 		}),
 	)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -1267,7 +1268,7 @@ func TestObjectStream_PartialObjectStreamAfterResult(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Call Result() first -- this consumes the source.
+	// Call Result() first - this consumes the source.
 	result, err := stream.Result()
 	if err != nil {
 		t.Fatal(err)
@@ -1276,7 +1277,7 @@ func TestObjectStream_PartialObjectStreamAfterResult(t *testing.T) {
 		t.Errorf("Object.Name = %q, want Alice", result.Object.Name)
 	}
 
-	// Now call PartialObjectStream() -- should return a closed channel (0 items).
+	// Now call PartialObjectStream() - should return a closed channel (0 items).
 	ch := stream.PartialObjectStream()
 	count := 0
 	for range ch {
@@ -1440,7 +1441,7 @@ func TestGenerateObject_ToolLoop(t *testing.T) {
 		t.Error("tool result not present in final step messages")
 	}
 
-	// ResponseFormat is set on every call — the mock returns FinishToolCalls on
+	// ResponseFormat is set on every call - the mock returns FinishToolCalls on
 	// step 1 because real providers call tools even when ResponseFormat is present,
 	// deferring JSON output until they have enough information.
 }
@@ -1466,7 +1467,7 @@ func TestGenerateObject_ToolLoop_MaxSteps1_NoLoop(t *testing.T) {
 	toolExecuted := false
 	result, err := GenerateObject[simpleObject](t.Context(), model,
 		WithPrompt("generate"),
-		// MaxSteps defaults to 1 — no explicit WithMaxSteps needed.
+		// MaxSteps defaults to 1 - no explicit WithMaxSteps needed.
 		WithTools(Tool{
 			Name:        "unused_tool",
 			Description: "never called",
@@ -1507,7 +1508,7 @@ func TestGenerateObject_ToolLoop_StopsEarlyWhenNoToolCalls(t *testing.T) {
 				t.Error("ResponseFormat must be set on every step")
 			}
 			if callCount > 1 {
-				t.Fatalf("unexpected call count %d — should have stopped after step 1", callCount)
+				t.Fatalf("unexpected call count %d - should have stopped after step 1", callCount)
 			}
 			// Model decides it doesn't need tools, returns JSON directly.
 			return &provider.GenerateResult{
@@ -1520,7 +1521,7 @@ func TestGenerateObject_ToolLoop_StopsEarlyWhenNoToolCalls(t *testing.T) {
 
 	result, err := GenerateObject[simpleObject](t.Context(), model,
 		WithPrompt("generate"),
-		WithMaxSteps(5), // high limit — model stops on its own after 1 call
+		WithMaxSteps(5), // high limit - model stops on its own after 1 call
 		WithTools(Tool{
 			Name:        "some_tool",
 			Description: "some tool",
@@ -1550,7 +1551,7 @@ func TestGenerateObject_ToolLoop_MaxStepsExhausted(t *testing.T) {
 	model := &mockModel{
 		id: "test",
 		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
-			// Always requests a tool call — never produces stop.
+			// Always requests a tool call - never produces stop.
 			return &provider.GenerateResult{
 				FinishReason: provider.FinishToolCalls,
 				ToolCalls:    []provider.ToolCall{{ID: "c", Name: "t", Input: json.RawMessage(`{}`)}},
@@ -2182,5 +2183,107 @@ func TestStreamObject_ResponseMessages(t *testing.T) {
 	}
 	if msg.Content[0].Text != `{"name":"Alice","age":30}` {
 		t.Errorf("ResponseMessages[0].Content[0].Text = %q, want JSON output", msg.Content[0].Text)
+	}
+}
+
+// TestGenerateObject_StopWhenIgnored verifies FIX 3 + FIX 12: passing
+// WithStopWhen to GenerateObject / StreamObject emits a one-shot stderr
+// warning per entry point (separate sync.Once for each) and does not affect
+// behaviour.
+func TestGenerateObject_StopWhenIgnored(t *testing.T) {
+	// NOT parallel-safe: mutates package-global warn state (atomic flags +
+	// osStderr). Must not run with t.Parallel() and any test that races on
+	// these globals would interfere. The atomic.Bool.Store(false) reset
+	// (FIX 21) replaces the earlier sync.Once reassignment, which was
+	// technically unsound if observed concurrently.
+	origStderr := osStderr
+	// Reset BOTH warn flags for this test so the warnings actually fire
+	// regardless of earlier calls in other tests in this package (FIX 12).
+	generateObjectStopWhenWarned.Store(false)
+	streamObjectStopWhenWarned.Store(false)
+	t.Cleanup(func() { osStderr = origStderr })
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	osStderr = w
+
+	// Simple GenerateObject call with WithStopWhen - predicate must be ignored.
+	genModel := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{
+				Text:         `{"name":"Alice","age":30}`,
+				FinishReason: provider.FinishStop,
+				Usage:        provider.Usage{InputTokens: 1, OutputTokens: 1},
+			}, nil
+		},
+	}
+	_, err = GenerateObject[simpleObject](t.Context(), genModel,
+		WithPrompt("x"),
+		WithStopWhen(func(_ []StepResult) bool { return true }),
+	)
+	if err != nil {
+		t.Fatalf("GenerateObject: %v", err)
+	}
+
+	// Second GenerateObject call - warning must NOT repeat (per-function sync.Once).
+	_, _ = GenerateObject[simpleObject](t.Context(), genModel,
+		WithPrompt("x"),
+		WithStopWhen(func(_ []StepResult) bool { return true }),
+	)
+
+	// FIX 12: a StreamObject call must emit its OWN warning - the
+	// GenerateObject call above must not have silenced it.
+	streamModel := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			ch := make(chan provider.StreamChunk, 4)
+			ch <- provider.StreamChunk{Type: provider.ChunkText, Text: `{"name":"Alice","age":30}`}
+			ch <- provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop}
+			close(ch)
+			return &provider.StreamResult{Stream: ch}, nil
+		},
+	}
+	so, err := StreamObject[simpleObject](t.Context(), streamModel,
+		WithPrompt("x"),
+		WithStopWhen(func(_ []StepResult) bool { return true }),
+	)
+	if err != nil {
+		t.Fatalf("StreamObject: %v", err)
+	}
+	// Drain the partial-object stream so the goroutine exits cleanly.
+	for range so.PartialObjectStream() {
+	}
+	if _, err := so.Result(); err != nil {
+		t.Fatalf("StreamObject Result: %v", err)
+	}
+
+	// Second StreamObject call - per-function sync.Once must suppress.
+	so2, err := StreamObject[simpleObject](t.Context(), streamModel,
+		WithPrompt("x"),
+		WithStopWhen(func(_ []StepResult) bool { return true }),
+	)
+	if err != nil {
+		t.Fatalf("StreamObject 2: %v", err)
+	}
+	for range so2.PartialObjectStream() {
+	}
+
+	_ = w.Close()
+	osStderr = origStderr
+
+	buf := make([]byte, 4096)
+	n, _ := r.Read(buf)
+	got := string(buf[:n])
+	if !strings.Contains(got, "WithStopWhen is not supported in GenerateObject") {
+		t.Errorf("stderr did not contain GenerateObject warning; got=%q", got)
+	}
+	if !strings.Contains(got, "WithStopWhen is not supported in StreamObject") {
+		t.Errorf("stderr did not contain StreamObject warning; got=%q", got)
+	}
+	// Two distinct warnings, one per entry point, no duplicates.
+	if n := strings.Count(got, "not supported"); n != 2 {
+		t.Errorf("warning emitted %d times, want 2 (one per entry point); stderr=%q", n, got)
 	}
 }
