@@ -1925,6 +1925,37 @@ func TestStepKind_String(t *testing.T) {
 	}
 }
 
+// TestDefaultWarnStopWhenIgnored_AllBranches covers StreamObject + default
+// fn-name branches of defaultWarnStopWhenIgnoredForObject to complete
+// coverage of the warn switch. GenerateObject is covered by tests in
+// object_test.go that exercise the public WithStopWhen option.
+func TestDefaultWarnStopWhenIgnored_AllBranches(t *testing.T) {
+	streamObjectStopWhenWarned.Store(false)
+	origStderr := osStderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	osStderr = w
+	t.Cleanup(func() { osStderr = origStderr })
+
+	defaultWarnStopWhenIgnoredForObject("StreamObject")
+	defaultWarnStopWhenIgnoredForObject("StreamObject")
+	defaultWarnStopWhenIgnoredForObject("UnknownEntryPoint")
+	_ = w.Close()
+
+	var buf strings.Builder
+	_, _ = io.Copy(&buf, r)
+	_ = r.Close()
+	got := buf.String()
+	if n := strings.Count(got, "WithStopWhen is not supported in StreamObject"); n != 1 {
+		t.Errorf("StreamObject warn count=%d; want 1", n)
+	}
+	if !strings.Contains(got, "WithStopWhen is not supported in UnknownEntryPoint") {
+		t.Errorf("default-branch warn missing; got %q", got)
+	}
+}
+
 // TestDefaultWarnStateRefIgnored_AllBranches covers StreamObject + default
 // fn-name branches of defaultWarnStateRefIgnoredForObject to complete
 // coverage of the warn switch. GenerateObject is covered by the sibling

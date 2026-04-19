@@ -1005,22 +1005,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			}
 		}
 
-		// StepsExhausted: true only when MaxSteps was reached AND the last step
-		// still had tool calls pending (model wanted to continue but was cut short).
-		// WithStopWhen break at exact MaxSteps boundary must NOT flip this. Only
-		// overwrite stopCause when it is still empty (loop fell through without
-		// any break) - otherwise StopCauseEmpty / StopCauseAbort / Predicate etc.
-		// would be silently reclassified as MaxSteps.
-		if !hookStopped && stopCause == "" && len(steps) >= o.MaxSteps && len(steps) > 0 && len(steps[len(steps)-1].ToolCalls) > 0 {
-			stepsExhausted = true
-			stopCause = provider.StopCauseMaxSteps
-		}
-		// If the loop fell through without any break setting a cause (e.g.
-		// MaxSteps boundary with the last step having no pending tool calls),
-		// default to natural.
-		if stopCause == "" {
-			stopCause = provider.StopCauseNatural
-		}
+		stopCause, stepsExhausted = finalizeStopCause(hookStopped, stopCause, steps, o.MaxSteps)
 
 		// Set responseMessages before emitting ChunkFinish (safe: ts.buildResult reads
 		// responseMessages only after doneCh closes, which happens after out is closed).
@@ -1390,13 +1375,9 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 	// that is intentionally dropped here for clarity. Streaming keeps the
 	// extra guard because its loop has a Natural-case break that sets
 	// stopCause without setting hookStopped - see streamWithToolLoop.
-	if !hookStopped && len(steps) >= o.MaxSteps && len(steps) > 0 && len(steps[len(steps)-1].ToolCalls) > 0 {
-		tr.StepsExhausted = true
-		stopCause = provider.StopCauseMaxSteps
-	}
-	if stopCause == "" {
-		stopCause = provider.StopCauseNatural
-	}
+	var stepsExhausted bool
+	stopCause, stepsExhausted = finalizeStopCause(hookStopped, stopCause, steps, o.MaxSteps)
+	tr.StepsExhausted = stepsExhausted
 	tr.ResponseMessages = buildResponseMessages(params.Messages[originalLen:], steps, nil)
 	fireOnFinish(o.OnFinish, FinishInfo{
 		StepsExhausted: tr.StepsExhausted,
@@ -1412,6 +1393,24 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 // stopSafe evaluates a StopCondition with recover. A panicking predicate is
 // treated as "do not stop" and logged to stderr (consistent with how
 // OnBeforeStep / OnStepFinish handle panics).
+// finalizeStopCause classifies the terminal StopCause when the tool loop
+// exits by natural termination (no break set a cause). It encapsulates the
+// post-loop MaxSteps-exhaustion guard and the StopCauseNatural default so
+// both GenerateText and streamWithToolLoop share one implementation.
+//
+// Returns the resolved StopCause and whether MaxSteps was exhausted.
+func finalizeStopCause(hookStopped bool, current provider.StopCause, steps []StepResult, maxSteps int) (provider.StopCause, bool) {
+	stepsExhausted := false
+	if !hookStopped && current == "" && len(steps) >= maxSteps && len(steps) > 0 && len(steps[len(steps)-1].ToolCalls) > 0 {
+		stepsExhausted = true
+		current = provider.StopCauseMaxSteps
+	}
+	if current == "" {
+		current = provider.StopCauseNatural
+	}
+	return current, stepsExhausted
+}
+
 func stopSafe(pred StopCondition, steps []StepResult) (stop bool) {
 	defer func() {
 		if r := recover(); r != nil {

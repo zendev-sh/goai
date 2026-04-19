@@ -911,4 +911,15 @@ func TestToolResult_JSONRoundTrip(t *testing.T) {
 			t.Errorf("Error message = %q; want %q", got.Error.Error(), sentinel.Error())
 		}
 	})
+
+	t.Run("invalid JSON returns error", func(t *testing.T) {
+		// Outer syntax must be valid so the runtime dispatches into our
+		// UnmarshalJSON method; a type mismatch inside (array where an
+		// object is expected) forces the inner json.Unmarshal call to fail
+		// and exercise the error-return path.
+		var got provider.ToolResult
+		if err := got.UnmarshalJSON([]byte(`[1,2,3]`)); err == nil {
+			t.Fatalf("expected error for type-mismatched JSON, got nil")
+		}
+	})
 }
