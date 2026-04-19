@@ -134,13 +134,16 @@ onMounted(() => {
       <div class="rh-whatsnew-inner">
         <p class="rh-section-label">What's new</p>
         <div class="rh-release-list">
-          <a href="/providers/cloudflare" class="rh-release">
+          <a
+            href="https://github.com/zendev-sh/goai/releases/tag/v0.7.0"
+            class="rh-release"
+          >
             <span class="rh-release-tag">v0.7.0</span>
             <span class="rh-release-text"
               ><strong>Cloudflare Workers AI</strong> &amp;
-              <strong>FPT Smart Cloud</strong> — New providers. OpenAI-compatible
-              chat + embeddings. FPT supports Global and Japan regions
-              (<a href="/providers/fptcloud">docs</a>).</span
+              <strong>FPT Smart Cloud</strong> — New providers.
+              OpenAI-compatible chat + embeddings. FPT supports Global and
+              Japan regions.</span
             >
           </a>
           <a
