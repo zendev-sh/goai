@@ -36,11 +36,37 @@ const (
 	// and exited when all parallel tool calls return.
 	StepToolExecuting
 
-	// StepIdle indicates the tool loop has terminated (either naturally, by
-	// MaxSteps exhaustion, by OnBeforeStep.Stop, or by WithStopWhen returning
-	// true). Once StepIdle is observed, the state will not transition again.
+	// StepIdle indicates the tool loop has terminated INTERNALLY (either
+	// naturally, by MaxSteps exhaustion, by OnBeforeStep.Stop, or by
+	// WithStopWhen returning true). StepIdle is the post-tool-loop "wake
+	// eligible" parking state - consumers may inject work and re-enter
+	// GenerateText. It is NOT a terminal state: a consumer may transition
+	// to one of the three terminal kinds below via SetTerminal once the
+	// owning goroutine has decided no further work will run.
 	StepIdle
+
+	// StepDone is a terminal state set by the consumer when the runner
+	// completed naturally (no error, no ctx cancel, no panic). After
+	// StepDone, the state never transitions again. SetTerminal enforces
+	// this via CAS.
+	StepDone
+
+	// StepCancelled is a terminal state set by the consumer when the
+	// runner exited due to context cancellation (ctx.Err() != nil) or a
+	// caller-requested cancel signal. Terminal; sticky.
+	StepCancelled
+
+	// StepError is a terminal state set by the consumer when the runner
+	// returned a non-nil error (or recovered a panic). Terminal; sticky.
+	StepError
 )
+
+// IsTerminal reports whether k is one of the three terminal states
+// (StepDone / StepCancelled / StepError). Pollers use this to decide
+// whether further state mutation is possible.
+func (k StepKind) IsTerminal() bool {
+	return k == StepDone || k == StepCancelled || k == StepError
+}
 
 // String returns a human-readable name for the kind.
 func (k StepKind) String() string {
@@ -55,6 +81,12 @@ func (k StepKind) String() string {
 		return "tool-executing"
 	case StepIdle:
 		return "idle"
+	case StepDone:
+		return "done"
+	case StepCancelled:
+		return "cancelled"
+	case StepError:
+		return "error"
 	default:
 		return "unknown"
 	}
@@ -113,6 +145,45 @@ func (s *AgentState) set(kind StepKind, step int) {
 	}
 	packed := (uint64(uint32(step)) << 32) | uint64(uint32(kind))
 	s.packed.Store(packed)
+}
+
+// SetTerminal transitions the state to one of {StepDone, StepCancelled,
+// StepError} via compare-and-swap. The transition succeeds only if the
+// current state is non-terminal (i.e. !IsTerminal); a second SetTerminal
+// call on an already-terminal state is a no-op and returns false. The
+// step counter is preserved across the transition so pollers reading
+// (kind, step) on a terminal state still see the highest step number
+// reached. Returns true if this call performed the transition, false
+// otherwise.
+//
+// Intended caller: the consumer that owns the AgentState lifetime (e.g.
+// zenflow's AgentRunner.Run on exit, mapping ctx.Err() / panic-recover
+// to Cancelled / Error and the natural return path to Done). goai's own
+// hooks NEVER call SetTerminal - the consumer is the sole writer of
+// terminal states, satisfying the plan §4.2 #4 single-writer rule.
+//
+// Passing a non-terminal kind panics: the API is intentionally narrow
+// to prevent misuse (e.g. SetTerminal(StepLLMInFlight) would corrupt
+// the lifecycle).
+func (s *AgentState) SetTerminal(kind StepKind) bool {
+	if s == nil {
+		return false
+	}
+	if !kind.IsTerminal() {
+		panic(fmt.Errorf("goai: SetTerminal requires a terminal kind (Done/Cancelled/Error), got %s", kind))
+	}
+	for {
+		v := s.packed.Load()
+		curKind := StepKind(uint32(v))
+		if curKind.IsTerminal() {
+			return false
+		}
+		step := uint32(v >> 32)
+		next := (uint64(step) << 32) | uint64(uint32(kind))
+		if s.packed.CompareAndSwap(v, next) {
+			return true
+		}
+	}
 }
 
 // WithStateRef exposes goai's tool-loop lifecycle state via an

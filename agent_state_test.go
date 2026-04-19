@@ -1916,6 +1916,9 @@ func TestStepKind_String(t *testing.T) {
 		StepStepFinished:  "step-finished",
 		StepToolExecuting: "tool-executing",
 		StepIdle:          "idle",
+		StepDone:          "done",
+		StepCancelled:     "cancelled",
+		StepError:         "error",
 		StepKind(999):     "unknown",
 	}
 	for k, want := range cases {
@@ -2618,6 +2621,124 @@ func TestAgentState_StreamText_ErrorAfterLLMInFlight_MonotonicStep(t *testing.T)
 			if maxObserved.Load() < 2 {
 				t.Errorf("trial %d: maxObserved=%d; pollers never saw step 2 advancing", trial, maxObserved.Load())
 			}
+		}
+	})
+}
+
+// TestAgentState_TerminalCAS verifies that SetTerminal:
+//  1. transitions a non-terminal state to the requested terminal kind,
+//  2. preserves the step counter across the transition,
+//  3. is sticky: a second call returns false and does not change state,
+//  4. panics on a non-terminal kind argument.
+func TestAgentState_TerminalCAS(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	t.Run("Done", func(t *testing.T) {
+		var s AgentState
+		s.set(StepIdle, 7)
+		if !s.SetTerminal(StepDone) {
+			t.Fatal("SetTerminal(StepDone) returned false on Idle state; want true")
+		}
+		k, step := s.Observe()
+		if k != StepDone {
+			t.Errorf("kind=%v; want StepDone", k)
+		}
+		if step != 7 {
+			t.Errorf("step=%d; want 7 (preserved)", step)
+		}
+		if !k.IsTerminal() {
+			t.Error("StepDone.IsTerminal()=false")
+		}
+	})
+
+	t.Run("Cancelled", func(t *testing.T) {
+		var s AgentState
+		s.set(StepLLMInFlight, 3)
+		if !s.SetTerminal(StepCancelled) {
+			t.Fatal("SetTerminal(StepCancelled) returned false; want true")
+		}
+		k, step := s.Observe()
+		if k != StepCancelled {
+			t.Errorf("kind=%v; want StepCancelled", k)
+		}
+		if step != 3 {
+			t.Errorf("step=%d; want 3", step)
+		}
+	})
+
+	t.Run("Error", func(t *testing.T) {
+		var s AgentState
+		s.set(StepToolExecuting, 2)
+		if !s.SetTerminal(StepError) {
+			t.Fatal("SetTerminal(StepError) returned false; want true")
+		}
+		k, _ := s.Observe()
+		if k != StepError {
+			t.Errorf("kind=%v; want StepError", k)
+		}
+	})
+
+	t.Run("StickyAfterFirstTransition", func(t *testing.T) {
+		var s AgentState
+		s.set(StepIdle, 1)
+		if !s.SetTerminal(StepDone) {
+			t.Fatal("first SetTerminal returned false")
+		}
+		// Subsequent attempts to override must be rejected.
+		if s.SetTerminal(StepCancelled) {
+			t.Error("SetTerminal(StepCancelled) on a Done state returned true; want false (sticky)")
+		}
+		if s.SetTerminal(StepError) {
+			t.Error("SetTerminal(StepError) on a Done state returned true; want false (sticky)")
+		}
+		k, _ := s.Observe()
+		if k != StepDone {
+			t.Errorf("kind=%v after rejected overrides; want StepDone preserved", k)
+		}
+	})
+
+	t.Run("PanicsOnNonTerminal", func(t *testing.T) {
+		var s AgentState
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("SetTerminal(StepIdle) did not panic")
+			}
+		}()
+		s.SetTerminal(StepIdle)
+	})
+
+	t.Run("NilReceiverNoop", func(t *testing.T) {
+		var s *AgentState
+		if s.SetTerminal(StepDone) {
+			t.Error("nil receiver SetTerminal returned true; want false")
+		}
+	})
+
+	t.Run("ConcurrentRaceSingleWinner", func(t *testing.T) {
+		var s AgentState
+		s.set(StepIdle, 5)
+		const N = 50
+		var wg sync.WaitGroup
+		var winners atomic.Int32
+		for range N {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if s.SetTerminal(StepDone) {
+					winners.Add(1)
+				}
+			}()
+		}
+		wg.Wait()
+		if w := winners.Load(); w != 1 {
+			t.Errorf("got %d winners on concurrent SetTerminal; want exactly 1", w)
+		}
+		k, step := s.Observe()
+		if k != StepDone {
+			t.Errorf("kind=%v; want StepDone", k)
+		}
+		if step != 5 {
+			t.Errorf("step=%d; want 5 preserved", step)
 		}
 	})
 }
