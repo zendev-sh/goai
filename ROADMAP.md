@@ -68,12 +68,18 @@
 | **Context propagation**    | `RequestInfo.Ctx` carries trace context through provider calls                    |
 | **Langfuse data race fix** | Fixed concurrent map access in Langfuse observability integration                 |
 
-## v0.7.0 - Current release
+## v0.7.0
 
 | Feature                      | Description                                                                                   |
 | ---------------------------- | --------------------------------------------------------------------------------------------- |
 | **Cloudflare Workers AI**    | New provider with chat + embeddings. OpenAI-compatible endpoints, account-ID URL building, optional AI Gateway override via `WithBaseURL` |
 | **FPT Smart Cloud**          | New provider (FPT AI Marketplace) with chat + embeddings. `WithRegion("global"/"jp")` for Japan / Global routing |
+
+## v0.7.1 - Current release
+
+| Feature                           | Description                                                                                   |
+| --------------------------------- | --------------------------------------------------------------------------------------------- |
+| **OpenAI-compat factory refactor** | `openaicompat.NewChatModel` / `NewEmbeddingModel` absorb HTTP dispatch, token resolution, env-var plumbing from 14 provider packages. ~1,400 LOC removed. Public API unchanged |
 
 ### Planned
 
