@@ -5,7 +5,7 @@ description: "Use DeepInfra serverless inference in Go with GoAI. Deploy and run
 
 # DeepInfra
 
-DeepInfra inference provider using the OpenAI-compatible Chat Completions API.
+[DeepInfra](https://deepinfra.com/) inference provider using the OpenAI-compatible Chat Completions API.
 
 ## Setup
 

@@ -5,7 +5,7 @@ description: "Use Together AI inference in Go with GoAI. Run open-source Llama, 
 
 # Together AI
 
-Together AI inference provider using the OpenAI-compatible Chat Completions API.
+[Together AI](https://www.together.ai/) inference provider using the OpenAI-compatible Chat Completions API.
 
 ## Setup
 

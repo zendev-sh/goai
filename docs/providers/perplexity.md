@@ -5,7 +5,7 @@ description: "Use Perplexity Sonar models for search-augmented generation in Go 
 
 # Perplexity
 
-Perplexity AI provider using the OpenAI-compatible Chat Completions API. Perplexity models specialize in search-augmented generation with built-in citations.
+[Perplexity AI](https://www.perplexity.ai/) provider using the OpenAI-compatible Chat Completions API. Perplexity models specialize in search-augmented generation with built-in citations.
 
 ## Setup
 

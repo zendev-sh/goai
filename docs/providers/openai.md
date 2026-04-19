@@ -5,7 +5,7 @@ description: "Use OpenAI GPT-4o, o3, and GPT-5 models in Go with GoAI. Supports 
 
 # OpenAI
 
-OpenAI provider for GoAI - supports Chat Completions API and Responses API with automatic routing.
+[OpenAI](https://openai.com/) provider for GoAI - supports Chat Completions API and Responses API with automatic routing.
 
 ## Setup
 

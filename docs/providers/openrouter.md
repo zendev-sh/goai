@@ -5,7 +5,7 @@ description: "Access models from multiple AI providers through OpenRouter's unif
 
 # OpenRouter
 
-OpenRouter multi-provider routing gateway using the OpenAI-compatible Chat Completions API. Access models from multiple providers through a single API key.
+[OpenRouter](https://openrouter.ai/) multi-provider routing gateway using the OpenAI-compatible Chat Completions API. Access models from multiple providers through a single API key.
 
 ## Setup
 

@@ -5,7 +5,7 @@
 <h1 align="center">GoAI</h1>
 
 <p align="center"><em>AI SDK, the Go way.</em></p>
-<p align="center">Go SDK for building AI applications. One SDK, 22+ providers, MCP support.</p>
+<p align="center">Go SDK for building AI applications. One SDK, 24+ providers, MCP support.</p>
 
 <p align="center">
   <a href="bench/RESULTS.md"><img src="https://img.shields.io/badge/streaming-1.1x_faster-brightgreen" alt="Streaming"></a>
@@ -29,16 +29,16 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 
 ## What's New
 
+> **v0.7.0** - New providers: [Cloudflare Workers AI](https://goai.sh/providers/cloudflare) and [FPT Smart Cloud](https://goai.sh/providers/fptcloud) (both OpenAI-compatible, chat + embeddings). [Changelog →](https://github.com/zendev-sh/goai/releases)
+>
 > **v0.6.0** - OpenTelemetry tracing + metrics, context propagation via RequestInfo.Ctx, Langfuse data race fix. [Changelog →](https://github.com/zendev-sh/goai/releases)
 >
 > **v0.5.8** - RunPod provider, Bedrock embeddings, and docs accuracy improvements. [Changelog →](https://github.com/zendev-sh/goai/releases)
->
-> **v0.5.1** - MCP (Model Context Protocol) client plus MiniMax provider support. [Docs →](https://goai.sh/concepts/mcp)
 
 ## Features
 
 - **7 core functions**: `GenerateText`, `StreamText`, `GenerateObject[T]`, `StreamObject[T]`, `Embed`, `EmbedMany`, `GenerateImage`
-- **22+ providers**: OpenAI, Anthropic, Google, Bedrock, Azure, Vertex, Mistral, xAI, Groq, Cohere, DeepSeek, MiniMax, Fireworks, Together, DeepInfra, OpenRouter, Perplexity, Cerebras, Ollama, vLLM, RunPod, + generic OpenAI-compatible
+- **24+ providers**: OpenAI, Anthropic, Google, Bedrock, Azure, Vertex, Mistral, xAI, Groq, Cohere, DeepSeek, MiniMax, Fireworks, Together, DeepInfra, OpenRouter, Perplexity, Cerebras, Ollama, vLLM, RunPod, Cloudflare Workers AI, FPT Smart Cloud, + generic OpenAI-compatible
 - **Auto tool loop**: Define tools with `Execute` handlers, set `MaxSteps` for `GenerateText` and `StreamText`
 - **Structured output**: `GenerateObject[T]` auto-generates JSON Schema from Go types via reflection
 - **Streaming**: Real-time text and partial object streaming via channels
@@ -404,6 +404,8 @@ result, err := goai.GenerateText(ctx, model, goai.WithPrompt("Hello"))
 | Ollama     | local models                                                 | local models                                               | -             | none                                                                                               | Unit | `provider/ollama`     |
 | vLLM       | local models                                                 | local models                                               | -             | Optional auth via `WithAPIKey` / `WithTokenSource`                                                 | Unit | `provider/vllm`       |
 | RunPod     | any vLLM model                                               | -                                                          | -             | `RUNPOD_API_KEY`, TokenSource                                                                      | Unit | `provider/runpod`     |
+| Cloudflare | `@cf/meta/*`, `@cf/openai/gpt-oss-*`, `@cf/qwen/*`           | `@cf/baai/bge-*`                                           | -             | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_BASE_URL`, TokenSource                | Unit | `provider/cloudflare` |
+| FPT Cloud  | `Qwen3-*`, `Llama-*`, `gpt-oss-*`, `GLM-*`, `gemma-*`        | `bge-*`, `gte-*`, `multilingual-e5-*`                      | -             | `FPT_API_KEY`, `FPT_REGION` (`global`/`jp`), `FPT_BASE_URL`, TokenSource                           | Unit | `provider/fptcloud`   |
 | Compat     | any OpenAI-compatible                                        | any                                                        | -             | configurable                                                                                       | Unit | `provider/compat`     |
 
 **E2E column**: "Full" = tested with real API calls. "Unit" = tested with mock HTTP servers (100% coverage).
@@ -452,6 +454,8 @@ Last run: 2026-03-27. 103 models tested (generate + stream).
 | Ollama     | `llama3`, `llama3.2:1b`, `nomic-embed-text`                                                        |
 | vLLM       | `meta-llama/Llama-3-8b`                                                                            |
 | RunPod     | `meta-llama/Llama-3.3-70B-Instruct`                                                                |
+| Cloudflare | `@cf/meta/llama-3.1-8b-instruct`, `@cf/baai/bge-base-en-v1.5`                                      |
+| FPT Cloud  | `Qwen3-32B`                                                                                        |
 
 </details>
 

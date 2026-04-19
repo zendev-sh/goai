@@ -135,6 +135,8 @@ Many providers read credentials from environment variables when explicit auth op
 | Perplexity | `github.com/zendev-sh/goai/provider/perplexity` | `Chat`                       |
 | MiniMax    | `github.com/zendev-sh/goai/provider/minimax`    | `Chat`                       |
 | RunPod     | `github.com/zendev-sh/goai/provider/runpod`     | `Chat`                       |
+| Cloudflare | `github.com/zendev-sh/goai/provider/cloudflare` | `Chat`, `Embedding`          |
+| FPT Cloud  | `github.com/zendev-sh/goai/provider/fptcloud`   | `Chat`, `Embedding`          |
 | Ollama     | `github.com/zendev-sh/goai/provider/ollama`     | `Chat`, `Embedding`          |
 | vLLM       | `github.com/zendev-sh/goai/provider/vllm`       | `Chat`, `Embedding`          |
 | Compat     | `github.com/zendev-sh/goai/provider/compat`     | `Chat`, `Embedding`          |

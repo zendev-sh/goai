@@ -5,7 +5,7 @@ description: "Use MiniMax M2.7, M2.5, M2.1, and M2 models in Go with GoAI via Mi
 
 # MiniMax
 
-MiniMax provider using the Anthropic-compatible API (recommended by MiniMax). Delegates to GoAI's Anthropic provider with MiniMax's endpoint.
+[MiniMax](https://www.minimax.io/) provider using the Anthropic-compatible API (recommended by MiniMax). Delegates to GoAI's Anthropic provider with MiniMax's endpoint.
 
 ## Setup
 

@@ -5,7 +5,7 @@ description: "Use Cerebras wafer-scale inference in Go with GoAI. Run Llama mode
 
 # Cerebras
 
-Cerebras inference provider using the OpenAI-compatible Chat Completions API. Known for fast inference on Cerebras wafer-scale hardware.
+[Cerebras](https://cerebras.ai/) inference provider using the OpenAI-compatible Chat Completions API. Known for fast inference on Cerebras wafer-scale hardware.
 
 ## Setup
 

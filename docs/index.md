@@ -1,21 +1,23 @@
 ---
 layout: home
-title: GoAI SDK — Go SDK for AI Applications. One API, 22+ LLM Providers.
+title: GoAI SDK — Go SDK for AI Applications. One API, 24+ LLM Providers.
 titleTemplate: false
-description: "Open-source Go SDK for AI applications. One unified API for OpenAI, Anthropic, Google Gemini, AWS Bedrock, and 22+ LLM providers. Minimal dependencies."
+description: "Open-source Go SDK for AI applications. One unified API for OpenAI, Anthropic, Google Gemini, AWS Bedrock, and 24+ LLM providers. Minimal dependencies."
 ---
 
 <div class="vp-doc" style="max-width: 688px; margin: 0 auto; padding: 2rem 1.5rem;">
 
 ## What's New
 
+> **v0.7.0** — New providers: [Cloudflare Workers AI](/providers/cloudflare) and [FPT Smart Cloud](/providers/fptcloud) (both OpenAI-compatible, chat + embeddings). [Changelog →](https://github.com/zendev-sh/goai/releases)
+>
 > **v0.6.0** — OpenTelemetry tracing + metrics, context propagation via RequestInfo.Ctx, Langfuse data race fix. [Changelog →](https://github.com/zendev-sh/goai/releases)
 >
 > **v0.5.8** — RunPod provider (serverless vLLM), Bedrock embeddings, and docs accuracy improvements. [Changelog →](https://github.com/zendev-sh/goai/releases)
 
 ## What is GoAI SDK?
 
-GoAI SDK is an open-source Go library for building AI applications. It provides one unified API across 22+ LLM providers — OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM, and more.
+GoAI SDK is an open-source Go library for building AI applications. It provides one unified API across 24+ LLM providers — OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM, and more.
 
 Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomatically for Go with generics, interfaces, and channels.
 
@@ -35,7 +37,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomat
 
 ## Why GoAI?
 
-- **One API, 22+ providers** — switch providers by changing one line of code
+- **One API, 24+ providers** — switch providers by changing one line of code
 - **Minimal deps** — core requires only `golang.org/x/oauth2`; optional OTel integration in separate submodule
 - **Go-native design** — generics for type safety, channels for streaming, interfaces for extensibility
 - **24x faster cold start** than Vercel AI SDK (569μs vs 13.9ms)
@@ -87,7 +89,7 @@ result, _ := goai.GenerateText(ctx, model,
 
 ## Supported Providers
 
-OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Vertex AI, Cohere, Mistral, xAI (Grok), Groq, DeepSeek, Fireworks, Together AI, DeepInfra, OpenRouter, Perplexity, Cerebras, Ollama, vLLM, RunPod, and any OpenAI-compatible endpoint.
+OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Vertex AI, Cohere, Mistral, xAI (Grok), Groq, DeepSeek, Fireworks, Together AI, DeepInfra, OpenRouter, Perplexity, Cerebras, Cloudflare Workers AI, FPT Smart Cloud, Ollama, vLLM, RunPod, and any OpenAI-compatible endpoint.
 
 [View all providers →](/providers/)
 

@@ -5,7 +5,7 @@ description: "Use Cohere Command and Embed models in Go with GoAI. Native Chat v
 
 # Cohere
 
-Cohere provider using the native Chat v2 and Embed APIs. This is not an OpenAI-compatible provider - it uses Cohere's own wire format.
+[Cohere](https://cohere.com/) provider using the native Chat v2 and Embed APIs. This is not an OpenAI-compatible provider - it uses Cohere's own wire format.
 
 ## Setup
 

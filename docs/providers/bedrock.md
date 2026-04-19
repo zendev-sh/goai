@@ -5,7 +5,7 @@ description: "Access 60+ models from 15 vendors on AWS Bedrock with GoAI. Pure G
 
 # Bedrock
 
-AWS Bedrock provider for GoAI - multi-model access via the native Converse API with SigV4 signing. No AWS SDK dependency.
+[AWS Bedrock](https://aws.amazon.com/bedrock/) provider for GoAI - multi-model access via the native Converse API with SigV4 signing. No AWS SDK dependency.
 
 ## Setup
 

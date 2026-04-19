@@ -5,7 +5,7 @@ description: "Connect to self-hosted vLLM inference servers with GoAI. Supports 
 
 # vLLM
 
-vLLM provider for local or self-hosted model inference. vLLM exposes an OpenAI-compatible API and authentication is optional.
+[vLLM](https://docs.vllm.ai/) provider for local or self-hosted model inference. vLLM exposes an OpenAI-compatible API and authentication is optional.
 
 ## Setup
 

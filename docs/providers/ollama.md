@@ -5,7 +5,7 @@ description: "Run local LLMs with Ollama and GoAI. Use Llama, Mistral, and other
 
 # Ollama
 
-Ollama provider for local model inference. Ollama exposes an OpenAI-compatible API and requires no authentication by default.
+[Ollama](https://ollama.com/) provider for local model inference. Ollama exposes an OpenAI-compatible API and requires no authentication by default.
 
 ## Setup
 

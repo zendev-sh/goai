@@ -5,7 +5,7 @@ description: "Use RunPod serverless vLLM endpoints in Go with GoAI. Run any mode
 
 # RunPod
 
-RunPod serverless vLLM inference provider using the OpenAI-compatible Chat Completions API.
+[RunPod](https://www.runpod.io/) serverless vLLM inference provider using the OpenAI-compatible Chat Completions API.
 
 ## Setup
 
