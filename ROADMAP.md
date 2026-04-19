@@ -1,6 +1,6 @@
 # GoAI Roadmap
 
-> Last updated: 2026-03-28
+> Last updated: 2026-04-19
 
 ## v0.4.4
 
@@ -11,7 +11,7 @@
 - **Embed** / **EmbedMany** - Single and batch embeddings with auto-chunking + parallel execution
 - **GenerateImage** - Text-to-image generation (OpenAI DALL-E, Google Imagen, Azure, Vertex AI)
 
-### Providers (22+)
+### Providers (24+)
 
 | Category         | Providers                                           |
 | ---------------- | --------------------------------------------------- |
@@ -20,6 +20,7 @@
 | Fast inference   | Groq, Cerebras, Fireworks, Together, DeepInfra      |
 | Specialized      | Mistral, xAI, DeepSeek, Cohere, Perplexity, MiniMax |
 | Aggregators      | OpenRouter                                          |
+| Edge / regional  | Cloudflare Workers AI, FPT Smart Cloud (Global + JP) |
 | Local/Serverless | Ollama, vLLM, RunPod                                |
 | Bring your own   | `compat.Chat()` for any OpenAI-compatible endpoint  |
 
@@ -38,7 +39,7 @@
 - **Provider-defined tools**: 20 tools across 5 providers: Anthropic (10), OpenAI (4), Google (3), Groq (1), xAI (2). All E2E tested.
 - **E2E validated** - 103 models across 7 providers tested with real API calls
 - **Benchmarks** - Go wins 5/5 comparable categories (schema is a tie) vs Vercel AI SDK: streaming 1.1x, TTFC 1.3x, cold start 24.4x, memory 3.1x, GenerateText 1.4x
-- **Documentation** - Full docs site, 22 provider pages, 26 runnable examples, API reference
+- **Documentation** - Full docs site, 24 provider pages, 26 runnable examples, API reference
 
 ---
 
@@ -58,7 +59,7 @@
 | **Bedrock embeddings** | Embedding support for all Bedrock text embedding models                           |
 | **Docs / accuracy**    | Deep-review audit fixes: docs accuracy, streaming metadata, provider capabilities |
 
-## v0.6.0 - Current release
+## v0.6.0
 
 | Feature                    | Description                                                                       |
 | -------------------------- | --------------------------------------------------------------------------------- |
@@ -66,6 +67,13 @@
 | **OpenTelemetry metrics**  | Token usage, request duration, and error rate metrics with GenAI semantic conventions |
 | **Context propagation**    | `RequestInfo.Ctx` carries trace context through provider calls                    |
 | **Langfuse data race fix** | Fixed concurrent map access in Langfuse observability integration                 |
+
+## v0.7.0 - Current release
+
+| Feature                      | Description                                                                                   |
+| ---------------------------- | --------------------------------------------------------------------------------------------- |
+| **Cloudflare Workers AI**    | New provider with chat + embeddings. OpenAI-compatible endpoints, account-ID URL building, optional AI Gateway override via `WithBaseURL` |
+| **FPT Smart Cloud**          | New provider (FPT AI Marketplace) with chat + embeddings. `WithRegion("global"/"jp")` for Japan / Global routing |
 
 ### Planned
 

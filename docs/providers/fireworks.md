@@ -5,7 +5,7 @@ description: "Use Fireworks AI inference in Go with GoAI. Run Llama, Mixtral, an
 
 # Fireworks AI
 
-Fireworks AI inference provider using the OpenAI-compatible Chat Completions API.
+[Fireworks AI](https://fireworks.ai/) inference provider using the OpenAI-compatible Chat Completions API.
 
 ## Setup
 

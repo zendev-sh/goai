@@ -5,7 +5,7 @@ description: "Use Azure OpenAI and Azure AI Services with GoAI. Auto-routes GPT,
 
 # Azure
 
-Azure OpenAI and Azure AI Services provider for GoAI - multi-model access through Azure's managed endpoints.
+[Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service) and Azure AI Services provider for GoAI - multi-model access through Azure's managed endpoints.
 
 ## Setup
 

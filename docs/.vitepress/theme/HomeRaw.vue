@@ -24,6 +24,8 @@ const providers = [
   { name: "OpenRouter", icon: "https://models.dev/logos/openrouter.svg", link: "/providers/openrouter" },
   { name: "Perplexity", icon: "https://models.dev/logos/perplexity.svg", link: "/providers/perplexity" },
   { name: "Cerebras", icon: "https://models.dev/logos/cerebras.svg", link: "/providers/cerebras" },
+  { name: "Cloudflare", icon: "https://models.dev/logos/cloudflare-workers-ai.svg", link: "/providers/cloudflare" },
+  { name: "FPT Cloud", icon: "/providers/compatible.svg", link: "/providers/fptcloud" },
   { name: "vLLM", icon: "/providers/vllm.svg", link: "/providers/vllm" },
   { name: "Compatible", icon: "/providers/compatible.svg", link: "/providers/compat" },
 ];
@@ -55,7 +57,7 @@ onMounted(() => {
           <h1 class="rh-title anim a2">GoAI</h1>
           <p class="rh-slogan anim a3">AI SDK, the Go way.</p>
           <p class="rh-tagline anim a4">
-            One unified API across 22+ providers. Streaming, structured output,
+            One unified API across 24+ providers. Streaming, structured output,
             MCP support, minimal dependencies.
           </p>
 
@@ -132,6 +134,15 @@ onMounted(() => {
       <div class="rh-whatsnew-inner">
         <p class="rh-section-label">What's new</p>
         <div class="rh-release-list">
+          <a href="/providers/cloudflare" class="rh-release">
+            <span class="rh-release-tag">v0.7.0</span>
+            <span class="rh-release-text"
+              ><strong>Cloudflare Workers AI</strong> &amp;
+              <strong>FPT Smart Cloud</strong> — New providers. OpenAI-compatible
+              chat + embeddings. FPT supports Global and Japan regions
+              (<a href="/providers/fptcloud">docs</a>).</span
+            >
+          </a>
           <a
             href="https://github.com/zendev-sh/goai/releases"
             class="rh-release"
@@ -150,14 +161,6 @@ onMounted(() => {
             <span class="rh-release-text"
               ><strong>RunPod provider</strong> — Serverless vLLM support.
               Bedrock embeddings. Docs accuracy improvements.</span
-            >
-          </a>
-          <a href="/providers/minimax" class="rh-release">
-            <span class="rh-release-tag">v0.5.1</span>
-            <span class="rh-release-text"
-              ><strong>MiniMax provider</strong> — M2.7, M2.5, M2.1, M2 via
-              Anthropic-compatible API. Thinking/reasoning, tool calling,
-              streaming.</span
             >
           </a>
         </div>
@@ -277,7 +280,7 @@ openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
     <!-- ▸ NUMBERS -->
     <section class="rh-numbers anim a10">
       <div class="rh-numbers-inner">
-        <div class="rh-num"><em>22</em><span>providers</span></div>
+        <div class="rh-num"><em>24</em><span>providers</span></div>
         <div class="rh-num"><em>100+</em><span>models tested</span></div>
         <div class="rh-num"><em>24x</em><span>faster cold start</span></div>
         <div class="rh-num"><em>0</em><span>third-party deps</span></div>

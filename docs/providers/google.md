@@ -5,7 +5,7 @@ description: "Use Google Gemini models in Go with GoAI. Supports chat, embedding
 
 # Google
 
-Google Gemini provider for GoAI - Gemini models via the Google AI REST API.
+[Google Gemini](https://ai.google.dev/) provider for GoAI - Gemini models via the Google AI REST API.
 
 For Vertex AI (GCP-managed Gemini), see the [Vertex provider](vertex.md).
 

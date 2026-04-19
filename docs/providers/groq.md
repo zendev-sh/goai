@@ -5,7 +5,7 @@ description: "Use Groq's fast LPU inference in Go with GoAI. Run Llama, Mixtral,
 
 # Groq
 
-Groq inference provider using the OpenAI-compatible Chat Completions API. Known for fast inference on custom LPU hardware.
+[Groq](https://groq.com/) inference provider using the OpenAI-compatible Chat Completions API. Known for fast inference on custom LPU hardware.
 
 ## Setup
 

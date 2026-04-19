@@ -5,7 +5,7 @@ description: "Use Mistral AI models in Go with GoAI. Supports Mistral Large, Cod
 
 # Mistral
 
-Mistral AI provider using the OpenAI-compatible Chat Completions API.
+[Mistral AI](https://mistral.ai/) provider using the OpenAI-compatible Chat Completions API.
 
 ## Setup
 

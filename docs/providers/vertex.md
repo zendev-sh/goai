@@ -5,7 +5,7 @@ description: "Use Google Vertex AI Gemini models in Go with GoAI. Supports ADC a
 
 # Google Vertex AI
 
-Google Cloud Vertex AI provider with support for chat, embeddings, and image generation.
+[Google Cloud Vertex AI](https://cloud.google.com/vertex-ai) provider with support for chat, embeddings, and image generation.
 
 ## Setup
 

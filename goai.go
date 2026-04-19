@@ -1,4 +1,4 @@
-// Package goai is a Go SDK for building AI applications. One SDK, 22+ providers.
+// Package goai is a Go SDK for building AI applications. One SDK, 24+ providers.
 //
 // Inspired by the Vercel AI SDK. The same clean abstractions, idiomatically
 // adapted for Go with generics, interfaces, and functional options.
@@ -15,9 +15,10 @@
 //
 // # Providers
 //
-// 22+ providers: OpenAI, Anthropic, Google, Bedrock, Azure, Vertex, Mistral,
+// 24+ providers: OpenAI, Anthropic, Google, Bedrock, Azure, Vertex, Mistral,
 // xAI, Groq, Cohere, DeepSeek, Fireworks, Together, DeepInfra, OpenRouter,
-// Perplexity, Cerebras, MiniMax, Ollama, vLLM, RunPod, and any OpenAI-compatible endpoint.
+// Perplexity, Cerebras, MiniMax, Cloudflare Workers AI, FPT Smart Cloud,
+// Ollama, vLLM, RunPod, and any OpenAI-compatible endpoint.
 //
 // Providers auto-resolve API keys from environment variables:
 //

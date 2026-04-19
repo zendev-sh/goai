@@ -5,7 +5,7 @@ description: "Use Anthropic Claude models in Go with GoAI. Supports the Messages
 
 # Anthropic
 
-Anthropic provider for GoAI - Claude models via the Messages API with native SSE streaming.
+[Anthropic](https://www.anthropic.com/) provider for GoAI - Claude models via the Messages API with native SSE streaming.
 
 ## Setup
 

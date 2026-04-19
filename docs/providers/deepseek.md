@@ -5,7 +5,7 @@ description: "Use DeepSeek-V3 and DeepSeek-R1 reasoning models in Go with GoAI v
 
 # DeepSeek
 
-DeepSeek provider using the OpenAI-compatible Chat Completions API.
+[DeepSeek](https://www.deepseek.com/) provider using the OpenAI-compatible Chat Completions API.
 
 ## Setup
 
