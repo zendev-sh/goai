@@ -589,7 +589,7 @@ func TestBuildParams_ToolExecuteNotIncluded(t *testing.T) {
 	}))
 	params := buildParams(opts)
 
-	// provider.ToolDefinition should not have Execute -- verify by checking fields exist.
+	// provider.ToolDefinition should not have Execute - verify by checking fields exist.
 	if len(params.Tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(params.Tools))
 	}
@@ -871,7 +871,7 @@ func TestGenerateText_ToolLoop_MultiStep(t *testing.T) {
 }
 
 func TestGenerateText_ToolLoop_MaxStepsReached(t *testing.T) {
-	// Model always requests tool calls -- should stop at MaxSteps.
+	// Model always requests tool calls - should stop at MaxSteps.
 	callCount := 0
 	model := &mockModel{
 		id: "test",
@@ -1071,7 +1071,7 @@ func TestGenerateText_ToolLoop_NoExecuteNoLoop(t *testing.T) {
 			Name:        "read",
 			Description: "Read a file",
 			InputSchema: json.RawMessage(`{"type":"object"}`),
-			// No Execute -- tool definitions only, loop managed externally.
+			// No Execute - tool definitions only, loop managed externally.
 		}),
 	)
 	if err != nil {
@@ -1797,7 +1797,7 @@ func TestExecuteToolsParallel_ContextCancelled(t *testing.T) {
 
 	// With parallel execution, all tools run via goroutines and complete.
 	// The cancelled context is passed to Execute, but the tool ignores it.
-	msgs := executeToolsParallel(ctx, calls, toolMap, 1, toolHooks{})
+	msgs, _ := executeToolsParallel(ctx, calls, toolMap, 1, toolHooks{})
 	if len(msgs) != 2 {
 		t.Errorf("expected 2 messages (parallel execution completes all), got %d", len(msgs))
 	}
@@ -5167,7 +5167,7 @@ func TestGenerateText_ResponseMessages_NoToolExecute(t *testing.T) {
 			Name:        "search",
 			Description: "Search the web",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`),
-			// No Execute function -- tool loop should not proceed.
+			// No Execute function - tool loop should not proceed.
 		}),
 	)
 	if err != nil {
@@ -5953,4 +5953,113 @@ func TestGenerateText_ResponseMessages_EmptyResponse(t *testing.T) {
 	if result.ResponseMessages != nil {
 		t.Errorf("ResponseMessages = %v, want nil for empty response", result.ResponseMessages)
 	}
+}
+
+// TestFinalizeStopCause covers the post-loop classifier. The two branches it
+// exposes (MaxSteps guard and the StopCauseNatural default) are unreachable
+// through GenerateText / streamWithToolLoop's public paths because every
+// early-exit path sets stopCause and the loop's natural termination trips
+// the MaxSteps guard. Testing the helper directly locks in the intended
+// behavior and gives coverage for both branches.
+func TestFinalizeStopCause(t *testing.T) {
+	stepWithTools := StepResult{ToolCalls: []provider.ToolCall{{ID: "1"}}}
+	stepWithoutTools := StepResult{}
+
+	cases := []struct {
+		name           string
+		hookStopped    bool
+		current        provider.StopCause
+		steps          []StepResult
+		maxSteps       int
+		wantCause      provider.StopCause
+		wantExhausted  bool
+	}{
+		{
+			name:          "max-steps guard trips",
+			current:       "",
+			steps:         []StepResult{stepWithTools, stepWithTools},
+			maxSteps:      2,
+			wantCause:     provider.StopCauseMaxSteps,
+			wantExhausted: true,
+		},
+		{
+			name:          "hook-stopped suppresses max-steps guard",
+			hookStopped:   true,
+			current:       provider.StopCausePredicate,
+			steps:         []StepResult{stepWithTools, stepWithTools},
+			maxSteps:      2,
+			wantCause:     provider.StopCausePredicate,
+			wantExhausted: false,
+		},
+		{
+			name:          "existing cause skips guard",
+			current:       provider.StopCauseEmpty,
+			steps:         []StepResult{stepWithTools},
+			maxSteps:      1,
+			wantCause:     provider.StopCauseEmpty,
+			wantExhausted: false,
+		},
+		{
+			name:          "last step without tool calls falls through to natural default",
+			current:       "",
+			steps:         []StepResult{stepWithoutTools},
+			maxSteps:      1,
+			wantCause:     provider.StopCauseNatural,
+			wantExhausted: false,
+		},
+		{
+			name:          "empty steps falls through to natural default",
+			current:       "",
+			steps:         nil,
+			maxSteps:      1,
+			wantCause:     provider.StopCauseNatural,
+			wantExhausted: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotCause, gotExhausted := finalizeStopCause(tc.hookStopped, tc.current, tc.steps, tc.maxSteps)
+			if gotCause != tc.wantCause {
+				t.Errorf("cause = %q, want %q", gotCause, tc.wantCause)
+			}
+			if gotExhausted != tc.wantExhausted {
+				t.Errorf("exhausted = %v, want %v", gotExhausted, tc.wantExhausted)
+			}
+		})
+	}
+}
+
+// TestBuildToolResults covers the empty-calls short-circuit and the >500-rune
+// error-message truncation path. Neither is reachable through the public
+// GenerateText / StreamText paths: executeToolsParallel only invokes
+// buildToolResults when at least one tool call exists, and tool errors in
+// practice are bounded well below 500 runes.
+func TestBuildToolResults(t *testing.T) {
+	t.Run("empty calls returns nil", func(t *testing.T) {
+		got := buildToolResults(nil, nil)
+		if got != nil {
+			t.Errorf("got %v, want nil", got)
+		}
+	})
+
+	t.Run("error longer than 500 runes is truncated", func(t *testing.T) {
+		longMsg := strings.Repeat("x", 600)
+		calls := []provider.ToolCall{{ID: "c1", Name: "t"}}
+		results := []toolOutput{{err: errors.New(longMsg)}}
+		got := buildToolResults(calls, results)
+		if len(got) != 1 {
+			t.Fatalf("len = %d, want 1", len(got))
+		}
+		if !strings.HasPrefix(got[0].Output, "error: ") {
+			t.Errorf("Output prefix = %q, want 'error: ' prefix", got[0].Output)
+		}
+		if !strings.HasSuffix(got[0].Output, "...") {
+			t.Errorf("truncated Output should end with '...'; got %q", got[0].Output[len(got[0].Output)-10:])
+		}
+		// 500 truncated runes + "error: " prefix + "..." suffix.
+		wantLen := len("error: ") + 500 + len("...")
+		if len(got[0].Output) != wantLen {
+			t.Errorf("Output len = %d, want %d", len(got[0].Output), wantLen)
+		}
+	})
 }

@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 )
 
 // TrySend sends a chunk to the output channel, returning false if the context
@@ -200,7 +201,14 @@ type StreamChunk struct {
 	// Usage (for ChunkFinish, may also appear on ChunkStepFinish).
 	Usage Usage
 
-	// Error (for ChunkError).
+	// Error carries the provider/goai error when Type == ChunkError.
+	//   - Nil for all non-ChunkError chunk types.
+	//   - May wrap APIError, NetworkError, or plain errors produced by the
+	//     provider or goai's tool loop (e.g. tool execution failures that are
+	//     surfaced as chunks rather than returned via Err()).
+	//   - Providers set this field directly; consumers should use
+	//     errors.Is / errors.As to branch on specific error categories rather
+	//     than comparing error values.
 	Error error
 
 	// Response metadata (populated on ChunkFinish with ID, Model from the provider).
@@ -208,6 +216,102 @@ type StreamChunk struct {
 
 	// Metadata for provider-specific data (e.g. thoughtSignature).
 	Metadata map[string]any
+
+	// StoppedBy classifies how the tool loop terminated. Only meaningful on
+	// the final ChunkFinish emitted by goai's tool loop. Values:
+	//
+	//	""                     - single-step provider chunk or unknown
+	//	"natural"              - the loop ended because the model did not request
+	//	                         additional tool calls (FinishStop or equivalent)
+	//	"max-steps"            - MaxSteps was reached while tool calls were still
+	//	                         pending (StepsExhausted)
+	//	"predicate"            - WithStopWhen predicate returned true
+	//	"before-step"          - OnBeforeStep hook returned Stop=true
+	//	"abort"                - the stream terminated on an error path
+	//	"empty"                - provider closed its stream with no chunks
+	//	                         (streaming-only; see StopCauseEmpty godoc)
+	//	"no-executable-tools"  - model returned tool calls but no tool in the
+	//	                         configured set has an Execute function
+	//	                         (sync-only; see StopCauseNoExecutableTools godoc)
+	StoppedBy StopCause
+}
+
+// StopCause classifies how a multi-step tool loop terminated. It is carried
+// on the final ChunkFinish emitted by goai's loop and on FinishInfo so sync
+// consumers (OnFinish hook) and stream consumers both see a consistent
+// signal. Provider-level chunks leave this empty.
+type StopCause string
+
+const (
+	// StopCauseNatural indicates the loop ended because the model did not
+	// request further tool calls.
+	StopCauseNatural StopCause = "natural"
+	// StopCauseMaxSteps indicates MaxSteps was reached with tool calls still pending.
+	StopCauseMaxSteps StopCause = "max-steps"
+	// StopCausePredicate indicates WithStopWhen returned true.
+	StopCausePredicate StopCause = "predicate"
+	// StopCauseBeforeStep indicates OnBeforeStep returned Stop=true.
+	StopCauseBeforeStep StopCause = "before-step"
+	// StopCauseAbort indicates the stream terminated on an error path.
+	StopCauseAbort StopCause = "abort"
+	// StopCauseEmpty indicates the provider closed its stream without sending
+	// any meaningful chunks (no text, no tool calls, no finish reason). This
+	// is not an error path; it is a distinct no-op response that consumers may
+	// want to treat differently from both "natural" (model completed) and
+	// "abort" (error).
+	//
+	// Emission scope (FIX 38 - narrowed): emitted only by the streaming
+	// multi-step tool-loop path (`streamWithToolLoop`, entered when
+	// MaxSteps>1 AND at least one configured tool has an Execute function).
+	// Sync (GenerateText / DoGenerate) paths do not emit this cause.
+	// Streaming single-shot paths (MaxSteps=1 or no executable tools, which
+	// bypass streamWithToolLoop) ALSO do not emit this cause - they hardcode
+	// StopCauseNatural regardless of chunk content, consistent with
+	// Vercel's single-iteration streaming behavior. Consumers that need a
+	// distinct "empty response" signal on single-shot streams should
+	// inspect len(TextResult.Text) and len(TextResult.ToolCalls) directly.
+	// A latent semantic question (should single-shot empty streams also
+	// emit StopCauseEmpty?) is tracked at the fireOnFinish call site in
+	// generate.go - see FIX 32 TODO.
+	StopCauseEmpty StopCause = "empty"
+	// StopCauseNoExecutableTools indicates the model returned tool calls but
+	// no tool in the configured tool set has an Execute function. The loop
+	// cannot proceed (there is nothing to execute) and exits cleanly. This is
+	// semantically distinct from StopCauseNatural ("model stopped on its
+	// own") because here the model still wants to continue but the consumer
+	// has not provided executable tools.
+	//
+	// Emission scope: sync-only (GenerateText). StreamText does NOT emit this
+	// cause because the streaming tool-loop path (streamWithToolLoop) is only
+	// entered when at least one executable tool is configured; a streaming
+	// call with zero executable tools takes the single-shot path and reports
+	// StopCauseNatural. Consumers needing a uniform signal across sync and
+	// stream can inspect ToolCalls on the last step and treat a non-empty
+	// list with no corresponding Execute function as equivalent.
+	StopCauseNoExecutableTools StopCause = "no-executable-tools"
+)
+
+// IsValid reports whether s is one of the StopCause constants declared in
+// this package. The empty string ("") is NOT considered valid (it is used
+// internally as a sentinel for "not yet classified" and to mark
+// provider-level chunks that predate the loop classifier).
+//
+// Consumers may use IsValid to defend against typos or downstream code
+// that constructs a StopCause from arbitrary text (StopCause is a string
+// alias so construction of unknown values cannot be prevented by the type
+// system alone).
+func (s StopCause) IsValid() bool {
+	switch s {
+	case StopCauseNatural,
+		StopCauseMaxSteps,
+		StopCausePredicate,
+		StopCauseBeforeStep,
+		StopCauseAbort,
+		StopCauseEmpty,
+		StopCauseNoExecutableTools:
+		return true
+	}
+	return false
 }
 
 // Message represents a conversation message.
@@ -293,6 +397,143 @@ type ToolCall struct {
 	// Metadata carries provider-specific data that must be preserved across
 	// tool round-trips (e.g., Google's thoughtSignature).
 	Metadata map[string]any
+}
+
+// ToolResult represents the outcome of executing a single tool call.
+//
+// It is a structured companion to the tool_result message content: where
+// tool-result messages carry the string payload destined for the LLM, a
+// ToolResult exposes the same information to in-process consumers (e.g.
+// StopCondition predicates) without forcing them to parse message parts.
+//
+// Output is the exact string sent back to the model (stringified JSON for
+// structured results, or "error: <detail>" when the tool call failed).
+// Error is non-nil iff the tool returned an error or panicked; IsError is
+// true in the same condition and is provided for ergonomics when
+// predicates only need the boolean signal.
+type ToolResult struct {
+	// ToolCallID matches the ID of the originating ToolCall.
+	ToolCallID string
+
+	// ToolName is the name of the tool that was invoked.
+	ToolName string
+
+	// Output is the stringified result sent to the model. For failed calls
+	// this is "error: <message>" (matching what the tool-result message
+	// carries); predicates should inspect Error or IsError to distinguish
+	// errors from deliberately empty successful outputs.
+	Output string
+
+	// Error is the error returned by the tool's Execute function, or
+	// goai.ErrUnknownTool when the model requested a tool not in the
+	// configured set. Nil on success.
+	//
+	// The standard encoding/json package cannot marshal the error
+	// interface directly (it would emit "{}"). ToolResult implements
+	// MarshalJSON to surface Error as a string ("Error.Error()") in
+	// JSON output so the field is useful in observability / logging.
+	Error error
+
+	// IsError is a convenience boolean equivalent to Error != nil.
+	IsError bool
+}
+
+// MarshalJSON implements json.Marshaler so that ToolResult round-trips
+// through encoding/json in a useful form. The Error field (an interface)
+// would otherwise marshal as "{}"; we emit it as a string using
+// err.Error(). All other fields use their natural JSON representation.
+//
+// FIX 39 - empty-string error fidelity. When r.Error is non-nil but
+// r.Error.Error() == "" (e.g. errors.New("")), we still emit the Error
+// key (as "") and IsError=true. Previously the Error field had
+// `omitempty`, so an empty message was dropped and UnmarshalJSON
+// resurrected a synthesized placeholder instead of honoring the empty
+// message the producer sent. Emitting Error unconditionally when
+// IsError is true preserves the exact string (including "") across
+// round-trips. Producers who never use empty-message errors are
+// unaffected: the wire form gains at most one `"Error":""` field.
+//
+// FIX 40 - sentinel identity is NOT preserved. If the producer set
+// r.Error to a sentinel (e.g. ErrUnknownTool from this package),
+// UnmarshalJSON reconstructs a plain errors.New(msg); callers doing
+// `errors.Is(r.Error, ErrUnknownTool)` after a JSON round-trip will get
+// false. Reconstructing sentinels from strings requires a registry and
+// is out of scope. Consumers relying on sentinel-based dispatch should
+// either avoid JSON round-trips for that data or add an out-of-band
+// error-code field.
+func (r ToolResult) MarshalJSON() ([]byte, error) {
+	type alias struct {
+		ToolCallID string `json:"ToolCallID"`
+		ToolName   string `json:"ToolName"`
+		Output     string `json:"Output"`
+		// FIX 39: pointer alias with omitempty so "" round-trips faithfully.
+		//   - nil *string    → field absent in wire form (when r.Error == nil)
+		//   - non-nil *string → field emitted (even if the pointee is "")
+		// omitempty is load-bearing: it drops the key when the pointer is nil.
+		// MarshalJSON below always assigns a non-nil *string whenever
+		// r.Error != nil (even Error.Error() == ""), so the "Error":"" case
+		// is emitted intentionally and survives UnmarshalJSON.
+		Error   *string `json:"Error,omitempty"`
+		IsError bool    `json:"IsError"`
+	}
+	a := alias{
+		ToolCallID: r.ToolCallID,
+		ToolName:   r.ToolName,
+		Output:     r.Output,
+		IsError:    r.IsError,
+	}
+	if r.Error != nil {
+		s := r.Error.Error()
+		a.Error = &s
+	}
+	return json.Marshal(a)
+}
+
+// UnmarshalJSON implements json.Unmarshaler so that ToolResult round-trips
+// through encoding/json. The Error field was marshaled as a string (see
+// MarshalJSON); here we reconstruct it via errors.New when present and
+// preserve the invariant IsError == (Error != nil). If the JSON explicitly
+// sets IsError=true but has no Error key, we synthesize a placeholder
+// error so the invariant is preserved; conversely if Error is set but
+// IsError is false, we coerce IsError to true.
+//
+// FIX 39 uses a pointer-to-string alias so that a producer's empty
+// Error value ("") is distinguishable from "key absent entirely"
+// (nil pointer). Empty string preserves the producer's errors.New("")
+// faithfully; nil + IsError=true falls back to the placeholder.
+// FIX 40: sentinel identity is not recovered (see MarshalJSON godoc).
+func (r *ToolResult) UnmarshalJSON(data []byte) error {
+	type alias struct {
+		ToolCallID string  `json:"ToolCallID"`
+		ToolName   string  `json:"ToolName"`
+		Output     string  `json:"Output"`
+		Error      *string `json:"Error,omitempty"`
+		IsError    bool    `json:"IsError"`
+	}
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	r.ToolCallID = a.ToolCallID
+	r.ToolName = a.ToolName
+	r.Output = a.Output
+	switch {
+	case a.Error != nil:
+		// FIX 39: empty-string error messages round-trip faithfully.
+		// Previous code (non-pointer alias + omitempty) conflated
+		// "absent" with "empty string", causing errors.New("") to
+		// resurrect as a synthesized placeholder.
+		r.Error = errors.New(*a.Error)
+		r.IsError = true
+	case a.IsError:
+		// Explicit IsError=true with no Error key: synthesize placeholder.
+		r.Error = errors.New("tool error (no message)")
+		r.IsError = true
+	default:
+		r.Error = nil
+		r.IsError = false
+	}
+	return nil
 }
 
 // Usage tracks token consumption for a request.

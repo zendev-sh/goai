@@ -112,6 +112,14 @@ type ToolCallInfo struct {
 // Multiple callbacks are called in registration order. Each callback is individually
 // panic-recovered in all paths (GenerateText, StreamText, GenerateObject, StreamObject).
 // A panic in one callback does not prevent subsequent callbacks from firing.
+//
+// Timing: OnStepFinish fires after the LLM call for the step returns and
+// BEFORE any tool executions for that step run. The StepResult passed to
+// the hook therefore always carries an EMPTY ToolResults slice - even in
+// the sync (GenerateText) path. To observe tool results as they complete,
+// use OnToolCall or OnAfterToolExecute; to see the full populated
+// StepResult.ToolResults after tools ran, inspect the TextResult.Steps
+// slice returned by GenerateText or stream.Result().
 func WithOnStepFinish(fn func(StepResult)) Option {
 	return func(o *options) { o.OnStepFinish = append(o.OnStepFinish, fn) }
 }
@@ -123,7 +131,7 @@ func WithOnStepFinish(fn func(StepResult)) Option {
 type FinishInfo struct {
 	// StepsExhausted is true when MaxSteps was reached while the model still
 	// requested tool calls. This is the authoritative signal for "max_steps"
-	// termination -- it is not available from any per-step hook.
+	// termination - it is not available from any per-step hook.
 	StepsExhausted bool
 
 	// TotalSteps is the number of generation steps executed.
@@ -134,6 +142,17 @@ type FinishInfo struct {
 
 	// FinishReason from the last step.
 	FinishReason provider.FinishReason
+
+	// StoppedBy classifies how the loop terminated: natural model exit,
+	// MaxSteps exhaustion, WithStopWhen predicate, OnBeforeStep.Stop,
+	// an error-driven abort, an empty provider stream, or a model
+	// requesting tool calls with no executable tools configured.
+	// Possible values: "natural", "max-steps", "predicate", "before-step",
+	// "abort", "empty" (streaming only), "no-executable-tools" (sync only).
+	// Useful when FinishReason alone is ambiguous (e.g. a StopWhen break
+	// on a tool-calls step reports FinishToolCalls but
+	// StoppedBy=="predicate"). May be empty on pre-loop error paths.
+	StoppedBy provider.StopCause
 }
 
 // WithOnFinish adds a callback invoked once after all generation steps complete.
@@ -372,7 +391,7 @@ func WithOnBeforeStep(fn func(BeforeStepInfo) BeforeStepResult) Option {
 // returns a replacement. This enables observability packages to add side-effects without
 // replacing the user's hook.
 //
-// The wrapper MUST return the user hook's result verbatim when delegating -- accidentally
+// The wrapper MUST return the user hook's result verbatim when delegating - accidentally
 // zeroing the struct suppresses tool executions or input overrides. When the existing
 // hook is nil, return a zero BeforeToolExecuteResult (no skip, no override).
 //
@@ -388,11 +407,11 @@ func WrapOnBeforeToolExecute(wrapper func(existing func(BeforeToolExecuteInfo) B
 
 // WrapOnAfterToolExecute returns an Option that wraps the existing OnAfterToolExecute hook.
 // The wrapper function receives the current hook (may be nil) and returns a replacement.
-// The wrapper MUST return the user hook's result verbatim -- an empty AfterToolExecuteResult
+// The wrapper MUST return the user hook's result verbatim - an empty AfterToolExecuteResult
 // has special semantics (empty Output preserves original, nil Error preserves original).
 // When the existing hook is nil, return a zero AfterToolExecuteResult.
 //
-// Ordering hazard: same as WrapOnBeforeToolExecute -- apply after user hooks.
+// Ordering hazard: same as WrapOnBeforeToolExecute - apply after user hooks.
 func WrapOnAfterToolExecute(wrapper func(existing func(AfterToolExecuteInfo) AfterToolExecuteResult) func(AfterToolExecuteInfo) AfterToolExecuteResult) Option {
 	return func(o *options) {
 		o.OnAfterToolExecute = wrapper(o.OnAfterToolExecute)
@@ -404,7 +423,7 @@ func WrapOnAfterToolExecute(wrapper func(existing func(AfterToolExecuteInfo) Aft
 // The wrapper MUST forward the user hook's Stop and ExtraMessages fields verbatim.
 // When the existing hook is nil, return a zero BeforeStepResult (no stop, no messages).
 //
-// Ordering hazard: same as WrapOnBeforeToolExecute -- apply after user hooks.
+// Ordering hazard: same as WrapOnBeforeToolExecute - apply after user hooks.
 func WrapOnBeforeStep(wrapper func(existing func(BeforeStepInfo) BeforeStepResult) func(BeforeStepInfo) BeforeStepResult) Option {
 	return func(o *options) {
 		o.OnBeforeStep = wrapper(o.OnBeforeStep)

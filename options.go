@@ -132,6 +132,14 @@ type options struct {
 
 	// EmbeddingProviderOptions are provider-specific parameters for embedding requests.
 	EmbeddingProviderOptions map[string]any
+
+	// StopWhen, when non-nil, is evaluated after each step in the tool loop.
+	// Returning true exits the loop cleanly. See WithStopWhen.
+	StopWhen StopCondition
+
+	// StateRef, when non-nil, receives atomic state updates as the tool loop
+	// progresses. See WithStateRef / AgentState.
+	StateRef *AgentState
 }
 
 // defaultOptions returns options with sensible defaults.

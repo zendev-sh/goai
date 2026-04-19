@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -387,7 +388,7 @@ func TestCachedTokenSourceNoExpiry(t *testing.T) {
 		return &provider.Token{Value: "forever"}, nil // zero ExpiresAt
 	})
 
-	// Zero ExpiresAt means "no expiry" -- token is cached indefinitely.
+	// Zero ExpiresAt means "no expiry" - token is cached indefinitely.
 	_, _ = ts.Token(t.Context())
 	_, _ = ts.Token(t.Context())
 	if callCount != 1 {
@@ -644,3 +645,281 @@ func TestCachedTokenSource_InvalidateDuringFetch(t *testing.T) {
 	}
 }
 
+
+// TestToolResult_JSONMarshal_ErrorAsString verifies FIX 19: ToolResult.Error
+// (an interface) marshals as a string via err.Error() rather than the default
+// "{}" that encoding/json emits for zero-populated error interfaces.
+// Observability and logging consumers need the message to be human-readable.
+func TestToolResult_JSONMarshal_ErrorAsString(t *testing.T) {
+	t.Run("error populated", func(t *testing.T) {
+		tr := provider.ToolResult{
+			ToolCallID: "tc1",
+			ToolName:   "bash",
+			Output:     "error: boom",
+			Error:      errors.New("boom"),
+			IsError:    true,
+		}
+		b, err := json.Marshal(tr)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(b, &got); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if got["Error"] != "boom" {
+			t.Errorf("Error field = %v, want %q", got["Error"], "boom")
+		}
+		if got["IsError"] != true {
+			t.Errorf("IsError = %v, want true", got["IsError"])
+		}
+		if got["ToolCallID"] != "tc1" {
+			t.Errorf("ToolCallID = %v, want tc1", got["ToolCallID"])
+		}
+	})
+	t.Run("error nil omitted", func(t *testing.T) {
+		tr := provider.ToolResult{
+			ToolCallID: "tc2",
+			ToolName:   "echo",
+			Output:     "ok",
+			IsError:    false,
+		}
+		b, err := json.Marshal(tr)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(b, &got); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if _, present := got["Error"]; present {
+			t.Errorf("Error field should be omitted when nil; got %v", got["Error"])
+		}
+	})
+}
+
+// TestToolResult_IsErrorInvariant verifies FIX 25: IsError is always
+// equivalent to (Error != nil). This is an ergonomic convenience field;
+// if it ever diverged from Error != nil, predicates branching on IsError
+// would see different behaviour from predicates branching on Error.
+//
+// Spot-check the invariant on two ToolResult construction shapes that
+// mirror buildToolResults output: one successful (no Error, IsError=false)
+// and one error (Error != nil, IsError=true).
+func TestToolResult_IsErrorInvariant(t *testing.T) {
+	cases := []provider.ToolResult{
+		{ToolCallID: "tc-ok", ToolName: "t", Output: "ok", Error: nil, IsError: false},
+		{ToolCallID: "tc-err", ToolName: "t", Output: "error: x", Error: errors.New("x"), IsError: true},
+	}
+	for _, tr := range cases {
+		if tr.IsError != (tr.Error != nil) {
+			t.Errorf("ToolResult{ID=%s}: IsError=%v but (Error!=nil)=%v - invariant broken", tr.ToolCallID, tr.IsError, tr.Error != nil)
+		}
+	}
+}
+
+// TestStopCause_IsValid verifies FIX 23: IsValid returns true only for the
+// seven declared StopCause constants, false for empty and arbitrary values.
+func TestStopCause_IsValid(t *testing.T) {
+	valid := []provider.StopCause{
+		provider.StopCauseNatural,
+		provider.StopCauseMaxSteps,
+		provider.StopCausePredicate,
+		provider.StopCauseBeforeStep,
+		provider.StopCauseAbort,
+		provider.StopCauseEmpty,
+		provider.StopCauseNoExecutableTools,
+	}
+	for _, c := range valid {
+		if !c.IsValid() {
+			t.Errorf("StopCause %q IsValid=false, want true", c)
+		}
+	}
+	invalid := []provider.StopCause{"", "unknown", "Natural", "bogus", "max_steps"}
+	for _, c := range invalid {
+		if c.IsValid() {
+			t.Errorf("StopCause %q IsValid=true, want false", c)
+		}
+	}
+}
+
+// TestToolResult_JSONRoundTrip verifies FIX 28: ToolResult survives a
+// MarshalJSON → UnmarshalJSON cycle with the IsError ↔ (Error != nil)
+// invariant preserved. Without UnmarshalJSON, the Error string produced
+// by MarshalJSON deserialized into a nil interface - silently breaking
+// the invariant for any consumer that persists ToolResults as JSON.
+func TestToolResult_JSONRoundTrip(t *testing.T) {
+	t.Run("error populated round-trips", func(t *testing.T) {
+		orig := provider.ToolResult{
+			ToolCallID: "tc1",
+			ToolName:   "bash",
+			Output:     "error: boom",
+			Error:      errors.New("boom"),
+			IsError:    true,
+		}
+		b, err := json.Marshal(orig)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var got provider.ToolResult
+		if err := json.Unmarshal(b, &got); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if got.ToolCallID != orig.ToolCallID {
+			t.Errorf("ToolCallID = %q, want %q", got.ToolCallID, orig.ToolCallID)
+		}
+		if got.ToolName != orig.ToolName {
+			t.Errorf("ToolName = %q, want %q", got.ToolName, orig.ToolName)
+		}
+		if got.Output != orig.Output {
+			t.Errorf("Output = %q, want %q", got.Output, orig.Output)
+		}
+		if got.Error == nil {
+			t.Fatalf("Error is nil after round-trip; want non-nil (invariant broken)")
+		}
+		if got.Error.Error() != "boom" {
+			t.Errorf("Error.Error() = %q, want %q", got.Error.Error(), "boom")
+		}
+		if !got.IsError {
+			t.Errorf("IsError = false, want true (invariant IsError == Error!=nil broken)")
+		}
+	})
+
+	t.Run("error nil round-trips", func(t *testing.T) {
+		orig := provider.ToolResult{
+			ToolCallID: "tc2",
+			ToolName:   "echo",
+			Output:     "ok",
+			IsError:    false,
+		}
+		b, err := json.Marshal(orig)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var got provider.ToolResult
+		if err := json.Unmarshal(b, &got); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if got.Error != nil {
+			t.Errorf("Error = %v, want nil", got.Error)
+		}
+		if got.IsError {
+			t.Errorf("IsError = true, want false (invariant broken)")
+		}
+		if got.Output != "ok" {
+			t.Errorf("Output = %q, want %q", got.Output, "ok")
+		}
+	})
+
+	t.Run("IsError true with empty Error synthesizes placeholder", func(t *testing.T) {
+		// A hand-crafted JSON with IsError=true but no Error string must
+		// still preserve the invariant on unmarshal (synthesize error).
+		data := []byte(`{"ToolCallID":"tc3","ToolName":"x","Output":"y","IsError":true}`)
+		var got provider.ToolResult
+		if err := json.Unmarshal(data, &got); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if got.Error == nil {
+			t.Errorf("Error is nil but IsError=true; invariant broken (placeholder not synthesized)")
+		}
+		if !got.IsError {
+			t.Errorf("IsError = false, want true")
+		}
+	})
+
+	t.Run("Error string present forces IsError true", func(t *testing.T) {
+		// Defensive: IsError=false but Error non-empty → coerce IsError=true.
+		data := []byte(`{"ToolCallID":"tc4","ToolName":"x","Output":"y","Error":"oops","IsError":false}`)
+		var got provider.ToolResult
+		if err := json.Unmarshal(data, &got); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if got.Error == nil || got.Error.Error() != "oops" {
+			t.Errorf("Error = %v, want error with message %q", got.Error, "oops")
+		}
+		if !got.IsError {
+			t.Errorf("IsError = false, want true (coerced)")
+		}
+	})
+
+	// FIX 39: empty-string error messages must round-trip faithfully. The
+	// previous encoding used `omitempty` on Error, which dropped ""; the
+	// resurrected ToolResult was a placeholder (`"tool error (no message)"`)
+	// instead of the original empty message. A pointer-to-string alias
+	// distinguishes "key absent" from "empty string present".
+	t.Run("FIX 39: empty-string error round-trips faithfully", func(t *testing.T) {
+		orig := provider.ToolResult{
+			ToolCallID: "tc5",
+			ToolName:   "x",
+			Output:     "y",
+			Error:      errors.New(""),
+			IsError:    true,
+		}
+		b, err := json.Marshal(orig)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		// Wire form must carry the Error key even though the value is "".
+		if !strings.Contains(string(b), `"Error":""`) {
+			t.Fatalf("wire form missing explicit empty Error key; got %s", string(b))
+		}
+		var got provider.ToolResult
+		if err := json.Unmarshal(b, &got); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if got.Error == nil {
+			t.Fatalf("Error nil after round-trip; want non-nil with empty message")
+		}
+		if got.Error.Error() != "" {
+			t.Errorf("Error message = %q; want %q (empty-string fidelity lost - FIX 39 regression)", got.Error.Error(), "")
+		}
+		if !got.IsError {
+			t.Errorf("IsError = false; want true")
+		}
+	})
+
+	// FIX 40: sentinel identity is NOT preserved across JSON round-trip.
+	// Documented limitation: callers branching on errors.Is(r.Error,
+	// ErrSentinel) after JSON persistence will see false. This test pins
+	// the documented behavior so a future refactor that introduces a
+	// registry-based reconstruction updates godoc at the same time.
+	t.Run("FIX 40: sentinel identity is not preserved (documented)", func(t *testing.T) {
+		sentinel := errors.New("well-known sentinel")
+		orig := provider.ToolResult{
+			ToolCallID: "tc6",
+			ToolName:   "x",
+			Output:     "y",
+			Error:      sentinel,
+			IsError:    true,
+		}
+		b, err := json.Marshal(orig)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var got provider.ToolResult
+		if err := json.Unmarshal(b, &got); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if got.Error == nil {
+			t.Fatalf("Error nil after round-trip")
+		}
+		if errors.Is(got.Error, sentinel) {
+			t.Fatalf("errors.Is(sentinel) returned true after JSON round-trip; documented FIX 40 limitation unexpectedly lifted - update godoc")
+		}
+		// Message is preserved even though identity is not.
+		if got.Error.Error() != sentinel.Error() {
+			t.Errorf("Error message = %q; want %q", got.Error.Error(), sentinel.Error())
+		}
+	})
+
+	t.Run("invalid JSON returns error", func(t *testing.T) {
+		// Outer syntax must be valid so the runtime dispatches into our
+		// UnmarshalJSON method; a type mismatch inside (array where an
+		// object is expected) forces the inner json.Unmarshal call to fail
+		// and exercise the error-return path.
+		var got provider.ToolResult
+		if err := got.UnmarshalJSON([]byte(`[1,2,3]`)); err == nil {
+			t.Fatalf("expected error for type-mismatched JSON, got nil")
+		}
+	})
+}

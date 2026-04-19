@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zendev-sh/goai/provider"
@@ -18,6 +19,84 @@ import (
 // osStderr holds os.Stderr at package level so ObjectStream methods can write to
 // stderr despite their receiver being named "os", which shadows the os package.
 var osStderr = os.Stderr
+
+// Per-function once flags for GenerateObject and StreamObject warnings
+// (FIX 12). A single package-global once would fire only once total across
+// both functions, silencing the warning for whichever function is called
+// second - even though the caller passed WithStopWhen to a different entry
+// point. Each function now emits its warning at most once per process.
+//
+// Implementation (FIX 21): uses atomic.Bool CAS instead of sync.Once so that
+// tests can reset the flag cleanly without the "reassign a sync.Once" hazard
+// (which is technically unsound if observed concurrently by another goroutine).
+// atomic.Bool.Store(false) is a well-defined reset. The warn function itself
+// is also swappable via warnStopWhenIgnoredForObject for tests that want to
+// inject a capture instead of stderr plumbing.
+//
+// FIX 33 - reset caveat: unlike sync.Once, a CAS-guarded atomic.Bool can be
+// reset with Store(false). This is safe ONLY when no other goroutine may
+// concurrently call defaultWarnStopWhenIgnoredForObject (i.e. the reset site
+// externally serializes with all warn callers). Tests in this package call
+// Store(false) from the test goroutine while the warning code path is
+// quiescent; they do NOT use t.Parallel() for exactly this reason. DO NOT
+// add t.Parallel() to any test that resets these flags, and DO NOT reset
+// these flags from production code.
+var (
+	generateObjectStopWhenWarned atomic.Bool
+	streamObjectStopWhenWarned   atomic.Bool
+	generateObjectStateRefWarned atomic.Bool
+	streamObjectStateRefWarned   atomic.Bool
+)
+
+// warnStopWhenIgnoredForObject is a package-level function variable so that
+// tests can swap in a capture implementation if needed. Production code path
+// uses defaultWarnStopWhenIgnoredForObject.
+var warnStopWhenIgnoredForObject = defaultWarnStopWhenIgnoredForObject
+
+// warnStateRefIgnoredForObject mirrors warnStopWhenIgnoredForObject: a
+// package-level function variable swappable in tests. Production path uses
+// defaultWarnStateRefIgnoredForObject. See FIX 35.
+var warnStateRefIgnoredForObject = defaultWarnStateRefIgnoredForObject
+
+func defaultWarnStopWhenIgnoredForObject(fn string) {
+	msg := fmt.Sprintf("goai: WithStopWhen is not supported in %s (ignored)\n", fn)
+	switch fn {
+	case "GenerateObject":
+		if generateObjectStopWhenWarned.CompareAndSwap(false, true) {
+			_, _ = fmt.Fprint(osStderr, msg)
+		}
+	case "StreamObject":
+		if streamObjectStopWhenWarned.CompareAndSwap(false, true) {
+			_, _ = fmt.Fprint(osStderr, msg)
+		}
+	default:
+		// Unknown call site: print once per call (should never happen - all
+		// call sites pass a hard-coded literal).
+		_, _ = fmt.Fprint(osStderr, msg)
+	}
+}
+
+// defaultWarnStateRefIgnoredForObject is invoked from GenerateObject and
+// StreamObject when the caller passed WithStateRef. Those functions do not
+// run a multi-step tool loop worth polling, so the AgentState would be
+// stuck at its zero value (StepStarting, 0) forever - a subtle deadlock for
+// pollers. One-shot stderr warning matches the WithStopWhen-in-object
+// convention above (FIX 35). The FIX 33 reset caveat applies identically.
+func defaultWarnStateRefIgnoredForObject(fn string) {
+	msg := fmt.Sprintf("goai: WithStateRef is not supported in %s (ignored - AgentState will not advance)\n", fn)
+	switch fn {
+	case "GenerateObject":
+		if generateObjectStateRefWarned.CompareAndSwap(false, true) {
+			_, _ = fmt.Fprint(osStderr, msg)
+		}
+	case "StreamObject":
+		if streamObjectStateRefWarned.CompareAndSwap(false, true) {
+			_, _ = fmt.Fprint(osStderr, msg)
+		}
+	default:
+		_, _ = fmt.Fprint(osStderr, msg)
+	}
+}
 
 // ObjectResult is the final result of a structured output generation.
 type ObjectResult[T any] struct {
@@ -88,7 +167,7 @@ func newObjectStream[T any](ctx context.Context, source <-chan provider.StreamCh
 
 // PartialObjectStream returns a channel that emits partial objects as JSON accumulates.
 // Each emitted value has progressively more fields populated.
-// Mutually exclusive with Result() -- only call one consumption method first.
+// Mutually exclusive with Result() - only call one consumption method first.
 func (os *ObjectStream[T]) PartialObjectStream() <-chan *T {
 	ch := make(chan *T, 64)
 	os.consumeOnce.Do(func() {
@@ -98,7 +177,7 @@ func (os *ObjectStream[T]) PartialObjectStream() <-chan *T {
 	if os.partialCh != nil {
 		return os.partialCh
 	}
-	// Called after Result() consumed the source -- return closed channel.
+	// Called after Result() consumed the source - return closed channel.
 	close(ch)
 	return ch
 }
@@ -171,6 +250,7 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 				TotalSteps:   1,
 				TotalUsage:   os.usage,
 				FinishReason: os.finishReason,
+				StoppedBy:    provider.StopCauseNatural,
 			})
 		}()
 	}
@@ -301,13 +381,20 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 //
 // If MaxSteps is exhausted before a "stop" step occurs, an error is returned.
 // This differs slightly from Vercel AI SDK, which returns a partial result with
-// a nil output field — in Go, returning an error is the idiomatic equivalent.
+// a nil output field - in Go, returning an error is the idiomatic equivalent.
 func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, opts ...Option) (*ObjectResult[T], error) {
 	if model == nil {
 		return nil, errors.New("goai: model must not be nil")
 	}
 
 	o := applyOptions(opts...)
+
+	if o.StopWhen != nil {
+		warnStopWhenIgnoredForObject("GenerateObject")
+	}
+	if o.StateRef != nil {
+		warnStateRefIgnoredForObject("GenerateObject")
+	}
 
 	if o.Prompt == "" && len(o.Messages) == 0 {
 		return nil, errors.New("goai: prompt or messages must not be empty")
@@ -329,7 +416,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 
 	params := buildParams(o)
 	originalLen := len(params.Messages)
-	// ResponseFormat is set upfront and sent on every step — the model decides
+	// ResponseFormat is set upfront and sent on every step - the model decides
 	// when to call tools vs return structured JSON. This mirrors Vercel AI SDK
 	// where output parsing happens only on the step with finishReason "stop".
 	params.ResponseFormat = &provider.ResponseFormat{
@@ -411,6 +498,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 				TotalSteps:   len(steps),
 				TotalUsage:   totalUsage,
 				FinishReason: lastFinish,
+				StoppedBy:    provider.StopCauseAbort,
 			})
 			return nil, err
 		}
@@ -458,6 +546,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 				TotalSteps:   len(steps),
 				TotalUsage:   totalUsage,
 				FinishReason: result.FinishReason,
+				StoppedBy:    provider.StopCauseNatural,
 			})
 			return &ObjectResult[T]{
 				Object:           obj,
@@ -470,11 +559,11 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 			}, nil
 		}
 
-		// Model requested tool calls — execute them and continue.
+		// Model requested tool calls - execute them and continue.
 		// Clear tool_choice after the first tool step so the model can freely
 		// produce structured output on subsequent steps.
 		params.ToolChoice = ""
-		toolMessages := executeToolsParallel(ctx, result.ToolCalls, toolMap, step, toolHooks{
+		toolMessages, _ := executeToolsParallel(ctx, result.ToolCalls, toolMap, step, toolHooks{
 			sequential:      o.SequentialTools,
 			onToolCallStart: o.OnToolCallStart,
 			onToolCall:      o.OnToolCall,
@@ -484,7 +573,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 		params.Messages = appendToolRoundTrip(params.Messages, result.Text, nil, result.ToolCalls, toolMessages)
 	}
 
-	// MaxSteps exhausted with tool calls still pending — no structured output produced.
+	// MaxSteps exhausted with tool calls still pending - no structured output produced.
 	lastFinish := provider.FinishReason("")
 	if len(steps) > 0 {
 		lastFinish = steps[len(steps)-1].FinishReason
@@ -494,6 +583,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 		TotalSteps:     len(steps),
 		TotalUsage:     totalUsage,
 		FinishReason:   lastFinish,
+		StoppedBy:      provider.StopCauseMaxSteps,
 	})
 	return nil, fmt.Errorf("goai: max steps (%d) reached without producing structured output", o.MaxSteps)
 }
@@ -511,6 +601,13 @@ func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts
 	}
 
 	o := applyOptions(opts...)
+
+	if o.StopWhen != nil {
+		warnStopWhenIgnoredForObject("StreamObject")
+	}
+	if o.StateRef != nil {
+		warnStateRefIgnoredForObject("StreamObject")
+	}
 
 	if o.Prompt == "" && len(o.Messages) == 0 {
 		return nil, errors.New("goai: prompt or messages must not be empty")

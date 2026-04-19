@@ -92,6 +92,36 @@ type StepResult struct {
 	// ToolCalls requested in this step.
 	ToolCalls []provider.ToolCall
 
+	// ToolResults contains one entry per completed ToolCall in this step,
+	// populated AFTER executeToolsParallel returns and BEFORE WithStopWhen
+	// is evaluated. Ordering matches ToolCalls element-for-element.
+	//
+	// Empty when the step had no tool calls or when the loop exits before
+	// executing tools (e.g. MaxSteps reached with pending tool calls that
+	// never ran, or StopCauseNoExecutableTools).
+	//
+	// Mirrors Vercel AI SDK's DefaultStepResult.toolResults so predicates
+	// passed to WithStopWhen can inspect tool outputs (matching the
+	// placement documented on StopCondition).
+	//
+	// Streaming visibility: consumers using StreamText who read raw
+	// chunks via stream.Stream() cannot observe per-step ToolResults in
+	// real time. The ChunkStepFinish chunk with stepSource="goai" is
+	// emitted BEFORE tools execute (so ToolResults is empty at that
+	// point); the subsequent goai-internal "goai-tool-results" chunk
+	// that backfills ToolResults is consumed by the stream reducer and
+	// NOT re-emitted to the raw chunk channel. To observe ToolResults
+	// per step from a streaming call, use one of:
+	//   - stream.Result() after the stream closes (Steps[].ToolResults
+	//     is fully populated).
+	//   - OnToolCall hook (fires synchronously after each tool Execute
+	//     returns with per-call detail).
+	//   - OnAfterToolExecute hook (same timing as OnToolCall, richer
+	//     metadata).
+	// The OnStepFinish hook always receives a StepResult with an EMPTY
+	// ToolResults slice because tools execute AFTER the hook fires.
+	ToolResults []provider.ToolResult
+
 	// FinishReason for this step.
 	FinishReason provider.FinishReason
 
@@ -114,7 +144,7 @@ type StepResult struct {
 // the context. Discarding a TextStream without consuming leaks goroutines.
 //
 // It provides three consumption modes (Stream, TextStream, Result).
-// Stream() and TextStream() are mutually exclusive -- only call one.
+// Stream() and TextStream() are mutually exclusive - only call one.
 // Result() can always be called, including after Stream() or TextStream(),
 // to get the accumulated final result.
 type TextStream struct {
@@ -134,6 +164,13 @@ type TextStream struct {
 	onStepFinish []func(StepResult)
 	onFinish     []func(FinishInfo)
 	startTime    time.Time
+
+	// stateRef, when non-nil, is transitioned to StepIdle when the consume
+	// goroutine returns. Only set by the single-shot StreamText path
+	// (streamWithToolLoop owns its own StateRef lifecycle inline). A nil
+	// stateRef is a no-op; AgentState.set handles nil receiver safely.
+	// See FIX 34.
+	stateRef *AgentState
 
 	// Accumulated state (written by consume goroutine, read after doneCh closes).
 	text             strings.Builder
@@ -169,7 +206,7 @@ func newTextStream(ctx context.Context, source <-chan provider.StreamChunk) *Tex
 }
 
 // Stream returns a channel that emits raw StreamChunks from the provider.
-// Mutually exclusive with TextStream() -- only call one streaming method.
+// Mutually exclusive with TextStream() - only call one streaming method.
 func (ts *TextStream) Stream() <-chan provider.StreamChunk {
 	ch := make(chan provider.StreamChunk, 64)
 	ts.consumeOnce.Do(func() {
@@ -179,7 +216,7 @@ func (ts *TextStream) Stream() <-chan provider.StreamChunk {
 	if ts.rawCh != nil {
 		return ts.rawCh
 	}
-	// Called after TextStream() consumed the source -- return closed channel.
+	// Called after TextStream() consumed the source - return closed channel.
 	close(ch)
 	return ch
 }
@@ -187,7 +224,7 @@ func (ts *TextStream) Stream() <-chan provider.StreamChunk {
 // TextStream returns the underlying channel of text chunks.
 // Note: this method has the same name as the containing type (TextStream);
 // call it as stream.TextStream() to receive the channel.
-// Mutually exclusive with Stream() -- only call one streaming method.
+// Mutually exclusive with Stream() - only call one streaming method.
 func (ts *TextStream) TextStream() <-chan string {
 	ch := make(chan string, 64)
 	ts.consumeOnce.Do(func() {
@@ -197,7 +234,7 @@ func (ts *TextStream) TextStream() <-chan string {
 	if ts.textCh != nil {
 		return ts.textCh
 	}
-	// Called after Stream() consumed the source -- return closed channel.
+	// Called after Stream() consumed the source - return closed channel.
 	close(ch)
 	return ch
 }
@@ -227,6 +264,18 @@ func (ts *TextStream) Err() error {
 
 func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<- string) {
 	defer close(ts.doneCh)
+	// FIX 34: transition StateRef to StepIdle as the consume goroutine
+	// exits. Single-shot StreamText wires this (stateRef is nil for the
+	// multi-step streamWithToolLoop path, which owns its own StateRef
+	// transitions inline). Deferred second from the top so it runs just
+	// before close(doneCh) - after all user hooks (OnResponse, OnStepFinish,
+	// OnFinish) have fired, so a poller that observes StepIdle can assume
+	// all hooks have already returned. Step count is 1 for a single-shot
+	// stream (the one DoStream call), regardless of whether the provider
+	// emitted any chunks.
+	if ts.stateRef != nil {
+		defer func() { ts.stateRef.set(StepIdle, 1) }()
+	}
 	if ts.timeoutCancel != nil {
 		defer ts.timeoutCancel()
 	}
@@ -247,6 +296,7 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 				TotalSteps:   1,
 				TotalUsage:   ts.usage,
 				FinishReason: ts.finishReason,
+				StoppedBy:    provider.StopCauseNatural,
 			})
 		}()
 	}
@@ -343,6 +393,16 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 			ts.stepToolCalls = append(ts.stepToolCalls, tc)
 
 		case provider.ChunkStepFinish:
+			// GoAI-emitted tool-results backfill: update the last completed
+			// step's ToolResults (FIX 7 streaming parity). Emitted after
+			// executeToolsParallel returns so ts.steps exposes the same data
+			// the sync path's StepResult.ToolResults carries.
+			if stepSource, _ := chunk.Metadata["stepSource"].(string); stepSource == "goai-tool-results" {
+				if trs, ok := chunk.Metadata["toolResults"].([]provider.ToolResult); ok && len(ts.steps) > 0 {
+					ts.steps[len(ts.steps)-1].ToolResults = trs
+				}
+				continue
+			}
 			// GoAI-emitted step boundaries: build per-step StepResult.
 			if stepSource, _ := chunk.Metadata["stepSource"].(string); stepSource == "goai" {
 				ts.currentStep++
@@ -572,9 +632,13 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 		ctx, timeoutCancel = context.WithTimeout(ctx, o.Timeout)
 	}
 
+	// AgentState: initial. o.StateRef may be nil (set is a no-op).
+	o.StateRef.set(StepStarting, 0)
+
 	// --- Step 1 DoStream: synchronous (preserves (nil, error) contract) ---
 	// This ensures StreamText ALWAYS returns (nil, error) when the first DoStream
 	// fails, regardless of MaxSteps. Eliminates the split error contract.
+	o.StateRef.set(StepLLMInFlight, 1)
 	for _, fn := range o.OnRequest {
 		fn(RequestInfo{
 			Ctx:          ctx,
@@ -594,6 +658,10 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 		if timeoutCancel != nil {
 			timeoutCancel()
 		}
+		// FIX 47: preserve step=1 on error - monotonicity. The store above
+		// already moved the step counter to 1 (StepLLMInFlight, 1); a poller
+		// observing between the two stores must not see step regress to 0.
+		o.StateRef.set(StepIdle, 1)
 		// OnRequest/OnResponse: not recover-wrapped (caller's goroutine).
 		// OnStepFinish: always recover-wrapped (prevents losing accumulated results).
 		// Inside goroutines: all hooks recover-wrapped.
@@ -618,15 +686,55 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 		if timeoutCancel != nil {
 			defer timeoutCancel()
 		}
-
 		var totalUsage provider.Usage
 		var lastFinishReason provider.FinishReason
 		var lastResponse provider.ResponseMetadata
 		var lastReasoning []provider.Part
 		var steps []StepResult
 		var stepsExhausted bool
-		firstStep := true       // true only for step 1 (already have firstResult)
-		stepStart := step1Start // goroutine-local start time per step
+		var hookStopped bool              // true iff WithStopWhen or OnBeforeStep.Stop broke the loop
+		var stopCause provider.StopCause  // classifies how the loop exited (FIX 5)
+		firstStep := true                 // true only for step 1 (already have firstResult)
+		stepStart := step1Start           // goroutine-local start time per step
+
+		// highestInflightStep tracks the maximum step counter announced via
+		// o.StateRef.set(StepLLMInFlight, ...). The deferred StepIdle publish
+		// uses max(len(steps), highestInflightStep) so the observable step
+		// value never regresses (FIX 47 monotonicity: if a mid-loop step
+		// errors before being appended to `steps`, len(steps) lags behind
+		// highestInflightStep; the defer must publish the larger value).
+		//
+		// There are TWO writes to highestInflightStep in this function, and
+		// both are intentional (FIX 54 + FIX 55):
+		//
+		//   1. The `= 1` assignment below (pre-loop): mirrors the
+		//      o.StateRef.set(StepLLMInFlight, 1) call that happens BEFORE
+		//      this goroutine starts (see the pre-goroutine set call
+		//      earlier in streamWithToolLoop). This guarantees the deferred
+		//      StepIdle publish has something >= 1 to report even if the
+		//      goroutine exits before entering the loop body (e.g. panic
+		//      recovery, pre-loop early exit).
+		//   2. The `= step` assignment in the firstStep branch (loop body):
+		//      refactor-safety for future changes that move the step-1
+		//      StepLLMInFlight announcement inside the loop. If such a
+		//      refactor happens, write #1 should be deleted; write #2
+		//      continues to maintain the invariant from inside the loop.
+		//
+		// Both writes together ensure the invariant "highestInflightStep
+		// reflects the latest StepLLMInFlight announcement" holds on every
+		// path the defer can fire from.
+		highestInflightStep := 0
+		highestInflightStep = 1
+		// Ensure any exit path (break, return, panic-recover-above, natural
+		// termination) leaves the observable state as Idle. Use closure-captured
+		// steps so the final step count is visible to pollers.
+		defer func() {
+			finalStep := len(steps)
+			if highestInflightStep > finalStep {
+				finalStep = highestInflightStep
+			}
+			o.StateRef.set(StepIdle, finalStep)
+		}()
 
 		for step := 1; step <= o.MaxSteps; step++ {
 			var result *provider.StreamResult
@@ -635,6 +743,12 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 				// Step 1: use the already-obtained firstResult.
 				result = firstResult
 				firstStep = false
+				// FIX 54: record the step-1 announcement inside the loop body
+				// so the invariant "every StepLLMInFlight has a matching
+				// highestInflightStep write" holds from step 1. The actual
+				// atomic store happened before the goroutine; this is the
+				// in-loop bookkeeping companion.
+				highestInflightStep = step
 			} else {
 				// Steps 2+: OnBeforeStep hook (can inject messages or stop loop).
 				if o.OnBeforeStep != nil {
@@ -652,6 +766,9 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 						})
 					}()
 					if bsr.Stop {
+						// Semantic parity with WithStopWhen: mark as hookStopped.
+						hookStopped = true
+						stopCause = provider.StopCauseBeforeStep
 						break
 					}
 					if len(bsr.ExtraMessages) > 0 {
@@ -679,6 +796,8 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 				}
 
 				stepStart = time.Now()
+				o.StateRef.set(StepLLMInFlight, step)
+				highestInflightStep = step
 				var err error
 				result, err = withRetry(ctx, o.MaxRetries, func() (*provider.StreamResult, error) {
 					return model.DoStream(ctx, params)
@@ -705,7 +824,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 					// messages are lost. Callers should check Err() and not rely on ResponseMessages
 					// when the stream has errors.
 					provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: err})
-					provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: lastFinishReason, Usage: totalUsage})
+					provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: lastFinishReason, Usage: totalUsage, StoppedBy: provider.StopCauseAbort})
 					// Fire OnFinish so observability hooks can close spans/flush traces.
 					lastFinish := provider.FinishReason("")
 					if len(steps) > 0 {
@@ -715,6 +834,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 						TotalSteps:   len(steps),
 						TotalUsage:   totalUsage,
 						FinishReason: lastFinish,
+						StoppedBy:    provider.StopCauseAbort,
 					})
 					return
 				}
@@ -722,12 +842,12 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 
 			ds := drainStep(ctx, result.Stream, out)
 			if ds.err != nil {
-				// responseMessages intentionally not set on error -- buildResult falls back to
+				// responseMessages intentionally not set on error - buildResult falls back to
 				// a minimal assistant message from accumulated text. Intermediate tool round-trip
 				// messages are lost. Callers should check Err() and not rely on ResponseMessages
 				// when the stream has errors.
 				provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: ds.err})
-				provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkFinish, Usage: totalUsage})
+				provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkFinish, Usage: totalUsage, StoppedBy: provider.StopCauseAbort})
 				// Fire OnFinish so observability hooks can close spans/flush traces.
 				// Without this, OTel root spans leak and Langfuse traces are lost.
 				lastFinish := provider.FinishReason("")
@@ -738,14 +858,19 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 					TotalSteps:   len(steps),
 					TotalUsage:   totalUsage,
 					FinishReason: lastFinish,
+					StoppedBy:    provider.StopCauseAbort,
 				})
 				return
 			}
 
 			// Guard: skip empty step (provider closed channel without sending
 			// any meaningful chunks, e.g., after a ChunkError). Prevents emitting
-			// a phantom empty StepResult and ChunkStepFinish.
+			// a phantom empty StepResult and ChunkStepFinish. This is not an
+			// error path (a separate ChunkError path covers real errors) - use
+			// StopCauseEmpty so consumers can distinguish a no-op response from
+			// an abort.
 			if ds.text == "" && len(ds.toolCalls) == 0 && ds.finishReason == "" {
+				stopCause = provider.StopCauseEmpty
 				break
 			}
 
@@ -778,9 +903,13 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			}
 			steps = append(steps, stepResult)
 			totalUsage = addUsage(totalUsage, ds.usage)
-			lastFinishReason = ds.finishReason
 			lastResponse = ds.response
 			lastReasoning = ds.reasoning
+
+			// AgentState: the step's stream has fully drained; tool exec and
+			// stop-predicate evaluation have not started yet. Pollers observing
+			// in this window must see StepStepFinished, not StepLLMInFlight.
+			o.StateRef.set(StepStepFinished, step)
 
 			// OnStepFinish (recover-wrapped).
 			for _, fn := range o.OnStepFinish {
@@ -796,10 +925,14 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 
 			// Normalize: providers that send empty/wrong finish_reason with tool calls
 			// (MiniMax, Azure MaaS deepseek, etc.) would cause the loop to exit early.
-			// The presence of tool calls is authoritative.
+			// The presence of tool calls is authoritative. Must run BEFORE capturing
+			// lastFinishReason so the final ChunkFinish carries a non-empty reason
+			// even when providers (gemini, bedrock-sonnet, azure-sonnet) emit empty
+			// finish_reason alongside tool calls.
 			if len(ds.toolCalls) > 0 && ds.finishReason != provider.FinishToolCalls {
 				ds.finishReason = provider.FinishToolCalls
 			}
+			lastFinishReason = ds.finishReason
 
 			// --- Emit ChunkStepFinish ---
 			// Set Response directly on the chunk (StreamChunk.Response is a plain struct
@@ -816,33 +949,63 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 				},
 			})
 
-			// --- Exit conditions (same as GenerateText, generate.go:464) ---
-			if ds.finishReason != provider.FinishToolCalls || len(ds.toolCalls) == 0 || len(toolMap) == 0 {
+			// --- Exit conditions (same as GenerateText) ---
+			// Note: streamWithToolLoop is only entered when len(toolMap) > 0
+			// (guarded at StreamText entry - see generate.go:992), and toolMap
+			// is immutable for the lifetime of the call. The "no executable
+			// tools" exit therefore cannot be reached here; StopCauseNoExecutableTools
+			// is a sync-only cause (GenerateText). See StopCauseNoExecutableTools
+			// godoc in provider/types.go.
+			if ds.finishReason != provider.FinishToolCalls || len(ds.toolCalls) == 0 {
+				stopCause = provider.StopCauseNatural
 				break
 			}
 
 			// --- Execute tools in parallel ---
-			toolMsgs := executeToolsParallel(ctx, ds.toolCalls, toolMap, step, toolHooks{
+			o.StateRef.set(StepToolExecuting, step)
+			toolMsgs, toolResults := executeToolsParallel(ctx, ds.toolCalls, toolMap, step, toolHooks{
 				sequential:      o.SequentialTools,
 				onToolCallStart: o.OnToolCallStart,
 				onToolCall:      o.OnToolCall,
 				onBeforeExecute: o.OnBeforeToolExecute,
 				onAfterExecute:  o.OnAfterToolExecute,
 			})
+			// Attach ToolResults to the step BEFORE the stop predicate sees it
+			// (FIX 7 / Vercel DefaultStepResult parity). steps[-1] is this step.
+			steps[len(steps)-1].ToolResults = toolResults
+
+			// Notify the consumer (TextStream.consume) that this step now has
+			// tool results so ts.steps[len-1].ToolResults can be backfilled.
+			// We reuse ChunkStepFinish with a distinguishing stepSource tag so
+			// existing provider-internal ChunkStepFinish handling is untouched.
+			provider.TrySend(ctx, out, provider.StreamChunk{
+				Type: provider.ChunkStepFinish,
+				Metadata: map[string]any{
+					"stepSource":  "goai-tool-results",
+					"toolResults": toolResults,
+				},
+			})
 
 			// --- Append messages for next step ---
 			params.Messages = appendToolRoundTrip(params.Messages, ds.text, ds.reasoning, ds.toolCalls, toolMsgs)
-			// Clear ToolChoice so model can freely respond on subsequent steps (matches generate.go:471).
+			// Clear ToolChoice so model can freely respond on subsequent steps.
 			// Set on every iteration for simplicity; idempotent after step 1.
 			params.ToolChoice = ""
+
+			// WithStopWhen (Vercel parity): evaluated AFTER this step's tool
+			// executions complete and the tool-result messages have been
+			// folded into params.Messages. ResponseMessages built on break
+			// here is a valid replay transcript (matching tool_use /
+			// tool_result pairs). Matches
+			// vercel-ai/packages/ai/src/generate-text/generate-text.ts.
+			if o.StopWhen != nil && stopSafe(o.StopWhen, steps) {
+				hookStopped = true
+				stopCause = provider.StopCausePredicate
+				break
+			}
 		}
 
-		// StepsExhausted: true only when MaxSteps was reached AND the last step
-		// still had tool calls pending (model wanted to continue but was cut short).
-		// If the last step finished naturally (no tool calls), it's not exhausted.
-		if len(steps) >= o.MaxSteps && len(steps) > 0 && len(steps[len(steps)-1].ToolCalls) > 0 {
-			stepsExhausted = true
-		}
+		stopCause, stepsExhausted = finalizeStopCause(hookStopped, stopCause, steps, o.MaxSteps)
 
 		// Set responseMessages before emitting ChunkFinish (safe: ts.buildResult reads
 		// responseMessages only after doneCh closes, which happens after out is closed).
@@ -854,6 +1017,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			TotalSteps:     len(steps),
 			TotalUsage:     totalUsage,
 			FinishReason:   lastFinishReason,
+			StoppedBy:      stopCause,
 		})
 
 		// Emit final ChunkFinish with total usage and last step Response metadata.
@@ -862,6 +1026,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			FinishReason: lastFinishReason,
 			Usage:        totalUsage,
 			Response:     lastResponse,
+			StoppedBy:    stopCause,
 		})
 	}()
 
@@ -874,13 +1039,24 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 // tool loop. The initial DoStream failure still returns (nil, error). Subsequent step
 // errors flow through the stream as ChunkError chunks; check stream.Err() after consuming.
 func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Option) (*TextStream, error) {
+	// Apply options FIRST so o.StateRef is populated before any early return.
+	// This guarantees pollers waiting for StepIdle do not deadlock when we
+	// return (nil, err) before the streaming goroutine starts (e.g. nil model,
+	// empty prompt, initial DoStream failure).
+	o := applyOptions(opts...)
+
 	if model == nil {
+		// Transition StepStarting→StepIdle for any observer so pollers do not deadlock.
+		o.StateRef.set(StepStarting, 0)
+		o.StateRef.set(StepIdle, 0)
 		return nil, errors.New("goai: model must not be nil")
 	}
 
-	o := applyOptions(opts...)
-
 	if o.Prompt == "" && len(o.Messages) == 0 {
+		// Pre-loop validation error must still transition any observer to
+		// StepIdle so pollers waiting on it do not deadlock.
+		o.StateRef.set(StepStarting, 0)
+		o.StateRef.set(StepIdle, 0)
 		return nil, errors.New("goai: prompt or messages must not be empty")
 	}
 
@@ -896,6 +1072,14 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 	}
 
 	params := buildParams(o)
+
+	// FIX 34: single-shot StreamText never touched StateRef. Pollers using
+	// WithStateRef(&state) + WithMaxSteps(1) (or no executable tools) got
+	// stuck at the zero value (StepStarting, 0) forever. Transition through
+	// StepStarting → StepLLMInFlight here; StepIdle is deferred in consume
+	// (see ts.stateRef assignment below).
+	o.StateRef.set(StepStarting, 0)
+	o.StateRef.set(StepLLMInFlight, 1)
 
 	for _, fn := range o.OnRequest {
 		fn(RequestInfo{
@@ -916,6 +1100,14 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 		if timeoutCancel != nil {
 			timeoutCancel()
 		}
+		// FIX 34: DoStream failed before the consume goroutine could be
+		// started, so the consume-based StepIdle defer will never run.
+		// Transition to StepIdle inline so pollers waiting for it do not
+		// deadlock. FIX 47: preserve step=1 (the step we just set to
+		// LLMInFlight) instead of regressing to 0 - pollers observing
+		// between the StepLLMInFlight store above and this store must
+		// see a monotonically non-decreasing step counter.
+		o.StateRef.set(StepIdle, 1)
 		for _, fn := range o.OnResponse {
 			info := ResponseInfo{Latency: time.Since(start), Error: err}
 			var apiErr *APIError
@@ -933,6 +1125,10 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 	ts.onStepFinish = o.OnStepFinish
 	ts.onFinish = o.OnFinish
 	ts.startTime = start
+	// FIX 34: hand StateRef ownership to the consume goroutine; it will
+	// transition to StepIdle when the stream drains / errors. Only set on
+	// the single-shot path; streamWithToolLoop manages StateRef inline.
+	ts.stateRef = o.StateRef
 	return ts, nil
 }
 
@@ -940,11 +1136,34 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 // When tools with Execute functions are provided and MaxSteps > 1,
 // it automatically runs a tool loop: generate → execute tools → re-generate.
 func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Option) (*TextResult, error) {
+	// Apply options FIRST so o.StateRef is populated before any early return.
+	// Registered BEFORE nil-model / prompt validation so pre-loop error returns
+	// also transition observers to StepIdle (otherwise pollers waiting for
+	// StepIdle would deadlock on validation errors).
+	o := applyOptions(opts...)
+
+	var steps []StepResult
+	// highestInflightStep tracks the largest step index we have announced
+	// via StepLLMInFlight. Used by the StepIdle defer to enforce
+	// monotonicity (FIX 47): if step N's DoGenerate errors before the
+	// step is appended to `steps`, len(steps) is N-1 but we already
+	// advertised StepLLMInFlight at N, so the final StepIdle must carry
+	// max(len(steps), highestInflightStep) to avoid a step-counter
+	// regression visible to pollers.
+	var highestInflightStep int
+	// AgentState: initial (StepStarting, 0). set() is a no-op when o.StateRef is nil.
+	o.StateRef.set(StepStarting, 0)
+	defer func() {
+		finalStep := len(steps)
+		if highestInflightStep > finalStep {
+			finalStep = highestInflightStep
+		}
+		o.StateRef.set(StepIdle, finalStep)
+	}()
+
 	if model == nil {
 		return nil, errors.New("goai: model must not be nil")
 	}
-
-	o := applyOptions(opts...)
 
 	if o.Prompt == "" && len(o.Messages) == 0 {
 		return nil, errors.New("goai: prompt or messages must not be empty")
@@ -962,8 +1181,9 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 	// Build tool lookup for auto loop.
 	toolMap := buildToolMap(o.Tools)
 
-	var steps []StepResult
 	var totalUsage provider.Usage
+	var hookStopped bool             // true iff WithStopWhen or OnBeforeStep.Stop broke the loop
+	var stopCause provider.StopCause // classifies how the loop exited (FIX 5)
 
 	for step := 1; step <= o.MaxSteps; step++ {
 		// OnBeforeStep: step 2+ only (step 1 has no prior tool results to act on).
@@ -982,6 +1202,11 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 				})
 			}()
 			if bsr.Stop {
+				// Semantic parity with WithStopWhen: mark as hookStopped so
+				// post-loop StepsExhausted derivation does not mistake a
+				// hook-driven break at the MaxSteps boundary for natural exhaustion.
+				hookStopped = true
+				stopCause = provider.StopCauseBeforeStep
 				break
 			}
 			if len(bsr.ExtraMessages) > 0 {
@@ -1001,6 +1226,8 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		}
 
 		start := time.Now()
+		o.StateRef.set(StepLLMInFlight, step)
+		highestInflightStep = step
 		result, err := withRetry(ctx, o.MaxRetries, func() (*provider.GenerateResult, error) {
 			return model.DoGenerate(ctx, params)
 		})
@@ -1037,6 +1264,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 				TotalSteps:   len(steps),
 				TotalUsage:   totalUsage,
 				FinishReason: lastFinish,
+				StoppedBy:    provider.StopCauseAbort,
 			})
 			return nil, err
 		}
@@ -1053,6 +1281,11 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		}
 		steps = append(steps, stepResult)
 		totalUsage = addUsage(totalUsage, result.Usage)
+
+		// AgentState: LLM call for this step is complete; tool exec and
+		// stop-predicate evaluation have not started yet. Pollers observing
+		// in this window must see StepStepFinished, not StepLLMInFlight.
+		o.StateRef.set(StepStepFinished, step)
 
 		for _, fn := range o.OnStepFinish {
 			func(f func(StepResult)) {
@@ -1079,10 +1312,18 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		if result.FinishReason != provider.FinishToolCalls || len(result.ToolCalls) == 0 || len(toolMap) == 0 {
 			tr := buildTextResult(steps, totalUsage)
 			tr.ResponseMessages = buildResponseMessages(params.Messages[originalLen:], steps, nil)
+			// Distinguish "model stopped on its own" from "model wants more
+			// tool calls but no tool has Execute" (FIX 11). Both exit cleanly
+			// but mean very different things to consumers.
+			cause := provider.StopCauseNatural
+			if len(result.ToolCalls) > 0 && len(toolMap) == 0 {
+				cause = provider.StopCauseNoExecutableTools
+			}
 			fireOnFinish(o.OnFinish, FinishInfo{
 				TotalSteps:   len(steps),
 				TotalUsage:   totalUsage,
 				FinishReason: tr.FinishReason,
+				StoppedBy:    cause,
 			})
 			return tr, nil
 		}
@@ -1091,16 +1332,33 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		// Clear tool_choice after the first tool step so the model can freely
 		// produce a text response on subsequent steps.
 		params.ToolChoice = ""
-		toolMessages := executeToolsParallel(ctx, result.ToolCalls, toolMap, step, toolHooks{
+		o.StateRef.set(StepToolExecuting, step)
+		toolMessages, toolResults := executeToolsParallel(ctx, result.ToolCalls, toolMap, step, toolHooks{
 			sequential:      o.SequentialTools,
 			onToolCallStart: o.OnToolCallStart,
 			onToolCall:      o.OnToolCall,
 			onBeforeExecute: o.OnBeforeToolExecute,
 			onAfterExecute:  o.OnAfterToolExecute,
 		})
+		// Attach ToolResults to the step BEFORE the stop predicate sees it
+		// (FIX 7 / Vercel DefaultStepResult parity). steps[-1] is this step.
+		steps[len(steps)-1].ToolResults = toolResults
 
 		// Append assistant message with tool calls + tool result messages.
 		params.Messages = appendToolRoundTrip(params.Messages, result.Text, nil, result.ToolCalls, toolMessages)
+
+		// WithStopWhen (Vercel parity): evaluated AFTER this step's LLM call
+		// AND its tool executions complete. The tool-result messages are
+		// already folded into params.Messages, so ResponseMessages produced
+		// when the loop breaks here is a valid replay transcript (assistant
+		// tool_use paired with matching tool_result). Matches
+		// vercel-ai/packages/ai/src/generate-text/generate-text.ts where
+		// stopWhen() gates the next iteration only after tools have run.
+		if o.StopWhen != nil && stopSafe(o.StopWhen, steps) {
+			hookStopped = true
+			stopCause = provider.StopCausePredicate
+			break
+		}
 	}
 
 	// Post-loop: reachable when MaxSteps was exhausted OR when OnBeforeStep.Stop=true
@@ -1109,20 +1367,68 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 	// short). This matches StreamText's conditional logic and correctly distinguishes
 	// "hook stopped" (StepsExhausted=false) from "max steps" (StepsExhausted=true).
 	tr := buildTextResult(steps, totalUsage)
-	if len(steps) >= o.MaxSteps && len(steps) > 0 && len(steps[len(steps)-1].ToolCalls) > 0 {
-		tr.StepsExhausted = true
-	}
+	// In the sync path every early-exit cause (Natural / NoExecutableTools /
+	// Abort) returns immediately inside the loop, so the only way we reach
+	// here with stopCause != "" is via a hookStopped break (BeforeStep /
+	// Predicate). The hookStopped guard alone is therefore sufficient; the
+	// former `stopCause == ""` check was a redundant belt-and-suspenders
+	// that is intentionally dropped here for clarity. Streaming keeps the
+	// extra guard because its loop has a Natural-case break that sets
+	// stopCause without setting hookStopped - see streamWithToolLoop.
+	var stepsExhausted bool
+	stopCause, stepsExhausted = finalizeStopCause(hookStopped, stopCause, steps, o.MaxSteps)
+	tr.StepsExhausted = stepsExhausted
 	tr.ResponseMessages = buildResponseMessages(params.Messages[originalLen:], steps, nil)
 	fireOnFinish(o.OnFinish, FinishInfo{
 		StepsExhausted: tr.StepsExhausted,
 		TotalSteps:     len(steps),
 		TotalUsage:     totalUsage,
 		FinishReason:   tr.FinishReason,
+		StoppedBy:      stopCause,
 	})
 	return tr, nil
 }
 
 // fireOnFinish calls all OnFinish hooks with individual panic recovery.
+// stopSafe evaluates a StopCondition with recover. A panicking predicate is
+// treated as "do not stop" and logged to stderr (consistent with how
+// OnBeforeStep / OnStepFinish handle panics).
+// finalizeStopCause classifies the terminal StopCause when the tool loop
+// exits by natural termination (no break set a cause). It encapsulates the
+// post-loop MaxSteps-exhaustion guard and the StopCauseNatural default so
+// both GenerateText and streamWithToolLoop share one implementation.
+//
+// Returns the resolved StopCause and whether MaxSteps was exhausted.
+func finalizeStopCause(hookStopped bool, current provider.StopCause, steps []StepResult, maxSteps int) (provider.StopCause, bool) {
+	stepsExhausted := false
+	if !hookStopped && current == "" && len(steps) >= maxSteps && len(steps) > 0 && len(steps[len(steps)-1].ToolCalls) > 0 {
+		stepsExhausted = true
+		current = provider.StopCauseMaxSteps
+	}
+	if current == "" {
+		current = provider.StopCauseNatural
+	}
+	return current, stepsExhausted
+}
+
+func stopSafe(pred StopCondition, steps []StepResult) (stop bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "goai: recovered panic in StopWhen predicate: %v\n", r)
+			stop = false
+		}
+	}()
+	// Pass a shallow defensive copy so predicates cannot re-order or truncate
+	// the internal slice. NOTE: this is a TOP-LEVEL copy only - nested slices
+	// (StepResult.ToolCalls, StepResult.ToolResults, StepResult.Content) are
+	// ALIASED into the caller's view. Predicates MUST treat the StepResult
+	// contents as read-only; mutating nested slices corrupts goai internal
+	// state and is a contract violation. Deep-clone would be prohibitively
+	// expensive per-step for a feature (predicate side-effects) that is not
+	// a supported use case.
+	return pred(slices.Clone(steps))
+}
+
 func fireOnFinish(hooks []func(FinishInfo), info FinishInfo) {
 	for _, fn := range hooks {
 		func(f func(FinishInfo)) {
@@ -1193,7 +1499,7 @@ func executeToolsParallel(
 	toolMap map[string]Tool,
 	step int,
 	hooks toolHooks,
-) []provider.Message {
+) ([]provider.Message, []provider.ToolResult) {
 
 	results := make([]toolOutput, len(calls))
 	var wg sync.WaitGroup
@@ -1425,7 +1731,39 @@ func executeToolsParallel(
 	if !hooks.sequential {
 		wg.Wait()
 	}
-	return buildToolMessages(calls, results)
+	return buildToolMessages(calls, results), buildToolResults(calls, results)
+}
+
+// buildToolResults converts raw tool outputs into structured provider.ToolResult
+// values (one per call, in call order). The Output string mirrors exactly what
+// buildToolMessages places in the tool-result message content so consumers can
+// correlate predicate input with the on-wire transcript.
+func buildToolResults(calls []provider.ToolCall, results []toolOutput) []provider.ToolResult {
+	if len(calls) == 0 {
+		return nil
+	}
+	out := make([]provider.ToolResult, len(calls))
+	for i, tc := range calls {
+		r := results[i]
+		tr := provider.ToolResult{
+			ToolCallID: tc.ID,
+			ToolName:   tc.Name,
+			Error:      r.err,
+			IsError:    r.err != nil,
+		}
+		if r.err != nil {
+			errStr := r.err.Error()
+			runes := []rune(errStr)
+			if len(runes) > 500 {
+				errStr = string(runes[:500]) + "..."
+			}
+			tr.Output = "error: " + errStr
+		} else {
+			tr.Output = r.result
+		}
+		out[i] = tr
+	}
+	return out
 }
 
 // buildToolMessages converts tool call results to provider messages.
@@ -1519,17 +1857,23 @@ func buildTextResult(steps []StepResult, totalUsage provider.Usage) *TextResult 
 
 // buildResponseMessages constructs the full ResponseMessages from the tool round-trip
 // messages (delta between original and final params.Messages) and the steps.
-// The delta contains assistant+tool messages for each step where appendToolRoundTrip
-// ran. When the loop exits normally (final step produces text, no tool calls), that
-// final assistant message is NOT in the delta, so we append it. When MaxSteps is
-// exhausted and the last step still has tool calls, appendToolRoundTrip already added
-// the assistant+tool messages for that step , appending again would duplicate.
 //
-// Consecutive tool messages are merged into a single message because some providers
-// require parallel tool results in a single message (not split across multiple messages).
+// With Vercel-parity StopWhen placement (evaluated AFTER tool execution and
+// appendToolRoundTrip), the delta always contains the assistant + tool-result
+// messages for every completed step whose LLM response carried tool calls --
+// including the last step on a StopWhen break and at MaxSteps exhaustion. The
+// only case the delta is missing the last step's assistant message is a
+// natural termination (last step produced text with no tool calls): that
+// message is appended here.
 //
-// The reasoning parameter provides thinking/reasoning parts for the final assistant
-// message (streaming path only; GenerateText passes nil).
+// Consecutive tool messages are merged into a single message because some
+// providers require parallel tool results in a single message (not split
+// across multiple messages).
+//
+// The reasoning parameter provides thinking/reasoning parts for the final
+// assistant message (streaming path only; GenerateText passes nil). It is
+// only applied when the delta is empty or the last step had no tool calls
+// (i.e. when we are actually building the final assistant message here).
 func buildResponseMessages(roundTripDelta []provider.Message, steps []StepResult, reasoning []provider.Part) []provider.Message {
 	if len(steps) == 0 {
 		return nil
@@ -1540,17 +1884,14 @@ func buildResponseMessages(roundTripDelta []provider.Message, steps []StepResult
 	}
 	msgs := mergeToolMessages(roundTripDelta)
 	if len(last.ToolCalls) > 0 {
-		// MaxSteps exhausted: appendToolRoundTrip already added this step's
-		// assistant + tool messages to the delta. Skip to avoid duplication.
-		// Invariant: len(last.ToolCalls) > 0 implies appendToolRoundTrip ran for the
-		// last step. This holds because the loop only exits early (before appendToolRoundTrip)
-		// when FinishReason != FinishToolCalls or ToolCalls is empty , in both cases
-		// last.ToolCalls would be empty.
+		// Delta already contains this step's assistant + tool-result messages
+		// (appendToolRoundTrip ran before loop break). Avoid duplication.
 		return msgs
 	}
+	// Natural termination: last step produced text with no tool calls - its
+	// assistant message is NOT yet in the delta.
 	finalMsg := buildFinalAssistantMessages(last.Text, last.ToolCalls, reasoning)
-	msgs = append(msgs, finalMsg...)
-	return msgs
+	return append(msgs, finalMsg...)
 }
 
 // mergeToolMessages merges consecutive tool-role messages into single messages.
