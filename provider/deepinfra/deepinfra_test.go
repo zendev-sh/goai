@@ -101,13 +101,31 @@ func TestNoTokenSource(t *testing.T) {
 }
 
 func TestWithHTTPClient(t *testing.T) {
-	c := &http.Client{}
-	model := Chat("model", WithAPIKey("key"), WithHTTPClient(c))
-	cm := model.(*chatModel)
-	if cm.opts.httpClient != c {
-		t.Error("custom client not set")
+	called := false
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		called = true
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"x","model":"m","choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)),
+		}, nil
+	})
+	c := &http.Client{Transport: tr}
+	model := Chat("model", WithAPIKey("key"), WithBaseURL("http://example.invalid"), WithHTTPClient(c))
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Error("custom HTTP client transport was not invoked")
 	}
 }
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestWithHeaders(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -269,31 +287,68 @@ func TestReadError(t *testing.T) {
 }
 
 func TestChat_EnvVarResolution(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer env-key" {
+			t.Errorf("auth = %q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"x","model":"m","choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	defer server.Close()
+
 	t.Setenv("DEEPINFRA_API_KEY", "env-key")
-	m := Chat("m")
-	cm := m.(*chatModel)
-	if cm.opts.tokenSource == nil {
-		t.Error("tokenSource should be set from DEEPINFRA_API_KEY")
+	m := Chat("m", WithBaseURL(server.URL))
+	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestChat_EnvVarBaseURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"x","model":"m","choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	defer server.Close()
+
 	t.Setenv("DEEPINFRA_API_KEY", "env-key")
-	t.Setenv("DEEPINFRA_BASE_URL", "https://custom.deepinfra.com/v1")
+	t.Setenv("DEEPINFRA_BASE_URL", server.URL)
 	m := Chat("m")
-	cm := m.(*chatModel)
-	if cm.opts.baseURL != "https://custom.deepinfra.com/v1" {
-		t.Errorf("baseURL = %q", cm.opts.baseURL)
+	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestChat_EnvVarNotOverrideExplicit(t *testing.T) {
+	envHit := false
+	envServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		envHit = true
+		w.WriteHeader(500)
+	}))
+	defer envServer.Close()
+
+	explicitServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"x","model":"m","choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	defer explicitServer.Close()
+
 	t.Setenv("DEEPINFRA_API_KEY", "env-key")
-	t.Setenv("DEEPINFRA_BASE_URL", "https://env.url")
-	m := Chat("m", WithAPIKey("explicit"), WithBaseURL("https://explicit.url"))
-	cm := m.(*chatModel)
-	if cm.opts.baseURL != "https://explicit.url" {
-		t.Errorf("baseURL = %q", cm.opts.baseURL)
+	t.Setenv("DEEPINFRA_BASE_URL", envServer.URL)
+	m := Chat("m", WithAPIKey("explicit"), WithBaseURL(explicitServer.URL))
+	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envHit {
+		t.Error("env-url server was hit; explicit baseURL should take precedence")
 	}
 }
 

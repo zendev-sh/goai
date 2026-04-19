@@ -100,12 +100,33 @@ func TestNoTokenSource(t *testing.T) {
 	}
 }
 
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func okResponse() *http.Response {
+	return &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"id":"x","model":"m","choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)),
+	}
+}
+
 func TestWithHTTPClient(t *testing.T) {
-	c := &http.Client{}
-	model := Chat("model", WithAPIKey("key"), WithHTTPClient(c))
-	cm := model.(*chatModel)
-	if cm.opts.httpClient != c {
-		t.Error("custom client not set")
+	called := false
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		called = true
+		return okResponse(), nil
+	})
+	m := Chat("model", WithAPIKey("key"), WithHTTPClient(&http.Client{Transport: tr}))
+	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Error("custom HTTP client transport was not invoked")
 	}
 }
 
@@ -269,30 +290,61 @@ func TestReadError(t *testing.T) {
 }
 
 func TestChat_EnvVarResolution(t *testing.T) {
+	var gotAuth string
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		gotAuth = req.Header.Get("Authorization")
+		return okResponse(), nil
+	})
 	t.Setenv("GROQ_API_KEY", "env-key")
-	m := Chat("m")
-	cm := m.(*chatModel)
-	if cm.opts.tokenSource == nil {
-		t.Error("tokenSource should be set from GROQ_API_KEY")
+	m := Chat("m", WithHTTPClient(&http.Client{Transport: tr}))
+	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotAuth != "Bearer env-key" {
+		t.Errorf("auth = %q", gotAuth)
 	}
 }
 
 func TestChat_EnvVarBaseURL(t *testing.T) {
-	t.Setenv("GROQ_API_KEY", "env-key")
-	t.Setenv("GROQ_BASE_URL", "https://custom.groq.com/v1")
-	m := Chat("m")
-	cm := m.(*chatModel)
-	if cm.opts.baseURL != "https://custom.groq.com/v1" {
-		t.Errorf("baseURL = %q", cm.opts.baseURL)
+	var gotURL string
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		gotURL = req.URL.String()
+		return okResponse(), nil
+	})
+	t.Setenv("GROQ_API_KEY", "k")
+	t.Setenv("GROQ_BASE_URL", "https://custom.example.com/v1")
+	m := Chat("m", WithHTTPClient(&http.Client{Transport: tr}))
+	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(gotURL, "https://custom.example.com/v1/") {
+		t.Errorf("URL = %q", gotURL)
 	}
 }
 
 func TestChat_EnvVarNotOverrideExplicit(t *testing.T) {
+	var gotURL string
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		gotURL = req.URL.String()
+		return okResponse(), nil
+	})
+	t.Setenv("GROQ_API_KEY", "env-key")
 	t.Setenv("GROQ_BASE_URL", "https://env.url")
-	m := Chat("m", WithAPIKey("explicit"), WithBaseURL("https://explicit.url"))
-	cm := m.(*chatModel)
-	if cm.opts.baseURL != "https://explicit.url" {
-		t.Errorf("baseURL = %q", cm.opts.baseURL)
+	m := Chat("m", WithAPIKey("explicit"), WithBaseURL("https://explicit.url"), WithHTTPClient(&http.Client{Transport: tr}))
+	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(gotURL, "https://explicit.url/") {
+		t.Errorf("URL = %q", gotURL)
 	}
 }
 
