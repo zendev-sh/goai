@@ -361,6 +361,68 @@ func TestEmbed_Dimensions(t *testing.T) {
 	}
 }
 
+func TestEmbed_WithHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Custom") != "v" {
+			t.Error("missing header")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"model":"m","data":[{"embedding":[0.1],"index":0}],"usage":{"prompt_tokens":1,"total_tokens":1}}`)
+	}))
+	defer server.Close()
+
+	m := Embedding("m", WithAPIKey("k"), WithBaseURL(server.URL), WithHeaders(map[string]string{"X-Custom": "v"}))
+	_, err := m.DoEmbed(t.Context(), []string{"a"}, provider.EmbedParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEmbed_ConnectionError(t *testing.T) {
+	m := Embedding("m", WithAPIKey("k"), WithBaseURL("http://127.0.0.1:1"))
+	_, err := m.DoEmbed(t.Context(), []string{"a"}, provider.EmbedParams{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "sending request") {
+		t.Errorf("unexpected: %s", err)
+	}
+}
+
+func TestEmbed_InvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"not-valid-json`)
+	}))
+	defer server.Close()
+
+	m := Embedding("m", WithAPIKey("k"), WithBaseURL(server.URL))
+	_, err := m.DoEmbed(t.Context(), []string{"a"}, provider.EmbedParams{})
+	if err == nil || !strings.Contains(err.Error(), "parsing response") {
+		t.Fatalf("expected parsing error, got %v", err)
+	}
+}
+
+func TestStream_PromptCachingIgnored(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"x\"},\"index\":0}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	m := Chat("m", WithAPIKey("k"), WithBaseURL(server.URL))
+	result, err := m.DoStream(t.Context(), provider.GenerateParams{
+		Messages:      []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+		PromptCaching: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range result.Stream {
+	}
+}
+
 func TestStream_HTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
