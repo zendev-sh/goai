@@ -482,6 +482,53 @@ func TestNewEmbeddingModel_Headers(t *testing.T) {
 	}
 }
 
+type errReader struct{}
+
+func (errReader) Read(p []byte) (int, error) { return 0, errors.New("read boom") }
+func (errReader) Close() error               { return nil }
+
+func TestNewChatModel_ReadError(t *testing.T) {
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       errReader{},
+		}, nil
+	})
+	m := NewChatModel(ChatModelConfig{
+		ProviderID:  "test",
+		ModelID:     "m",
+		BaseURL:     "http://example.invalid",
+		TokenSource: provider.StaticToken("k"),
+		HTTPClient:  &http.Client{Transport: tr},
+	})
+	_, err := m.DoGenerate(t.Context(), testParams())
+	if err == nil || !strings.Contains(err.Error(), "reading response") {
+		t.Fatalf("expected read error, got %v", err)
+	}
+}
+
+func TestNewEmbeddingModel_ReadError(t *testing.T) {
+	tr := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       errReader{},
+		}, nil
+	})
+	m := NewEmbeddingModel(EmbeddingModelConfig{
+		ProviderID:  "test",
+		ModelID:     "m",
+		BaseURL:     "http://example.invalid",
+		TokenSource: provider.StaticToken("k"),
+		HTTPClient:  &http.Client{Transport: tr},
+	})
+	_, err := m.DoEmbed(t.Context(), []string{"a"}, provider.EmbedParams{})
+	if err == nil || !strings.Contains(err.Error(), "reading response") {
+		t.Fatalf("expected read error, got %v", err)
+	}
+}
+
 func TestNewEmbeddingModel_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
