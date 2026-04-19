@@ -1916,6 +1916,9 @@ func TestStepKind_String(t *testing.T) {
 		StepStepFinished:  "step-finished",
 		StepToolExecuting: "tool-executing",
 		StepIdle:          "idle",
+		StepDone:          "done",
+		StepCancelled:     "cancelled",
+		StepError:         "error",
 		StepKind(999):     "unknown",
 	}
 	for k, want := range cases {
