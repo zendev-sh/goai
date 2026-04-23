@@ -48,6 +48,7 @@ Most use the shared `internal/openaicompat` codec (some wrappers delegate via `p
 | [RunPod](runpod.md)         | `api.runpod.ai`     | `RUNPOD_API_KEY`                              |
 | [Cloudflare](cloudflare.md) | `api.cloudflare.com` | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 | [FPT Cloud](fptcloud.md)    | `mkp-api.fptcloud.com` / `.jp` | `FPT_API_KEY`, `FPT_REGION`           |
+| [NVIDIA NIM](nvidia.md)     | `integrate.api.nvidia.com/v1` | `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`  |
 
 ## Local / Custom
 

@@ -9,6 +9,8 @@ description: "Open-source Go SDK for AI applications. One unified API for OpenAI
 
 ## What's New
 
+> **v0.7.2** — New provider: [NVIDIA NIM](/providers/nvidia) (chat + embeddings). [Changelog →](https://github.com/zendev-sh/goai/releases)
+>
 > **v0.7.0** — New providers: [Cloudflare Workers AI](/providers/cloudflare) and [FPT Smart Cloud](/providers/fptcloud) (both OpenAI-compatible, chat + embeddings). [Changelog →](https://github.com/zendev-sh/goai/releases)
 >
 > **v0.6.0** — OpenTelemetry tracing + metrics, context propagation via RequestInfo.Ctx, Langfuse data race fix. [Changelog →](https://github.com/zendev-sh/goai/releases)
@@ -17,7 +19,7 @@ description: "Open-source Go SDK for AI applications. One unified API for OpenAI
 
 ## What is GoAI SDK?
 
-GoAI SDK is an open-source Go library for building AI applications. It provides one unified API across 24+ LLM providers — OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM, and more.
+GoAI SDK is an open-source Go library for building AI applications. It provides one unified API across 24+ LLM providers — OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM, NVIDIA NIM, and more.
 
 Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomatically for Go with generics, interfaces, and channels.
 
@@ -89,7 +91,7 @@ result, _ := goai.GenerateText(ctx, model,
 
 ## Supported Providers
 
-OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Vertex AI, Cohere, Mistral, xAI (Grok), Groq, DeepSeek, Fireworks, Together AI, DeepInfra, OpenRouter, Perplexity, Cerebras, Cloudflare Workers AI, FPT Smart Cloud, Ollama, vLLM, RunPod, and any OpenAI-compatible endpoint.
+OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Vertex AI, Cohere, Mistral, xAI (Grok), Groq, DeepSeek, Fireworks, Together AI, DeepInfra, OpenRouter, Perplexity, Cerebras, Cloudflare Workers AI, FPT Smart Cloud, NVIDIA NIM, Ollama, vLLM, RunPod, and any OpenAI-compatible endpoint.
 
 [View all providers →](/providers/)
 
