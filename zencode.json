@@ -1,0 +1,16 @@
+{
+  "experimental": {},
+  "keybinds": {},
+  "mcp": {
+    "playwright": {
+      "args": [
+        "@playwright/mcp@latest"
+      ],
+      "command": "npx",
+      "type": "local"
+    }
+  },
+  "permission": {},
+  "server": {},
+  "skills": {}
+}

@@ -39,7 +39,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomat
 
 ## Why GoAI?
 
-- **One API, 24+ providers** — switch providers by changing one line of code
+- **One API, 25+ providers** — switch providers by changing one line of code
 - **Minimal deps** — core requires only `golang.org/x/oauth2`; optional OTel integration in separate submodule
 - **Go-native design** — generics for type safety, channels for streaming, interfaces for extensibility
 - **24x faster cold start** than Vercel AI SDK (569μs vs 13.9ms)
