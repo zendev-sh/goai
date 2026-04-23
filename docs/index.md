@@ -9,7 +9,7 @@ description: "Open-source Go SDK for AI applications. One unified API for OpenAI
 
 ## What's New
 
-> **v0.7.2** — New provider: [NVIDIA NIM](/providers/nvidia) (chat + embeddings). [Changelog →](https://github.com/zendev-sh/goai/releases)
+> **v0.7.2** — New provider: [NVIDIA NIM](/providers/nvidia) (OpenAI-compatible, chat + embeddings). E2E tested with `meta/llama-3.3-70b-instruct`. [Changelog →](https://github.com/zendev-sh/goai/releases)
 >
 > **v0.7.0** — New providers: [Cloudflare Workers AI](/providers/cloudflare) and [FPT Smart Cloud](/providers/fptcloud) (both OpenAI-compatible, chat + embeddings). [Changelog →](https://github.com/zendev-sh/goai/releases)
 >
@@ -19,7 +19,7 @@ description: "Open-source Go SDK for AI applications. One unified API for OpenAI
 
 ## What is GoAI SDK?
 
-GoAI SDK is an open-source Go library for building AI applications. It provides one unified API across 24+ LLM providers — OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM, NVIDIA NIM, and more.
+GoAI SDK is an open-source Go library for building AI applications. It provides one unified API across 25+ LLM providers — OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM, NVIDIA NIM, and more.
 
 Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomatically for Go with generics, interfaces, and channels.
 

@@ -12,7 +12,7 @@ import (
 	"github.com/zendev-sh/goai/provider"
 )
 
-const defaultAPIBase = "https://integrate.api.nvidia.com/v1"
+const defaultBaseURL = "https://integrate.api.nvidia.com/v1"
 
 type Option func(*options)
 
@@ -56,7 +56,7 @@ func resolveOptions(opts []Option) options {
 	if o.baseURL == "" {
 		o.baseURL = os.Getenv("NVIDIA_BASE_URL")
 		if o.baseURL == "" {
-			o.baseURL = defaultAPIBase
+			o.baseURL = defaultBaseURL
 		}
 	}
 	return o
@@ -69,26 +69,25 @@ func Chat(modelID string, opts ...Option) provider.LanguageModel {
 		ModelID:              modelID,
 		BaseURL:              o.baseURL,
 		TokenSource:          o.tokenSource,
-		TokenRequired:        false,
-		BaseURLRequired:      false,
+		TokenRequired:        true,
 		Headers:              o.headers,
 		HTTPClient:           o.httpClient,
 		Capabilities:         chatCaps,
 		IncludeStreamOptions: true,
+		WarnPromptCaching:    true,
 	})
 }
 
 func Embedding(modelID string, opts ...Option) provider.EmbeddingModel {
 	o := resolveOptions(opts)
 	return openaicompat.NewEmbeddingModel(openaicompat.EmbeddingModelConfig{
-		ProviderID:      "nvidia",
-		ModelID:         modelID,
-		BaseURL:         o.baseURL,
-		TokenSource:     o.tokenSource,
-		TokenRequired:   false,
-		BaseURLRequired: false,
-		Headers:         o.headers,
-		HTTPClient:      o.httpClient,
+		ProviderID:       "nvidia",
+		ModelID:          modelID,
+		BaseURL:          o.baseURL,
+		TokenSource:      o.tokenSource,
+		TokenRequired:    true,
+		Headers:          o.headers,
+		HTTPClient:       o.httpClient,
 		MaxValuesPerCall: 100,
 	})
 }

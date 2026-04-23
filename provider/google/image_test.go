@@ -161,6 +161,8 @@ func TestImagenModel_HTTPError(t *testing.T) {
 }
 
 func TestImagenModel_NoToken(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_GENERATIVE_AI_API_KEY", "")
 	model := Image("imagen-4.0-generate-001") // no API key
 	_, err := model.DoGenerate(t.Context(), provider.ImageParams{Prompt: "x", N: 1})
 	if err == nil {
@@ -477,6 +479,8 @@ func TestGeminiImage_HTTPError(t *testing.T) {
 }
 
 func TestGeminiImage_NoToken(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_GENERATIVE_AI_API_KEY", "")
 	model := Image("gemini-2.5-flash-image")
 	_, err := model.DoGenerate(t.Context(), provider.ImageParams{Prompt: "x", N: 1})
 	if err == nil {

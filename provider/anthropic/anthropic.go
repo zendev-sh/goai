@@ -1323,6 +1323,9 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 	// Attach provider metadata to response.
 	if providerMeta != nil {
 		result.Response.ProviderMetadata = providerMeta
+		result.ProviderMetadata = map[string]map[string]any{
+			"anthropic": providerMeta,
+		}
 	}
 
 	return result, nil
