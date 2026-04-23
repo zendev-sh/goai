@@ -25,7 +25,8 @@ const providers = [
   { name: "Perplexity", icon: "https://models.dev/logos/perplexity.svg", link: "/providers/perplexity" },
   { name: "Cerebras", icon: "https://models.dev/logos/cerebras.svg", link: "/providers/cerebras" },
   { name: "Cloudflare", icon: "https://models.dev/logos/cloudflare-workers-ai.svg", link: "/providers/cloudflare" },
-  { name: "FPT Cloud", icon: "/providers/compatible.svg", link: "/providers/fptcloud" },
+  { name: "NVIDIA", icon: "/providers/nvidia.svg", link: "/providers/nvidia" },
+  { name: "FPT Cloud", icon: "/providers/fptcloud.svg", link: "/providers/fptcloud" },
   { name: "vLLM", icon: "/providers/vllm.svg", link: "/providers/vllm" },
   { name: "Compatible", icon: "/providers/compatible.svg", link: "/providers/compat" },
 ];
@@ -57,7 +58,7 @@ onMounted(() => {
           <h1 class="rh-title anim a2">GoAI</h1>
           <p class="rh-slogan anim a3">AI SDK, the Go way.</p>
           <p class="rh-tagline anim a4">
-            One unified API across 24+ providers. Streaming, structured output,
+            One unified API across 25+ providers. Streaming, structured output,
             MCP support, minimal dependencies.
           </p>
 
@@ -134,6 +135,16 @@ onMounted(() => {
       <div class="rh-whatsnew-inner">
         <p class="rh-section-label">What's new</p>
         <div class="rh-release-list">
+          <a
+            href="https://github.com/zendev-sh/goai/releases/tag/v0.7.2"
+            class="rh-release"
+          >
+            <span class="rh-release-tag">v0.7.2</span>
+            <span class="rh-release-text"
+              ><strong>NVIDIA NIM provider</strong> — New provider.
+              OpenAI-compatible chat + embeddings. E2E tested with meta/llama-3.3-70b-instruct.</span
+            >
+          </a>
           <a
             href="https://github.com/zendev-sh/goai/releases/tag/v0.7.0"
             class="rh-release"
@@ -283,7 +294,7 @@ openai.<span class="fn">Chat</span>(<span class="st">"gpt-4o"</span>,
     <!-- ▸ NUMBERS -->
     <section class="rh-numbers anim a10">
       <div class="rh-numbers-inner">
-        <div class="rh-num"><em>24</em><span>providers</span></div>
+        <div class="rh-num"><em>25</em><span>providers</span></div>
         <div class="rh-num"><em>100+</em><span>models tested</span></div>
         <div class="rh-num"><em>24x</em><span>faster cold start</span></div>
         <div class="rh-num"><em>0</em><span>third-party deps</span></div>

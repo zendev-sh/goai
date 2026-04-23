@@ -2,7 +2,7 @@ import { defineConfig } from 'vitepress'
 
 export default defineConfig({
   title: 'GoAI SDK',
-  description: 'Go SDK for AI Applications. One API, 24+ LLM Providers.',
+  description: 'Go SDK for AI Applications. One API, 25+ LLM Providers.',
   base: process.env.VITEPRESS_BASE || '/',
 
   sitemap: {
@@ -47,7 +47,7 @@ export default defineConfig({
         "@type": "SoftwareApplication",
         "name": "GoAI SDK",
         "alternateName": ["goai", "goai.sh"],
-        "description": "Go SDK for building AI applications. One SDK, 24+ providers. Supports OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure, Groq, Mistral, Ollama and more.",
+        "description": "Go SDK for building AI applications. One SDK, 25+ providers. Supports OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure, Groq, Mistral, Ollama and more.",
         "url": "https://goai.sh",
         "downloadUrl": "https://github.com/zendev-sh/goai",
         "applicationCategory": "DeveloperApplication",
