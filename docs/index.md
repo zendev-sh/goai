@@ -1,8 +1,8 @@
 ---
 layout: home
-title: GoAI SDK — Go SDK for AI Applications. One API, 24+ LLM Providers.
+title: GoAI SDK — Go SDK for AI Applications. One API, 25+ LLM Providers.
 titleTemplate: false
-description: "Open-source Go SDK for AI applications. One unified API for OpenAI, Anthropic, Google Gemini, AWS Bedrock, and 24+ LLM providers. Minimal dependencies."
+description: "Open-source Go SDK for AI applications. One unified API for OpenAI, Anthropic, Google Gemini, AWS Bedrock, and 25+ LLM providers. Minimal dependencies."
 ---
 
 <div class="vp-doc" style="max-width: 688px; margin: 0 auto; padding: 2rem 1.5rem;">
