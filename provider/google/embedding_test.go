@@ -196,6 +196,8 @@ func TestEmbedding_BaseURL(t *testing.T) {
 }
 
 func TestEmbedding_NoTokenSource(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_GENERATIVE_AI_API_KEY", "")
 	model := Embedding("text-embedding-004")
 	_, err := model.DoEmbed(t.Context(), []string{"hello"}, provider.EmbedParams{})
 	if err == nil {

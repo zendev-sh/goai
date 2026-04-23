@@ -1,3 +1,7 @@
+// Package nvidia provides an NVIDIA NIM language and embedding model
+// implementation for GoAI, using the OpenAI-compatible endpoints.
+//
+// See https://docs.nvidia.com/nim/nimbus/latest/overview/
 package nvidia
 
 import (
@@ -39,8 +43,8 @@ func WithHTTPClient(c *http.Client) Option {
 	return func(o *options) { o.httpClient = c }
 }
 
-func Chat(modelID string, opts ...Option) provider.LanguageModel {
-	o := options{baseURL: defaultBaseURL}
+func resolveOptions(opts []Option) options {
+	o := options{}
 	for _, opt := range opts {
 		opt(&o)
 	}
@@ -49,11 +53,17 @@ func Chat(modelID string, opts ...Option) provider.LanguageModel {
 			o.tokenSource = provider.StaticToken(key)
 		}
 	}
-	if o.baseURL == defaultBaseURL {
-		if base := os.Getenv("NVIDIA_BASE_URL"); base != "" {
-			o.baseURL = base
+	if o.baseURL == "" {
+		o.baseURL = os.Getenv("NVIDIA_BASE_URL")
+		if o.baseURL == "" {
+			o.baseURL = defaultBaseURL
 		}
 	}
+	return o
+}
+
+func Chat(modelID string, opts ...Option) provider.LanguageModel {
+	o := resolveOptions(opts)
 	return openaicompat.NewChatModel(openaicompat.ChatModelConfig{
 		ProviderID:           "nvidia",
 		ModelID:              modelID,
@@ -69,28 +79,16 @@ func Chat(modelID string, opts ...Option) provider.LanguageModel {
 }
 
 func Embedding(modelID string, opts ...Option) provider.EmbeddingModel {
-	o := options{baseURL: defaultBaseURL}
-	for _, opt := range opts {
-		opt(&o)
-	}
-	if o.tokenSource == nil {
-		if key := os.Getenv("NVIDIA_API_KEY"); key != "" {
-			o.tokenSource = provider.StaticToken(key)
-		}
-	}
-	if o.baseURL == defaultBaseURL {
-		if base := os.Getenv("NVIDIA_BASE_URL"); base != "" {
-			o.baseURL = base
-		}
-	}
+	o := resolveOptions(opts)
 	return openaicompat.NewEmbeddingModel(openaicompat.EmbeddingModelConfig{
-		ProviderID:    "nvidia",
-		ModelID:       modelID,
-		BaseURL:       o.baseURL,
-		TokenSource:   o.tokenSource,
-		TokenRequired: true,
-		Headers:       o.headers,
-		HTTPClient:    o.httpClient,
+		ProviderID:       "nvidia",
+		ModelID:          modelID,
+		BaseURL:          o.baseURL,
+		TokenSource:      o.tokenSource,
+		TokenRequired:    true,
+		Headers:          o.headers,
+		HTTPClient:       o.httpClient,
+		MaxValuesPerCall: 100,
 	})
 }
 

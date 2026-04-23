@@ -1,101 +1,107 @@
 ---
-title: NVIDIA NIM Provider
-description: "Use NVIDIA NIM (NVIDIA Inference Manager) in Go with GoAI. Access 100+ models including Llama, Nemotron, and more via the OpenAI-compatible API."
+title: NVIDIA NIM
+description: "NVIDIA NIM (NVIDIA Inference Microservices) provider for GoAI SDK"
 ---
 
 # NVIDIA NIM
 
-[NVIDIA NIM](https://www.nvidia.com/en-us/ai/) provides optimized inference APIs for leading AI models. GoAI supports the OpenAI-compatible Chat Completions and Embeddings APIs.
+[NVIDIA NIM](https://docs.nvidia.com/nim/) provides easy-to-deploy AI microservices for inference. GoAI supports chat and embedding models via the OpenAI-compatible API.
 
-## Setup
+## Installation
 
 ```bash
 go get github.com/zendev-sh/goai@latest
 ```
 
+## Chat
+
 ```go
-import "github.com/zendev-sh/goai/provider/nvidia"
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/zendev-sh/goai"
+	"github.com/zendev-sh/goai/provider/nvidia"
+)
+
+func main() {
+	model := nvidia.Chat("nvidia/llama-3.1-nemotron-70b-instruct")
+
+	result, err := goai.GenerateText(context.Background(), model,
+		goai.WithPrompt("What is the capital of France?"),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(result.Text)
+}
 ```
 
-Set the `NVIDIA_API_KEY` environment variable, or pass `WithAPIKey()` directly.
+### Available Models
 
-## Models
-
-NVIDIA NIM offers 100+ models. Some popular ones:
-
-**Chat:**
-- `meta/llama-3.3-70b-instruct`
+NVIDIA NIM offers many models. Common choices include:
 - `nvidia/llama-3.1-nemotron-70b-instruct`
-- `nvidia/nemotron-4-340b-instruct`
-- `nvidia/nemotron-3-super-120b-a12b`
-- `mistralai/mistral-large`
-- `deepseek-ai/deepseek-v3`
+- `nvidia/llama-3.3-70b-instruct`
+- `nvidia/nemotron-mini-4b-instruct`
 
-**Embeddings:**
-- `nvidia/embed-qa-4`
-- `nvidia/nv-embed-v1`
-- `nvidia/llama-nemotron-embed-1b-v2`
-
-[View all models →](https://build.nvidia.com/explore)
-
-## Tested Models
-
-**E2E tested** (real API calls, 2026-04-23): `meta/llama-3.3-70b-instruct`
-
-**Unit tested** (mock HTTP server): `meta/llama-3.3-70b-instruct`, `nvidia/nv-embed-qa-1`
-
-## Usage
-
-### Chat
+## Embeddings
 
 ```go
-model := nvidia.Chat("meta/llama-3.3-70b-instruct")
+model := nvidia.Embedding("nvidia/nv-embedqa-e5-v5")
 
-result, err := goai.GenerateText(ctx, model,
-    goai.WithSystem("You are a helpful assistant."),
-    goai.WithPrompt("What is the capital of France?"),
+result, err := goai.Embed(context.Background(), model,
+	goai.WithPrompt("Hello world"),
 )
 if err != nil {
-    log.Fatal(err)
-}
-fmt.Println(result.Text)
-```
-
-### Streaming
-
-```go
-stream, err := goai.StreamText(ctx, model,
-    goai.WithPrompt("Count from 1 to 5."),
-)
-for text := range stream.TextStream() {
-    fmt.Print(text)
-}
-```
-
-### Embeddings
-
-```go
-model := nvidia.Embedding("nvidia/embed-qa-4")
-
-result, err := goai.Embed(ctx, model, "Hello world")
-if err != nil {
-    log.Fatal(err)
+	log.Fatal(err)
 }
 fmt.Printf("Dimensions: %d\n", len(result.Embedding))
 ```
 
+### Available Embedding Models
+
+- `nvidia/nv-embedqa-e5-v5`
+- `nvidia/nv-embed-v1`
+
+## Authentication
+
+The provider automatically reads from:
+
+| Environment Variable | Description |
+| -------------------- | ------------ |
+| `NVIDIA_API_KEY`     | Your NVIDIA NGC API key |
+| `NVIDIA_BASE_URL`    | Override the default endpoint |
+
+Or pass explicitly:
+
+```go
+model := nvidia.Chat("nvidia/llama-3.1-nemotron-70b-instruct",
+	nvidia.WithAPIKey("nvapi-..."),
+	nvidia.WithBaseURL("https://custom.endpoint.com/v1"),
+)
+```
+
 ## Options
 
-| Option | Type | Description |
-|--------|------|-------------|
-| `WithAPIKey(key)` | `string` | Set a static API key |
-| `WithTokenSource(ts)` | `provider.TokenSource` | Set a dynamic token source |
-| `WithBaseURL(url)` | `string` | Override the default `https://integrate.api.nvidia.com/v1` endpoint |
-| `WithHeaders(h)` | `map[string]string` | Set additional HTTP headers |
-| `WithHTTPClient(c)` | `*http.Client` | Set a custom `*http.Client` |
+| Option | Description |
+| ------ | ----------- |
+| `WithAPIKey(key)` | Set static API key |
+| `WithTokenSource(ts)` | Dynamic auth (TokenSource) |
+| `WithBaseURL(url)` | Override API endpoint |
+| `WithHeaders(h)` | Custom HTTP headers |
+| `WithHTTPClient(c)` | Custom HTTP client |
 
-## Notes
+## Self-Hosted NIM
 
-- Environment variable `NVIDIA_BASE_URL` can override the default endpoint.
-- NVIDIA NIM supports self-hosted deployments, making it suitable for enterprise use cases.
-- All models are accessed via the OpenAI-compatible API format.
+Deploy NIM containers locally or in your infrastructure:
+
+```go
+model := nvidia.Chat("meta/llama-3.1-70b-instruct",
+	nvidia.WithBaseURL("http://localhost:8000/v1"),
+)
+```
+
+See [NVIDIA NIM documentation](https://docs.nvidia.com/nim/) for deployment instructions.

@@ -163,6 +163,7 @@ export default defineConfig({
                 { text: 'OpenRouter', link: '/providers/openrouter' },
                 { text: 'Perplexity', link: '/providers/perplexity' },
                 { text: 'Cerebras', link: '/providers/cerebras' },
+                { text: 'NVIDIA NIM', link: '/providers/nvidia' },
                 { text: 'RunPod', link: '/providers/runpod' },
                 { text: 'Cloudflare Workers AI', link: '/providers/cloudflare' },
                 { text: 'FPT Smart Cloud', link: '/providers/fptcloud' },
