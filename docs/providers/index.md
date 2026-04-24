@@ -1,11 +1,11 @@
 ---
 title: Supported Providers
-description: "GoAI SDK supports 24+ LLM providers: OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, MiniMax, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM and more."
+description: "GoAI SDK supports 25+ LLM providers: OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, MiniMax, Groq, Mistral, Cohere, DeepSeek, Ollama, vLLM and more."
 ---
 
 # Providers
 
-GoAI SDK supports 24+ LLM providers with a single unified API. Most hosted providers auto-resolve credentials from environment variables; local/custom providers (for example `ollama`, `vllm`, `compat`) typically use explicit options.
+GoAI SDK supports 25+ LLM providers with a single unified API. Most hosted providers auto-resolve credentials from environment variables; local/custom providers (for example `ollama`, `vllm`, `compat`) typically use explicit options.
 
 All 7 core functions — `GenerateText`, `StreamText`, `GenerateObject[T]`, `StreamObject[T]`, `Embed`, `EmbedMany`, and `GenerateImage` — work identically across all providers.
 
@@ -45,7 +45,6 @@ Most use the shared `internal/openaicompat` codec (some wrappers delegate via `p
 | [OpenRouter](openrouter.md) | `openrouter.ai`     | `OPENROUTER_API_KEY`                          |
 | [Perplexity](perplexity.md) | `api.perplexity.ai` | `PERPLEXITY_API_KEY`                          |
 | [Cerebras](cerebras.md)     | `api.cerebras.ai`   | `CEREBRAS_API_KEY`                            |
-| [NVIDIA NIM](nvidia.md)     | `integrate.api.nvidia.com` | `NVIDIA_API_KEY`                       |
 | [RunPod](runpod.md)         | `api.runpod.ai`     | `RUNPOD_API_KEY`                              |
 | [Cloudflare](cloudflare.md) | `api.cloudflare.com` | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 | [FPT Cloud](fptcloud.md)    | `mkp-api.fptcloud.com` / `.jp` | `FPT_API_KEY`, `FPT_REGION`           |

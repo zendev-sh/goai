@@ -94,6 +94,10 @@ model := nvidia.Chat("nvidia/llama-3.1-nemotron-70b-instruct",
 | `WithHeaders(h)` | Custom HTTP headers |
 | `WithHTTPClient(c)` | Custom HTTP client |
 
+## Notes
+
+- **Embedding batch limit**: 100 values per call. `goai.EmbedMany` automatically chunks larger batches.
+
 ## Self-Hosted NIM
 
 Deploy NIM containers locally or in your infrastructure:

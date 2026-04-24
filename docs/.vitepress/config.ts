@@ -27,7 +27,7 @@ export default defineConfig({
 
     const title = context.pageData.frontmatter.title || context.pageData.title || 'GoAI SDK'
     const ogTitle = context.pageData.relativePath === 'index.md' ? 'GoAI SDK — Go SDK for AI' : `${title} | GoAI SDK`
-    const description = context.pageData.frontmatter.description || context.pageData.description || 'Go SDK for AI Applications. One API, 24+ LLM Providers.'
+    const description = context.pageData.frontmatter.description || context.pageData.description || 'Go SDK for AI Applications. One API, 25+ LLM Providers.'
     head.push(['meta', { property: 'og:title', content: ogTitle }])
     head.push(['meta', { property: 'og:description', content: description }])
     head.push(['meta', { name: 'description', content: description }])
