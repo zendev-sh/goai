@@ -27,8 +27,8 @@ type TextResult struct {
     Response         provider.ResponseMetadata    // Provider metadata from the last step.
     ProviderMetadata map[string]map[string]any    // Provider-specific response data.
     Sources          []provider.Source            // Citations/references from all steps.
-    ResponseMessages []provider.Message           // Assistant + tool messages for multi-turn continuation.
     StepsExhausted   bool                         // True when MaxSteps was reached with tool calls still pending.
+    ResponseMessages []provider.Message           // Assistant + tool messages for multi-turn continuation.
 }
 ```
 
@@ -41,6 +41,7 @@ type StepResult struct {
     Number       int                      // 1-based step index.
     Text         string                   // Text generated in this step (excludes reasoning text).
     ToolCalls    []provider.ToolCall       // Tool calls requested in this step.
+    ToolResults  []provider.ToolResult     // Tool results for the requested calls.
     FinishReason provider.FinishReason    // Finish reason for this step.
     Usage        provider.Usage           // Token usage for this step.
     Response     provider.ResponseMetadata // Provider metadata for this step.
@@ -71,8 +72,8 @@ type ObjectResult[T any] struct {
     Object           T                        // The parsed structured output.
     Usage            provider.Usage           // Token consumption.
     FinishReason     provider.FinishReason    // Why generation stopped.
-    Response         provider.ResponseMetadata // Provider metadata.
     ProviderMetadata map[string]map[string]any // Provider-specific response data.
+    Response         provider.ResponseMetadata // Provider metadata.
     ResponseMessages []provider.Message       // Assistant + tool messages for multi-turn continuation.
     Steps            []StepResult             // Results from each generation step (for multi-step tool loops).
 }
@@ -96,8 +97,8 @@ The result of a single embedding generation.
 type EmbedResult struct {
     Embedding        []float64                 // The generated vector.
     Usage            provider.Usage            // Token consumption.
-    Response         provider.ResponseMetadata // Provider metadata.
     ProviderMetadata map[string]map[string]any // Provider-specific response data.
+    Response         provider.ResponseMetadata // Provider metadata.
 }
 ```
 
@@ -109,8 +110,8 @@ The result of a batch embedding generation.
 type EmbedManyResult struct {
     Embeddings       [][]float64               // One vector per input value.
     Usage            provider.Usage            // Aggregated token consumption.
-    Response         provider.ResponseMetadata // Provider metadata.
     ProviderMetadata map[string]map[string]any // Provider-specific response data.
+    Response         provider.ResponseMetadata // Provider metadata.
 }
 ```
 
@@ -121,9 +122,9 @@ The result of image generation.
 ```go
 type ImageResult struct {
     Images           []provider.ImageData      // Generated images.
+    ProviderMetadata map[string]map[string]any // Provider-specific response data.
     Usage            provider.Usage            // Token consumption.
     Response         provider.ResponseMetadata // Provider metadata.
-    ProviderMetadata map[string]map[string]any // Provider-specific response data.
 }
 ```
 
@@ -490,6 +491,7 @@ type StreamChunk struct {
     Error        error              // For ChunkError.
     Response     ResponseMetadata   // Populated on ChunkFinish (may also appear on ChunkStepFinish).
     Metadata     map[string]any     // Provider-specific data.
+    StoppedBy    StopCause          // How the tool loop terminated.
 }
 ```
 
@@ -598,6 +600,35 @@ type ToolCall struct {
 
     // Provider-specific data that must be preserved across tool round-trips.
     Metadata map[string]any
+}
+```
+
+### StopCause
+
+```go
+type StopCause string
+
+const (
+    StopCauseNatural    StopCause = "natural"     // Normal completion.
+    StopCauseMaxSteps   StopCause = "max-steps"   // Hit MaxSteps limit.
+    StopCausePredicate  StopCause = "predicate"   // Stopped by WithStopWhen.
+    StopCauseBeforeStep StopCause = "before-step" // Stopped by OnBeforeStep.
+    StopCauseAbort      StopCause = "abort"       // Terminated due to error.
+    StopCauseEmpty      StopCause = "empty"       // Provider closed stream without chunks.
+)
+```
+
+### ToolResult
+
+The result of a tool execution sent back to the model.
+
+```go
+type ToolResult struct {
+    ToolCallID string // ID of the originating ToolCall.
+    ToolName   string // Name of the tool.
+    Output     string // Stringified result.
+    Error      error  // Error returned by the tool (if any).
+    IsError    bool   // Convenience boolean for Error != nil.
 }
 ```
 

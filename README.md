@@ -5,7 +5,7 @@
 <h1 align="center">GoAI</h1>
 
 <p align="center"><em>AI SDK, the Go way.</em></p>
-<p align="center">Go SDK for building AI applications. One SDK, 24+ providers, MCP support.</p>
+<p align="center">Go SDK for building AI applications. One SDK, 25+ providers, MCP support.</p>
 
 <p align="center">
   <a href="bench/RESULTS.md"><img src="https://img.shields.io/badge/streaming-1.1x_faster-brightgreen" alt="Streaming"></a>
@@ -403,13 +403,12 @@ result, err := goai.GenerateText(ctx, model, goai.WithPrompt("Hello"))
 | DeepInfra  | various                                                      | -                                                          | -             | `DEEPINFRA_API_KEY`, TokenSource                                                                   | Unit | `provider/deepinfra`  |
 | Perplexity | `sonar-*`                                                    | -                                                          | -             | `PERPLEXITY_API_KEY`, TokenSource                                                                  | Unit | `provider/perplexity` |
 | Cerebras   | `llama-*`                                                    | -                                                          | -             | `CEREBRAS_API_KEY`, TokenSource                                                                    | Unit | `provider/cerebras`   |
-| NVIDIA NIM | various                                                      | various                                                    | -             | `NVIDIA_API_KEY`, TokenSource                                                                      | Full | `provider/nvidia`     |
 | Ollama     | local models                                                 | local models                                               | -             | none                                                                                               | Unit | `provider/ollama`     |
 | vLLM       | local models                                                 | local models                                               | -             | Optional auth via `WithAPIKey` / `WithTokenSource`                                                 | Unit | `provider/vllm`       |
 | RunPod     | any vLLM model                                               | -                                                          | -             | `RUNPOD_API_KEY`, TokenSource                                                                      | Unit | `provider/runpod`     |
 | Cloudflare | `@cf/meta/*`, `@cf/openai/gpt-oss-*`, `@cf/qwen/*`           | `@cf/baai/bge-*`                                           | -             | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_BASE_URL`, TokenSource                | Unit | `provider/cloudflare` |
 | FPT Cloud  | `Qwen3-*`, `Llama-*`, `gpt-oss-*`, `GLM-*`, `gemma-*`        | `bge-*`, `gte-*`, `multilingual-e5-*`                      | -             | `FPT_API_KEY`, `FPT_REGION` (`global`/`jp`), `FPT_BASE_URL`, TokenSource                           | Unit | `provider/fptcloud`   |
-| NVIDIA NIM | `nvidia/llama-*`, `nvidia/nemotron-*`                       | `nvidia/nv-embed-*`                                         | -             | `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, TokenSource                                                    | Unit | `provider/nvidia`     |
+| NVIDIA NIM | `nvidia/llama-*`, `nvidia/nemotron-*`                       | `nvidia/nv-embed-*`                                         | -             | `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, TokenSource                                                    | Full | `provider/nvidia`     |
 | Compat     | any OpenAI-compatible                                        | any                                                        | -             | configurable                                                                                       | Unit | `provider/compat`     |
 
 **E2E column**: "Full" = tested with real API calls. "Unit" = tested with mock HTTP servers (100% coverage).
@@ -417,9 +416,9 @@ result, err := goai.GenerateText(ctx, model, goai.WithPrompt("Hello"))
 ### Tested Models
 
 <details>
-<summary><strong>E2E tested - 103 models across 7 providers</strong> (real API calls, click to expand)</summary>
+<summary><strong>E2E tested - 104 models across 8 providers</strong> (real API calls, click to expand)</summary>
 
-Last run: 2026-03-27. 103 models tested (generate + stream).
+Last run: 2026-03-27. 104 models tested (generate + stream).
 
 | Provider     | Models E2E tested (generate + stream)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

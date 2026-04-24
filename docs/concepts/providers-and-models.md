@@ -137,6 +137,7 @@ Many providers read credentials from environment variables when explicit auth op
 | RunPod     | `github.com/zendev-sh/goai/provider/runpod`     | `Chat`                       |
 | Cloudflare | `github.com/zendev-sh/goai/provider/cloudflare` | `Chat`, `Embedding`          |
 | FPT Cloud  | `github.com/zendev-sh/goai/provider/fptcloud`   | `Chat`, `Embedding`          |
+| NVIDIA NIM | `github.com/zendev-sh/goai/provider/nvidia`     | `Chat`, `Embedding`          |
 | Ollama     | `github.com/zendev-sh/goai/provider/ollama`     | `Chat`, `Embedding`          |
 | vLLM       | `github.com/zendev-sh/goai/provider/vllm`       | `Chat`, `Embedding`          |
 | Compat     | `github.com/zendev-sh/goai/provider/compat`     | `Chat`, `Embedding`          |

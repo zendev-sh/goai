@@ -1,6 +1,6 @@
 ---
 title: Quick Start
-description: "Get started with GoAI in minutes. Generate and stream text with OpenAI, Anthropic, Google, and 24+ LLM providers using a unified Go API."
+description: "Get started with GoAI in minutes. Generate and stream text with OpenAI, Anthropic, Google, and 25+ LLM providers using a unified Go API."
 ---
 
 # Quick Start
@@ -109,7 +109,7 @@ Environment variable: `GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY`
 
 ### Others
 
-All 24+ providers work the same way:
+All 25+ providers work the same way:
 
 ```go
 import "github.com/zendev-sh/goai/provider/groq"
