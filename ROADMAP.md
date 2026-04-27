@@ -81,11 +81,17 @@
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **OpenAI-compat factory refactor** | `openaicompat.NewChatModel` / `NewEmbeddingModel` absorb HTTP dispatch, token resolution, env-var plumbing from 14 provider packages. ~1,400 LOC removed. Public API unchanged |
 
-## v0.7.2 - Current release
+## v0.7.2
 
 | Feature        | Description                                                                                        |
 | -------------- | -------------------------------------------------------------------------------------------------- |
 | **NVIDIA NIM** | New provider (OpenAI-compatible, chat + embeddings). E2E tested with `meta/llama-3.3-70b-instruct` |
+
+## v0.7.3 - Current release
+
+| Feature                       | Description                                                                                                                                                                                                                       |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Reasoning text on results** | New `Reasoning` field on `TextResult`, `StepResult`, and `provider.GenerateResult`. Populated for both `GenerateText` and `StreamText` across Bedrock, Anthropic, OpenAI Responses, Google, Cohere, and OpenAI-compat (DeepSeek). |
 
 ### Planned
 
