@@ -407,6 +407,7 @@ func parseConverseResponse(body []byte) (*provider.GenerateResult, error) {
 
 	// Parse content blocks.
 	var reasoningParts []map[string]any
+	var reasoningTextBuf strings.Builder
 	for _, raw := range resp.Output.Message.Content {
 		var block map[string]any
 		if err := json.Unmarshal(raw, &block); err != nil {
@@ -432,6 +433,7 @@ func parseConverseResponse(body []byte) (*provider.GenerateResult, error) {
 				part := map[string]any{"type": "reasoning"}
 				if text, ok := rt["text"].(string); ok {
 					part["text"] = text
+					reasoningTextBuf.WriteString(text)
 				}
 				if sig, ok := rt["signature"].(string); ok {
 					part["signature"] = sig
@@ -447,6 +449,14 @@ func parseConverseResponse(body []byte) (*provider.GenerateResult, error) {
 				reasoningParts = append(reasoningParts, part)
 			}
 		}
+	}
+
+	// Surface concatenated reasoning text on the top-level result so
+	// callers (goai TextResult.Reasoning) can render thinking in the
+	// non-streaming path. Signatures + redacted blocks remain in
+	// ProviderMetadata for replay.
+	if reasoningTextBuf.Len() > 0 {
+		result.Reasoning = reasoningTextBuf.String()
 	}
 
 	// Store reasoning metadata and additional response fields in ProviderMetadata.

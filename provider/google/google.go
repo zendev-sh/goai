@@ -816,6 +816,7 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 	}
 
 	var textParts []string
+	var reasoningParts []string
 	var providerMeta map[string]any
 	var callIndex int
 	for _, part := range candidate.Content.Parts {
@@ -835,6 +836,8 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 				}
 			}
 			result.ToolCalls = append(result.ToolCalls, tc)
+		} else if part.Thought && part.Text != "" {
+			reasoningParts = append(reasoningParts, part.Text)
 		} else if !part.Thought && part.Text != "" {
 			textParts = append(textParts, part.Text)
 		}
@@ -848,6 +851,7 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 		}
 	}
 	result.Text = strings.Join(textParts, "")
+	result.Reasoning = strings.Join(reasoningParts, "")
 
 	// Attach provider metadata if we have thoughtSignatures.
 	if providerMeta != nil {

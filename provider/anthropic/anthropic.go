@@ -1171,6 +1171,7 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 
 	// Extract text, tool calls, reasoning, and citations.
 	var textParts []string
+	var reasoningParts []string
 	var providerMeta map[string]any
 	for _, block := range resp.Content {
 		switch block.Type {
@@ -1217,6 +1218,7 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 		case "thinking":
 			if block.Thinking != "" {
 				// Reasoning text is not appended to result.Text -- it's metadata.
+				reasoningParts = append(reasoningParts, block.Thinking)
 				if providerMeta == nil {
 					providerMeta = map[string]any{}
 				}
@@ -1244,6 +1246,7 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 		}
 	}
 	result.Text = strings.Join(textParts, "")
+	result.Reasoning = strings.Join(reasoningParts, "")
 
 	// Usage.
 	if resp.Usage != nil {

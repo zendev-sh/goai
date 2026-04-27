@@ -879,6 +879,7 @@ func parseResponsesResult(body []byte) (*provider.GenerateResult, error) {
 
 	// Extract text, tool calls, sources, logprobs from output.
 	var textParts []string
+	var reasoningParts []string
 	var hasFunctionCall bool
 	providerMeta := map[string]any{}
 	var allLogprobs []any
@@ -920,6 +921,7 @@ func parseResponsesResult(body []byte) (*provider.GenerateResult, error) {
 		case "reasoning":
 			for _, s := range item.Summary {
 				if s.Text != "" {
+					reasoningParts = append(reasoningParts, s.Text)
 					reasoning, _ := providerMeta["reasoning"].([]map[string]any)
 					providerMeta["reasoning"] = append(reasoning, map[string]any{
 						"type": s.Type,
@@ -931,6 +933,7 @@ func parseResponsesResult(body []byte) (*provider.GenerateResult, error) {
 	}
 
 	result.Text = strings.Join(textParts, "")
+	result.Reasoning = strings.Join(reasoningParts, "")
 
 	if len(allLogprobs) > 0 {
 		providerMeta["logprobs"] = allLogprobs
