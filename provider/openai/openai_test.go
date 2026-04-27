@@ -1662,6 +1662,33 @@ func TestParseResponsesResult_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestParseResponsesResult_ReasoningSummary(t *testing.T) {
+	body := `{
+		"id": "resp-1",
+		"model": "o3",
+		"status": "completed",
+		"output": [
+			{"type": "reasoning", "summary": [
+				{"type": "summary_text", "text": "Step one. "},
+				{"type": "summary_text", "text": "Step two."}
+			]},
+			{"type": "message", "content": [{"type": "output_text", "text": "answer"}]}
+		],
+		"usage": {"input_tokens": 1, "output_tokens": 1}
+	}`
+
+	result, err := parseResponsesResult([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "answer" {
+		t.Errorf("Text = %q, want %q", result.Text, "answer")
+	}
+	if result.Reasoning != "Step one. Step two." {
+		t.Errorf("Reasoning = %q, want %q", result.Reasoning, "Step one. Step two.")
+	}
+}
+
 func TestParseResponsesResult_CachedTokens(t *testing.T) {
 	body := `{
 		"id": "resp-1",
