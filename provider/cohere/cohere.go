@@ -546,8 +546,10 @@ func parseChatResponse(body []byte) (*provider.GenerateResult, error) {
 	}
 	result.Text = strings.Join(textParts, "")
 	if len(reasoningParts) > 0 {
+		joined := strings.Join(reasoningParts, "")
+		result.Reasoning = joined
 		result.ProviderMetadata = map[string]map[string]any{
-			"cohere": {"reasoning": strings.Join(reasoningParts, "")},
+			"cohere": {"reasoning": joined},
 		}
 	}
 

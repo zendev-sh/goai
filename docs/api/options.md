@@ -279,6 +279,14 @@ Sets the retry count for transient errors (429, 503, 5xx).
 func WithMaxRetries(n int) Option
 ```
 
+**Parameters:**
+
+| Value     | Behavior                                                                                          |
+| --------- | ------------------------------------------------------------------------------------------------- |
+| `n >= 0`  | Retry up to `n` times.                                                                            |
+| `n == -1` | Unlimited retries (useful when the application manages its own timeout/cancellation via context). |
+| `n < -1`  | Clamped to `0` (no retries).                                                                      |
+
 **Default:** `2`. Retries use exponential backoff. Only retryable errors trigger retry (see [Errors](errors.md)).
 
 ### WithTimeout

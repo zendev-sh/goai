@@ -45,10 +45,10 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 - **Structured output**: `GenerateObject[T]` auto-generates JSON Schema from Go types via reflection
 - **Streaming**: Real-time text and partial object streaming via channels
 - **Dynamic auth**: `TokenSource` interface for OAuth, rotating keys, cloud IAM, with `CachedTokenSource` for TTL-based caching
-- **Prompt caching**: Automatic cache control for supported providers (Anthropic, Bedrock, MiniMax)
+- **Prompt caching**: Automatic cache control for supported providers (Anthropic, Bedrock)
 - **Citations/sources**: Grounding and inline citations from xAI, Perplexity, Google, OpenAI
-- **Web search**: Built-in web search tools for OpenAI, Anthropic, Google, Groq. Model decides when to search
-- **Code execution**: Server-side Python sandboxes via OpenAI, Anthropic, Google. No local setup
+- **Web search**: Built-in web search tools for OpenAI, Anthropic, Google, Groq, xAI. Model decides when to search
+- **Code execution**: Server-side Python sandboxes via OpenAI, Anthropic, Google, xAI. No local setup
 - **Computer use**: Anthropic computer, bash, text editor tools for autonomous desktop interaction
 - **20 provider-defined tools**: Web fetch, file search, image generation, X search, and more - [full list](#provider-defined-tools)
 - **MCP client**: Connect to any MCP server (stdio, HTTP, SSE), auto-convert tools for use with GoAI
@@ -408,7 +408,7 @@ result, err := goai.GenerateText(ctx, model, goai.WithPrompt("Hello"))
 | RunPod     | any vLLM model                                               | -                                                          | -             | `RUNPOD_API_KEY`, TokenSource                                                                      | Unit | `provider/runpod`     |
 | Cloudflare | `@cf/meta/*`, `@cf/openai/gpt-oss-*`, `@cf/qwen/*`           | `@cf/baai/bge-*`                                           | -             | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_BASE_URL`, TokenSource                | Unit | `provider/cloudflare` |
 | FPT Cloud  | `Qwen3-*`, `Llama-*`, `gpt-oss-*`, `GLM-*`, `gemma-*`        | `bge-*`, `gte-*`, `multilingual-e5-*`                      | -             | `FPT_API_KEY`, `FPT_REGION` (`global`/`jp`), `FPT_BASE_URL`, TokenSource                           | Unit | `provider/fptcloud`   |
-| NVIDIA NIM | `nvidia/llama-*`, `nvidia/nemotron-*`                       | `nvidia/nv-embed-*`                                         | -             | `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, TokenSource                                                    | Full | `provider/nvidia`     |
+| NVIDIA NIM | `nvidia/llama-*`, `nvidia/nemotron-*`                        | `nvidia/nv-embed-*`                                        | -             | `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, TokenSource                                                   | Full | `provider/nvidia`     |
 | Compat     | any OpenAI-compatible                                        | any                                                        | -             | configurable                                                                                       | Unit | `provider/compat`     |
 
 **E2E column**: "Full" = tested with real API calls. "Unit" = tested with mock HTTP servers (100% coverage).
@@ -429,7 +429,7 @@ Last run: 2026-03-27. 104 models tested (generate + stream).
 | Mistral (5)  | `mistral-small-latest`, `mistral-large-latest`, `devstral-small-2507`, `codestral-latest`, `magistral-medium-latest`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | Cerebras (1) | `llama3.1-8b`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | MiniMax (4)  | `MiniMax-M2.7`, `MiniMax-M2.5`, `MiniMax-M2.1`, `MiniMax-M2` (generate + stream + tools + thinking)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| NVIDIA (1)   | `meta/llama-3.3-70b-instruct`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| NVIDIA (1)   | `meta/llama-3.3-70b-instruct`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 </details>
 
@@ -541,41 +541,42 @@ fmt.Printf("Model used: %s\n", result.Response.Model)
 
 ### Generation Options
 
-| Option                    | Description                              | Default          |
-| ------------------------- | ---------------------------------------- | ---------------- |
-| `WithSystem(s)`           | System prompt                            | -                |
-| `WithPrompt(s)`           | Single user message                      | -                |
-| `WithMessages(...)`       | Conversation history                     | -                |
-| `WithTools(...)`          | Available tools                          | -                |
-| `WithMaxOutputTokens(n)`  | Response length limit                    | provider default |
-| `WithTemperature(t)`      | Randomness (0.0-2.0)                     | provider default |
-| `WithTopP(p)`             | Nucleus sampling                         | provider default |
-| `WithTopK(k)`             | Top-K sampling                           | provider default |
-| `WithFrequencyPenalty(p)` | Frequency penalty                        | provider default |
-| `WithPresencePenalty(p)`  | Presence penalty                         | provider default |
-| `WithSeed(s)`             | Deterministic generation                 | -                |
-| `WithStopSequences(...)`  | Stop triggers                            | -                |
-| `WithMaxSteps(n)`         | Tool loop iterations                     | 1 (no loop)      |
-| `WithMaxRetries(n)`       | Retries on 429/5xx                       | 2                |
-| `WithTimeout(d)`          | Overall timeout                          | none             |
-| `WithHeaders(h)`          | Per-request HTTP headers                 | -                |
-| `WithProviderOptions(m)`  | Provider-specific params                 | -                |
-| `WithPromptCaching(b)`    | Enable prompt caching                    | false            |
-| `WithToolChoice(tc)`      | "auto", "none", "required", or tool name | -                |
+| Option                          | Description                              | Default          |
+| ------------------------------- | ---------------------------------------- | ---------------- |
+| `WithSystem(s)`                 | System prompt                            | -                |
+| `WithPrompt(s)`                 | Single user message                      | -                |
+| `WithMessages(...)`             | Conversation history                     | -                |
+| `WithTools(...)`                | Available tools                          | -                |
+| `WithMaxOutputTokens(n)`        | Response length limit                    | provider default |
+| `WithTemperature(t)`            | Randomness (0.0-2.0)                     | provider default |
+| `WithTopP(p)`                   | Nucleus sampling                         | provider default |
+| `WithTopK(k)`                   | Top-K sampling                           | provider default |
+| `WithFrequencyPenalty(p)`       | Frequency penalty                        | provider default |
+| `WithPresencePenalty(p)`        | Presence penalty                         | provider default |
+| `WithSeed(s)`                   | Deterministic generation                 | -                |
+| `WithStopSequences(...)`        | Stop triggers                            | -                |
+| `WithMaxSteps(n)`               | Tool loop iterations                     | 1 (no loop)      |
+| `WithSequentialToolExecution()` | Execute tools one at a time              | parallel         |
+| `WithMaxRetries(n)`             | Retries on 429/5xx                       | 2                |
+| `WithTimeout(d)`                | Overall timeout                          | none             |
+| `WithHeaders(h)`                | Per-request HTTP headers                 | -                |
+| `WithProviderOptions(m)`        | Provider-specific params                 | -                |
+| `WithPromptCaching(b)`          | Enable prompt caching                    | false            |
+| `WithToolChoice(tc)`            | "auto", "none", "required", or tool name | -                |
 
 ### Lifecycle Hooks
 
-| Option                          | Description                                                      |
-| ------------------------------- | ---------------------------------------------------------------- |
-| `WithOnRequest(fn)`             | Called before each API call                                      |
-| `WithOnResponse(fn)`            | Called after each API call                                       |
-| `WithOnToolCallStart(fn)`       | Called before each tool execution begins                         |
-| `WithOnToolCall(fn)`            | Called after each tool execution                                 |
-| `WithOnStepFinish(fn)`          | Called after each tool loop step                                 |
-| `WithOnFinish(fn)`              | Called once after all steps complete (carries `StepsExhausted`)  |
-| `WithOnBeforeToolExecute(fn)`   | Intercept before tool Execute -- can skip, override ctx/input    |
-| `WithOnAfterToolExecute(fn)`    | Intercept after tool Execute -- can modify output/error          |
-| `WithOnBeforeStep(fn)`          | Intercept before step 2+ -- can inject messages or stop loop    |
+| Option                        | Description                                                     |
+| ----------------------------- | --------------------------------------------------------------- |
+| `WithOnRequest(fn)`           | Called before each API call                                     |
+| `WithOnResponse(fn)`          | Called after each API call                                      |
+| `WithOnToolCallStart(fn)`     | Called before each tool execution begins                        |
+| `WithOnToolCall(fn)`          | Called after each tool execution                                |
+| `WithOnStepFinish(fn)`        | Called after each tool loop step                                |
+| `WithOnFinish(fn)`            | Called once after all steps complete (carries `StepsExhausted`) |
+| `WithOnBeforeToolExecute(fn)` | Intercept before tool Execute -- can skip, override ctx/input   |
+| `WithOnAfterToolExecute(fn)`  | Intercept after tool Execute -- can modify output/error         |
+| `WithOnBeforeStep(fn)`        | Intercept before step 2+ -- can inject messages or stop loop    |
 
 ### Structured Output Options
 

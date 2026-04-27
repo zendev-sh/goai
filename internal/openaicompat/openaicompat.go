@@ -579,9 +579,10 @@ type chatResponse struct {
 	Choices []struct {
 		Index   int `json:"index"`
 		Message struct {
-			Role        string          `json:"role"`
-			Content     json.RawMessage `json:"content"`
-			ToolCalls   []struct {
+			Role             string          `json:"role"`
+			Content          json.RawMessage `json:"content"`
+			ReasoningContent string          `json:"reasoning_content,omitempty"`
+			ToolCalls        []struct {
 				ID       string `json:"id"`
 				Type     string `json:"type"`
 				Function struct {
@@ -632,6 +633,7 @@ func ParseResponse(body []byte) (*provider.GenerateResult, error) {
 	if len(resp.Choices) > 0 {
 		choice := resp.Choices[0]
 		result.Text = extractTextContent(choice.Message.Content)
+		result.Reasoning = choice.Message.ReasoningContent
 		result.FinishReason = mapFinishReason(choice.FinishReason)
 
 		for _, tc := range choice.Message.ToolCalls {

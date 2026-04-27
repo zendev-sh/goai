@@ -14,11 +14,11 @@ go test ./provider/openai/  # Test single package
 
 ## Architecture
 
-GoAI is a Go SDK for AI applications - one API across 24+ LLM providers. Inspired by Vercel AI SDK, adapted to Go idioms.
+GoAI is a Go SDK for AI applications - one API across 25+ LLM providers. Inspired by Vercel AI SDK, adapted to Go idioms.
 
 ```
 goai/
-├── generate.go             # GenerateText, StreamText, ResponseMessages
+├── generate.go             # GenerateText, StreamText
 ├── object.go               # GenerateObject[T], StreamObject[T]
 ├── embed.go                # Embed, EmbedMany
 ├── image.go                # GenerateImage
@@ -55,7 +55,7 @@ goai/
 ├── observability/
 │   ├── langfuse/           # Langfuse observability integration (separate go.mod)
 │   └── otel/               # OpenTelemetry tracing and metrics (separate go.mod)
-├── examples/               # 28 runnable examples (including 7 MCP examples)
+├── examples/               # 31 runnable examples (30 with main.go + chat, agent-loop)
 └── bench/                  # Performance benchmarks (GoAI vs Vercel AI SDK)
 ```
 
