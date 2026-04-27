@@ -129,6 +129,12 @@ type GenerateResult struct {
 	// Text is the generated text content.
 	Text string
 
+	// Reasoning is the model's thinking/reasoning text (when extended
+	// thinking is enabled). Excludes signatures and redacted blocks —
+	// those remain in ProviderMetadata for replay. Empty when the
+	// provider does not return reasoning or thinking is disabled.
+	Reasoning string
+
 	// ToolCalls requested by the model.
 	ToolCalls []ToolCall
 

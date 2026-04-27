@@ -38,6 +38,13 @@ type TextResult struct {
 	// compatibility. Use Steps[n].Text for text-only content excluding reasoning.
 	Text string
 
+	// Reasoning is the model's accumulated thinking/reasoning text
+	// across all steps (PartReasoning). Populated for both GenerateText
+	// and StreamText when the provider returns reasoning content (e.g.
+	// Anthropic extended thinking on Bedrock). Empty when reasoning is
+	// disabled or unsupported.
+	Reasoning string
+
 	// ToolCalls requested by the model in the final step.
 	ToolCalls []provider.ToolCall
 
@@ -88,6 +95,11 @@ type StepResult struct {
 	// Text generated in this step (excludes reasoning tokens).
 	// For StreamText, reasoning is included in TextResult.Text but excluded here.
 	Text string
+
+	// Reasoning is the consolidated thinking/reasoning text for this
+	// step (PartReasoning, signature stripped). Populated for both
+	// GenerateText and StreamText when the provider returns reasoning.
+	Reasoning string
 
 	// ToolCalls requested in this step.
 	ToolCalls []provider.ToolCall
@@ -415,6 +427,7 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 				ts.steps = append(ts.steps, StepResult{
 					Number:           ts.currentStep,
 					Text:             ts.stepText.String(),
+					Reasoning:        ts.reasoningBuf.String(),
 					ToolCalls:        ts.stepToolCalls,
 					FinishReason:     chunk.FinishReason,
 					Usage:            chunk.Usage,
@@ -539,11 +552,20 @@ func (ts *TextStream) buildResult() *TextResult {
 		result.Steps = ts.steps
 		// Match GenerateText: ToolCalls is the LAST step's tool calls, not all steps'.
 		result.ToolCalls = ts.steps[len(ts.steps)-1].ToolCalls
+		// Aggregate per-step reasoning so streaming TextResult exposes
+		// the same .Reasoning field as GenerateText.
+		var reasoningAll strings.Builder
+		for _, s := range ts.steps {
+			reasoningAll.WriteString(s.Reasoning)
+		}
+		result.Reasoning = reasoningAll.String()
 	} else if text != "" || len(ts.toolCalls) > 0 || ts.finishReason != "" {
 		// Single-step fallback (no multi-step ChunkStepFinish received, but data exists).
+		stepReasoning := ts.reasoningBuf.String()
 		result.Steps = []StepResult{{
 			Number:           1,
 			Text:             ts.stepText.String(),
+			Reasoning:        stepReasoning,
 			ToolCalls:        ts.toolCalls,
 			FinishReason:     ts.finishReason,
 			Usage:            ts.usage,
@@ -551,6 +573,7 @@ func (ts *TextStream) buildResult() *TextResult {
 			Sources:          ts.sources,
 			ProviderMetadata: ts.providerMetadata,
 		}}
+		result.Reasoning = stepReasoning
 	}
 	// No data: Steps is nil.
 
@@ -894,6 +917,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			stepResult := StepResult{
 				Number:           step,
 				Text:             ds.text,
+				Reasoning:        ds.reasoningText,
 				ToolCalls:        ds.toolCalls,
 				FinishReason:     ds.finishReason,
 				Usage:            ds.usage,
@@ -1272,6 +1296,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		stepResult := StepResult{
 			Number:           step,
 			Text:             result.Text,
+			Reasoning:        result.Reasoning,
 			ToolCalls:        result.ToolCalls,
 			FinishReason:     result.FinishReason,
 			Usage:            result.Usage,
@@ -1837,6 +1862,13 @@ func buildTextResult(steps []StepResult, totalUsage provider.Usage) *TextResult 
 	for _, s := range steps {
 		allText.WriteString(s.Text)
 	}
+	// Accumulate reasoning text from all steps. Concatenated as-is so
+	// callers see the same boundaries the steps had; consumers wanting
+	// per-step reasoning can iterate Steps directly.
+	var allReasoning strings.Builder
+	for _, s := range steps {
+		allReasoning.WriteString(s.Reasoning)
+	}
 	// Collect sources from all steps.
 	var allSources []provider.Source
 	for _, s := range steps {
@@ -1845,6 +1877,7 @@ func buildTextResult(steps []StepResult, totalUsage provider.Usage) *TextResult 
 
 	return &TextResult{
 		Text:             allText.String(),
+		Reasoning:        allReasoning.String(),
 		ToolCalls:        last.ToolCalls,
 		Steps:            steps,
 		TotalUsage:       totalUsage,
@@ -1942,9 +1975,10 @@ func buildFinalAssistantMessages(text string, toolCalls []provider.ToolCall, rea
 }
 
 type drainResult struct {
-	text      string          // text-only (ChunkText), used for appendToolRoundTrip
-	reasoning []provider.Part // reasoning/thinking parts, echoed back for providers that require it (e.g. Bedrock)
-	toolCalls []provider.ToolCall
+	text          string          // text-only (ChunkText), used for appendToolRoundTrip
+	reasoning     []provider.Part // reasoning/thinking parts, echoed back for providers that require it (e.g. Bedrock)
+	reasoningText string          // consolidated reasoning text (PartReasoning), surfaced via StepResult.Reasoning
+	toolCalls     []provider.ToolCall
 	usage            provider.Usage
 	finishReason     provider.FinishReason
 	sources          []provider.Source
@@ -2077,6 +2111,7 @@ func drainStep(
 	}
 
 	dr.text = textBuf.String()
+	dr.reasoningText = reasoningBuf.String()
 
 	// Consolidate reasoning fragments into one Part (text + signature metadata)
 	// so the codec serializes a single complete block.

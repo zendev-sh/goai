@@ -13,16 +13,16 @@
 
 ### Providers (24+)
 
-| Category         | Providers                                           |
-| ---------------- | --------------------------------------------------- |
-| Flagship         | OpenAI, Anthropic, Google (Gemini + Imagen)         |
-| Cloud platforms  | AWS Bedrock (SigV4), Azure OpenAI, Google Vertex AI |
-| Fast inference   | Groq, Cerebras, Fireworks, Together, DeepInfra      |
-| Specialized      | Mistral, xAI, DeepSeek, Cohere, Perplexity, MiniMax |
-| Aggregators      | OpenRouter                                          |
+| Category         | Providers                                            |
+| ---------------- | ---------------------------------------------------- |
+| Flagship         | OpenAI, Anthropic, Google (Gemini + Imagen)          |
+| Cloud platforms  | AWS Bedrock (SigV4), Azure OpenAI, Google Vertex AI  |
+| Fast inference   | Groq, Cerebras, Fireworks, Together, DeepInfra       |
+| Specialized      | Mistral, xAI, DeepSeek, Cohere, Perplexity, MiniMax  |
+| Aggregators      | OpenRouter                                           |
 | Edge / regional  | Cloudflare Workers AI, FPT Smart Cloud (Global + JP) |
-| Local/Serverless | Ollama, vLLM, RunPod                                |
-| Bring your own   | `compat.Chat()` for any OpenAI-compatible endpoint  |
+| Local/Serverless | Ollama, vLLM, RunPod                                 |
+| Bring your own   | `compat.Chat()` for any OpenAI-compatible endpoint   |
 
 ### SDK features
 
@@ -61,33 +61,39 @@
 
 ## v0.6.0
 
-| Feature                    | Description                                                                       |
-| -------------------------- | --------------------------------------------------------------------------------- |
+| Feature                    | Description                                                                             |
+| -------------------------- | --------------------------------------------------------------------------------------- |
 | **OpenTelemetry tracing**  | Full tracing for generations, tool calls, and multi-step loops via `observability/otel` |
-| **OpenTelemetry metrics**  | Token usage, request duration, and error rate metrics with GenAI semantic conventions |
-| **Context propagation**    | `RequestInfo.Ctx` carries trace context through provider calls                    |
-| **Langfuse data race fix** | Fixed concurrent map access in Langfuse observability integration                 |
+| **OpenTelemetry metrics**  | Token usage, request duration, and error rate metrics with GenAI semantic conventions   |
+| **Context propagation**    | `RequestInfo.Ctx` carries trace context through provider calls                          |
+| **Langfuse data race fix** | Fixed concurrent map access in Langfuse observability integration                       |
 
 ## v0.7.0
 
-| Feature                      | Description                                                                                   |
-| ---------------------------- | --------------------------------------------------------------------------------------------- |
-| **Cloudflare Workers AI**    | New provider with chat + embeddings. OpenAI-compatible endpoints, account-ID URL building, optional AI Gateway override via `WithBaseURL` |
-| **FPT Smart Cloud**          | New provider (FPT AI Marketplace) with chat + embeddings. `WithRegion("global"/"jp")` for Japan / Global routing |
+| Feature                   | Description                                                                                                                               |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **Cloudflare Workers AI** | New provider with chat + embeddings. OpenAI-compatible endpoints, account-ID URL building, optional AI Gateway override via `WithBaseURL` |
+| **FPT Smart Cloud**       | New provider (FPT AI Marketplace) with chat + embeddings. `WithRegion("global"/"jp")` for Japan / Global routing                          |
 
-## v0.7.1 - Current release
+## v0.7.1
 
-| Feature                           | Description                                                                                   |
-| --------------------------------- | --------------------------------------------------------------------------------------------- |
+| Feature                            | Description                                                                                                                                                                    |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **OpenAI-compat factory refactor** | `openaicompat.NewChatModel` / `NewEmbeddingModel` absorb HTTP dispatch, token resolution, env-var plumbing from 14 provider packages. ~1,400 LOC removed. Public API unchanged |
+
+## v0.7.2 - Current release
+
+| Feature        | Description                                                                                        |
+| -------------- | -------------------------------------------------------------------------------------------------- |
+| **NVIDIA NIM** | New provider (OpenAI-compatible, chat + embeddings). E2E tested with `meta/llama-3.3-70b-instruct` |
 
 ### Planned
 
-| Feature       | Description                                           |
-| ------------- | ----------------------------------------------------- |
-| Output.array  | Stream validated array elements incrementally         |
-| Output.choice | Convenience enum selection wrapper                    |
-| ~~`goai/otel`~~   | ~~Pre-built OpenTelemetry integration (optional import)~~ **Shipped** in `observability/otel` |
+| Feature         | Description                                                                                   |
+| --------------- | --------------------------------------------------------------------------------------------- |
+| Output.array    | Stream validated array elements incrementally                                                 |
+| Output.choice   | Convenience enum selection wrapper                                                            |
+| ~~`goai/otel`~~ | ~~Pre-built OpenTelemetry integration (optional import)~~ **Shipped** in `observability/otel` |
 
 ### v1.0.0 - Stable API
 
