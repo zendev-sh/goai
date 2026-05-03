@@ -25,6 +25,44 @@ jobs:
       - name: Run tests
         run: go test -race ./...
 
+      # Go monorepo requires per-submodule tags following the pattern
+      # `<path>/vX.Y.Z` (e.g. `observability/otel/v0.7.4`). Without this,
+      # consumers importing `observability/otel` (or any sub-module) as
+      # a separate Go module cannot resolve it at the root tag's version.
+      #
+      # We tag every consumer-facing sub-module (anything with its own
+      # go.mod) at the same commit as the root tag, except internal paths
+      # (examples/*, bench/*) which should never be imported externally.
+      - name: Tag sub-modules at root tag commit
+        env:
+          ROOT_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Enumerate every sub-module go.mod, excluding root + internal-only
+          # paths. Add new exclusions here when introducing internal modules.
+          submodules=$(find . -mindepth 2 -name go.mod -not -path "./.git/*" \
+            | sed 's|/go.mod$||' | sed 's|^\./||' \
+            | grep -Ev '^(examples|bench)(/|$)' || true)
+
+          if [ -z "$submodules" ]; then
+            echo "No sub-modules to tag."
+            exit 0
+          fi
+
+          for sub in $submodules; do
+            sub_tag="${sub}/${ROOT_TAG}"
+            if git rev-parse -q --verify "refs/tags/${sub_tag}" >/dev/null; then
+              echo "Tag ${sub_tag} already exists; skipping."
+              continue
+            fi
+            echo "Tagging ${sub_tag} at ${ROOT_TAG}"
+            git tag "${sub_tag}" "${ROOT_TAG}"
+            git push origin "${sub_tag}"
+          done
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
