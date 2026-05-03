@@ -83,24 +83,42 @@ func WithHTTPClient(c *http.Client) Option {
 	}
 }
 
-// WithAPIVersion sets the Azure OpenAI API version used in the api-version
-// query parameter. Defaults to "2025-03-01-preview".
+// WithAPIVersion sets the Azure OpenAI API version used in the
+// `api-version` query parameter. Defaults to "2025-03-01-preview".
+//
+// IMPORTANT: api-version is ONLY honoured on the legacy deployment-based
+// path (opt in via WithDeploymentBasedURLs(true)). Azure's v1 GA spec
+// removed the parameter ("v1 API simplifies authentication, removes the
+// need for dated `api-version` parameters"); sending it on the v1 path
+// is rejected by spec-strict resources with "API version not supported".
+// Preview features on the v1 path opt in via custom headers
+// (e.g. `aoai-evals: preview`) or via path segments containing `alpha`/
+// `beta`, not via api-version.
+//
+// Reference:
+// https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle
 func WithAPIVersion(v string) Option {
 	return func(o *options) {
 		o.apiVersion = v
 	}
 }
 
-// WithDeploymentBasedURLs enables legacy deployment-based URL format:
+// WithDeploymentBasedURLs enables the legacy deployment-based URL format:
 //
 //	{endpoint}/openai/deployments/{model}{path}?api-version={version}
 //
-// instead of the newer format:
+// instead of the v1 GA format:
 //
-//	{endpoint}/openai/v1{path}?api-version={version}
+//	{endpoint}/openai/v1{path}
 //
 // This matches Vercel AI SDK's useDeploymentBasedUrls option.
 // When enabled, ALL requests (including Responses API) use deployment-based URLs.
+//
+// Use this when:
+//   - Your Azure resource doesn't yet expose the v1 GA path.
+//   - You need to pin a specific dated api-version (only honoured on this path).
+//   - You're talking to a spec-strict resource that rejects the v1 GA path
+//     for a particular model deployment (observed for some GPT-5 deployments).
 func WithDeploymentBasedURLs(enabled bool) Option {
 	return func(o *options) {
 		o.useDeploymentBasedURLs = enabled
@@ -479,13 +497,26 @@ func (t *azureRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 
 	var azureURL string
 	if t.useDeploymentBasedURLs {
-		// Legacy deployment-based format for ALL endpoints.
+		// Legacy deployment-based format for ALL endpoints. Azure
+		// requires `?api-version=` on this path.
 		azureURL = fmt.Sprintf("%s/openai/deployments/%s%s?api-version=%s",
 			t.endpoint, t.deployID, path, t.apiVersion)
 	} else {
-		// Default: newer v1 format (model in body).
-		azureURL = fmt.Sprintf("%s/openai/v1%s?api-version=%s",
-			t.endpoint, path, t.apiVersion)
+		// v1 GA format (model in body). Per Azure's v1 API spec the
+		// `api-version` query parameter is removed on this path:
+		//   "v1 API simplifies authentication, removes the need for
+		//    dated `api-version` parameters"
+		// Sending it anyway is rejected by spec-strict resources with
+		// "API version not supported" (observed live on gpt-5.5).
+		// Preview features on the v1 path opt-in via custom headers
+		// (e.g. `aoai-evals: preview`) or via path segments containing
+		// `alpha`/`beta`, not via `api-version`. See:
+		//   https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle
+		// Callers that still need a specific dated api-version should
+		// use WithDeploymentBasedURLs(true) to opt back into the
+		// legacy deployment-based path which honours api-version.
+		azureURL = fmt.Sprintf("%s/openai/v1%s",
+			t.endpoint, path)
 	}
 
 	// Clone the request with the new URL.

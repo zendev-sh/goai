@@ -38,8 +38,10 @@ func TestChat_Stream(t *testing.T) {
 		if r.Header.Get("api-key") != "test-key" {
 			t.Errorf("api-key = %s", r.Header.Get("api-key"))
 		}
-		if !strings.Contains(r.URL.RawQuery, "api-version=") {
-			t.Errorf("missing api-version in query")
+		// v1 GA path must NOT carry an api-version query (Azure's
+		// v1 spec rejects it: "API version not supported").
+		if strings.Contains(r.URL.RawQuery, "api-version=") {
+			t.Errorf("v1 GA path must not include api-version query, got: %s", r.URL.RawQuery)
 		}
 		responsesSSE(w, "Hello")
 	}))
@@ -366,8 +368,9 @@ func TestAzureURLRewrite(t *testing.T) {
 	if capturedPath != "/openai/v1/responses" {
 		t.Errorf("path = %s, want /openai/v1/responses", capturedPath)
 	}
-	if !strings.Contains(capturedQuery, "api-version=2025-03-01-preview") {
-		t.Errorf("query = %s", capturedQuery)
+	// v1 GA path must NOT carry api-version (spec removed it).
+	if strings.Contains(capturedQuery, "api-version=") {
+		t.Errorf("v1 GA path must not include api-version query, got: %s", capturedQuery)
 	}
 }
 
@@ -504,6 +507,10 @@ func TestRequestHeaders(t *testing.T) {
 
 // === BF.17 Tests ===
 
+// TestWithAPIVersion verifies that an explicit api-version flows through
+// on the legacy deployment-based path. The v1 GA path no longer accepts
+// api-version (Azure spec removed it), so api-version is only meaningful
+// when the caller opts into the legacy path via WithDeploymentBasedURLs(true).
 func TestWithAPIVersion(t *testing.T) {
 	var capturedQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -513,7 +520,12 @@ func TestWithAPIVersion(t *testing.T) {
 	}))
 	defer server.Close()
 
-	model := Chat("gpt-4o", WithAPIKey("k"), WithEndpoint(server.URL), WithAPIVersion("2024-12-01-preview"))
+	model := Chat("gpt-4o",
+		WithAPIKey("k"),
+		WithEndpoint(server.URL),
+		WithAPIVersion("2024-12-01-preview"),
+		WithDeploymentBasedURLs(true),
+	)
 	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
 		Messages: []provider.Message{
 			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
@@ -527,6 +539,9 @@ func TestWithAPIVersion(t *testing.T) {
 	}
 }
 
+// TestWithAPIVersion_Default verifies the default api-version flows through
+// on the legacy deployment-based path. v1 GA path tested separately
+// (TestAzureURLRewrite); it deliberately omits api-version.
 func TestWithAPIVersion_Default(t *testing.T) {
 	var capturedQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -537,7 +552,7 @@ func TestWithAPIVersion_Default(t *testing.T) {
 	defer server.Close()
 
 	// No WithAPIVersion -- should default to "2025-03-01-preview".
-	model := Chat("gpt-4o", WithAPIKey("k"), WithEndpoint(server.URL))
+	model := Chat("gpt-4o", WithAPIKey("k"), WithEndpoint(server.URL), WithDeploymentBasedURLs(true))
 	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
 		Messages: []provider.Message{
 			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
@@ -548,6 +563,39 @@ func TestWithAPIVersion_Default(t *testing.T) {
 	}
 	if !strings.Contains(capturedQuery, "api-version=2025-03-01-preview") {
 		t.Errorf("query = %s, want api-version=2025-03-01-preview", capturedQuery)
+	}
+}
+
+// TestV1Path_NoAPIVersion pins the contract that the v1 GA path never
+// includes the api-version query parameter, even when WithAPIVersion
+// was supplied. Azure's v1 GA spec rejects api-version with "API
+// version not supported"; preview features on v1 opt-in via custom
+// headers or path segments instead.
+func TestV1Path_NoAPIVersion(t *testing.T) {
+	var capturedQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, okResponsesJSON)
+	}))
+	defer server.Close()
+
+	// Even with an explicit api-version, the v1 GA path must drop it.
+	model := Chat("gpt-4o",
+		WithAPIKey("k"),
+		WithEndpoint(server.URL),
+		WithAPIVersion("2024-12-01-preview"),
+	)
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(capturedQuery, "api-version=") {
+		t.Errorf("v1 GA path must not include api-version query (got %q); opt into the legacy path via WithDeploymentBasedURLs(true) when an explicit api-version is required", capturedQuery)
 	}
 }
 
@@ -605,8 +653,9 @@ func TestImage(t *testing.T) {
 		if !strings.Contains(r.URL.Path, "/images/generations") {
 			t.Errorf("path = %s, want .../images/generations", r.URL.Path)
 		}
-		if !strings.Contains(r.URL.RawQuery, "api-version=") {
-			t.Errorf("missing api-version in query: %s", r.URL.RawQuery)
+		// v1 GA path drops api-version (per Azure spec).
+		if strings.Contains(r.URL.RawQuery, "api-version=") {
+			t.Errorf("v1 GA path must not include api-version query, got: %s", r.URL.RawQuery)
 		}
 		if r.Header.Get("api-key") != "test-key" {
 			t.Errorf("api-key = %q", r.Header.Get("api-key"))
