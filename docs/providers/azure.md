@@ -32,7 +32,7 @@ Azure hosts models from multiple providers. `azure.Chat()` automatically routes 
 
 | Model Type                         | Routing                            | Endpoint Format                                            |
 | ---------------------------------- | ---------------------------------- | ---------------------------------------------------------- |
-| OpenAI (GPT, o-series, codex)      | `openai.Chat()` + URL rewrite      | `{endpoint}/openai/v1{path}?api-version={version}`         |
+| OpenAI (GPT, o-series, codex)      | `openai.Chat()` + URL rewrite      | `{endpoint}/openai/v1{path}` (v1 GA, no api-version)       |
 | Claude                             | `anthropic.Chat()`                 | `{resource}.services.ai.azure.com/anthropic`               |
 | All others (DeepSeek, Llama, etc.) | `openai.Chat()` + Chat Completions | `{resource}.services.ai.azure.com/models/chat/completions` |
 
@@ -168,7 +168,7 @@ When using `WithTokenSource`, the provider sends `Authorization: Bearer {token}`
 | `WithEndpoint(url)`          | `string`               | Azure endpoint URL. Falls back to `AZURE_OPENAI_ENDPOINT`, or constructed from `AZURE_RESOURCE_NAME`. |
 | `WithHeaders(h)`             | `map[string]string`    | Additional HTTP headers.                                                                              |
 | `WithHTTPClient(c)`          | `*http.Client`         | Custom HTTP client.                                                                                   |
-| `WithAPIVersion(v)`          | `string`               | API version query parameter. Default: `"2025-03-01-preview"`.                                         |
+| `WithAPIVersion(v)`          | `string`               | `api-version` query parameter. Only honoured on the legacy deployment-based path (opt in via `WithDeploymentBasedURLs(true)`); the v1 GA path drops it per Azure spec. Default: `"2025-03-01-preview"`. |
 | `WithDeploymentBasedURLs(b)` | `bool`                 | Use legacy deployment-based URL format. Default: `false`.                                             |
 
 ### Environment Variables
@@ -182,17 +182,25 @@ When using `WithTokenSource`, the provider sends `Authorization: Bearer {token}`
 
 ## URL Format
 
-**Default**:
+**Default** (v1 GA):
 
 ```
-{endpoint}/openai/v1{path}?api-version={version}
+{endpoint}/openai/v1{path}
 ```
+
+The v1 GA path does not accept the `api-version` query parameter. Azure's v1 spec explicitly removed it; sending it is rejected by spec-strict resources with `"API version not supported"`. Preview features on the v1 path opt in via custom headers (e.g. `aoai-evals: preview`) or via path segments containing `alpha`/`beta`. See Azure's [API version lifecycle](https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle).
 
 **Legacy deployment-based** (enabled with `WithDeploymentBasedURLs(true)`):
 
 ```
 {endpoint}/openai/deployments/{model}{path}?api-version={version}
 ```
+
+Use the legacy path when:
+
+- Your Azure resource doesn't yet expose the v1 GA path.
+- You need to pin a specific dated `api-version` (only honoured here).
+- You're talking to a spec-strict resource that rejects the v1 GA path for a particular model deployment (observed for some GPT-5 deployments).
 
 OpenAI models support both Chat Completions (`/chat/completions`) and Responses API (`/responses`) paths. Non-OpenAI models are forced to use Chat Completions via an internal wrapper.
 
