@@ -14,6 +14,11 @@ func NormalizeToolMessages(msgs []Message) []Message {
 // ensureToolResultPairing ensures every assistant message with tool-call parts
 // has matching tool-result parts in following messages. Injects synthetic
 // "Tool execution aborted" results for orphaned tool-calls.
+//
+// Server-executed tool calls (e.g. Anthropic web_search) are skipped: their
+// result is delivered inline on the same assistant turn via the part's
+// ProviderOptions["resultBlock"], so no following tool-result message is
+// expected.
 func ensureToolResultPairing(msgs []Message) []Message {
 	for i := 0; i < len(msgs); i++ {
 		if msgs[i].Role != RoleAssistant {
@@ -22,6 +27,9 @@ func ensureToolResultPairing(msgs []Message) []Message {
 		var callIDs []string
 		for _, p := range msgs[i].Content {
 			if p.Type == PartToolCall && p.ToolCallID != "" {
+				if _, hasInlineResult := p.ProviderOptions["resultBlock"]; hasInlineResult {
+					continue
+				}
 				callIDs = append(callIDs, p.ToolCallID)
 			}
 		}

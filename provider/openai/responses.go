@@ -14,6 +14,24 @@ import (
 	"github.com/zendev-sh/goai/provider"
 )
 
+// serverExecutedItemTypes lists Responses API output item types that the
+// provider runs server-side (no client execution). When these items appear in
+// the response output, their full payload must round-trip on the assistant
+// turn so the model retains context across follow-up requests.
+var serverExecutedItemTypes = map[string]bool{
+	"web_search_call":       true,
+	"file_search_call":      true,
+	"code_interpreter_call": true,
+	"image_generation_call": true,
+	"local_shell_call":      true,
+	"mcp_call":              true,
+	"mcp_list_tools":        true,
+	"mcp_approval_request":  true,
+	"computer_call":         true,
+}
+
+func isServerExecutedItem(t string) bool { return serverExecutedItemTypes[t] }
+
 // buildResponsesRequest creates an OpenAI Responses API request body.
 func buildResponsesRequest(params provider.GenerateParams, modelID string, streaming bool) map[string]any {
 	body := map[string]any{
@@ -328,6 +346,13 @@ func convertToResponsesInput(msgs []provider.Message) []map[string]any {
 						textParts = append(textParts, part.Text)
 					}
 				case provider.PartToolCall:
+					// Server-executed tool items (web_search_call,
+					// file_search_call, ...) round-trip verbatim so the model
+					// sees the same context across turns.
+					if raw, ok := part.ProviderOptions["rawItem"].(map[string]any); ok {
+						items = append(items, raw)
+						break
+					}
 					items = append(items, map[string]any{
 						"type":      "function_call",
 						"call_id":   part.ToolCallID,
@@ -597,19 +622,45 @@ func streamResponses(ctx context.Context, body io.ReadCloser, out chan<- provide
 
 		case "response.output_item.done":
 			var ev struct {
-				OutputIndex int `json:"output_index"`
-				Item        struct {
-					Type string `json:"type"`
-				} `json:"item"`
+				OutputIndex int             `json:"output_index"`
+				Item        json.RawMessage `json:"item"`
 			}
 			if json.Unmarshal([]byte(data), &ev) == nil {
-				switch ev.Item.Type {
+				var itemHead struct {
+					Type string `json:"type"`
+				}
+				_ = json.Unmarshal(ev.Item, &itemHead)
+				switch itemHead.Type {
 				case "reasoning":
 					delete(activeReasoning, ev.OutputIndex)
 					if currentReasoningIdx == ev.OutputIndex {
 						currentReasoningIdx = -1
 					}
 				default:
+					if isServerExecutedItem(itemHead.Type) {
+						// Capture the full server-executed item payload and
+						// emit a ChunkToolCall so it round-trips into the
+						// assistant turn via ToolCall.Metadata.
+						var raw map[string]any
+						if err := json.Unmarshal(ev.Item, &raw); err == nil {
+							id, _ := raw["id"].(string)
+							name, _ := raw["name"].(string)
+							if name == "" {
+								name = itemHead.Type
+							}
+							if !provider.TrySend(ctx, out, provider.StreamChunk{
+								Type:       provider.ChunkToolCall,
+								ToolCallID: id,
+								ToolName:   name,
+								Metadata: map[string]any{
+									"providerExecuted": true,
+									"rawItem":          raw,
+								},
+							}) {
+								return
+							}
+						}
+					}
 					delete(activeTools, ev.OutputIndex)
 				}
 			}
@@ -879,6 +930,14 @@ func parseResponsesResult(body []byte) (*provider.GenerateResult, error) {
 		return nil, &goai.APIError{Message: resp.Error.Message, ResponseBody: string(body)}
 	}
 
+	// Side-channel raw parse so server-executed items (web_search_call etc.)
+	// can be round-tripped verbatim on the assistant turn -- the typed struct
+	// only models the subset of fields we explicitly consume.
+	var rawOutput struct {
+		Output []json.RawMessage `json:"output"`
+	}
+	_ = json.Unmarshal(body, &rawOutput)
+
 	result := &provider.GenerateResult{
 		Response: provider.ResponseMetadata{
 			ID:    resp.ID,
@@ -893,7 +952,7 @@ func parseResponsesResult(body []byte) (*provider.GenerateResult, error) {
 	providerMeta := map[string]any{}
 	var allLogprobs []any
 
-	for _, item := range resp.Output {
+	for i, item := range resp.Output {
 		switch item.Type {
 		case "message":
 			for _, c := range item.Content {
@@ -935,6 +994,25 @@ func parseResponsesResult(body []byte) (*provider.GenerateResult, error) {
 					providerMeta["reasoning"] = append(reasoning, map[string]any{
 						"type": s.Type,
 						"text": s.Text,
+					})
+				}
+			}
+		default:
+			if isServerExecutedItem(item.Type) && i < len(rawOutput.Output) {
+				var raw map[string]any
+				if err := json.Unmarshal(rawOutput.Output[i], &raw); err == nil {
+					id, _ := raw["id"].(string)
+					name, _ := raw["name"].(string)
+					if name == "" {
+						name = item.Type
+					}
+					result.ToolCalls = append(result.ToolCalls, provider.ToolCall{
+						ID:   id,
+						Name: name,
+						Metadata: map[string]any{
+							"providerExecuted": true,
+							"rawItem":          raw,
+						},
 					})
 				}
 			}
