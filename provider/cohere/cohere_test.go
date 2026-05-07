@@ -1854,6 +1854,27 @@ func TestParseChatStream_ContextCancel_AllBranches(t *testing.T) {
 		})
 	}
 
+	// Nested: tool-call-delta ChunkToolCallDelta TrySend cancel.
+	t.Run("tool_call_delta_cancel", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		out := make(chan provider.StreamChunk) // unbuffered
+
+		input := "data: {\"type\":\"tool-call-start\",\"delta\":{\"message\":{\"tool_calls\":{\"id\":\"t1\",\"function\":{\"name\":\"fn\"}}}}}\n" +
+			"data: {\"type\":\"tool-call-delta\",\"delta\":{\"message\":{\"tool_calls\":{\"function\":{\"arguments\":\"{}\"}}}}}\n"
+
+		done := make(chan struct{})
+		go func() {
+			parseChatStream(ctx, strings.NewReader(input), out)
+			close(done)
+		}()
+
+		<-out // tool start
+		cancel()
+		<-done
+		for range out {
+		}
+	})
+
 	// Nested: tool-call-end (line 710) requires tool-call-start TrySend to succeed first.
 	t.Run("tool_call_end_cancel", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())

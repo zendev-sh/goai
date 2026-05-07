@@ -3470,6 +3470,29 @@ func TestStreamResponses_ContextCancel_AllBranches(t *testing.T) {
 		}
 	})
 
+	// Nested: function_call_arguments.delta ChunkToolCall TrySend cancel
+	// (after the new ChunkToolCallDelta TrySend succeeds).
+	t.Run("function_call_args_toolcall_cancel", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		out := make(chan provider.StreamChunk) // unbuffered
+
+		input := line("response.output_item.added", `{"output_index":0,"item":{"type":"function_call","id":"fc1","call_id":"c1","name":"fn"}}`) +
+			line("response.function_call_arguments.delta", `{"output_index":0,"delta":"{}"}`)
+
+		done := make(chan struct{})
+		go func() {
+			streamResponses(ctx, io.NopCloser(strings.NewReader(input)), out)
+			close(done)
+		}()
+
+		<-out // function call start
+		<-out // ChunkToolCallDelta
+		cancel()
+		<-done
+		for range out {
+		}
+	})
+
 	// Nested: function_call_arguments.done flush (line 553)
 	t.Run("function_call_args_done_cancel", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
