@@ -93,11 +93,17 @@
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Reasoning text on results** | New `Reasoning` field on `TextResult`, `StepResult`, and `provider.GenerateResult`. Populated for both `GenerateText` and `StreamText` across Bedrock, Anthropic, OpenAI Responses, Google, Cohere, and OpenAI-compat (DeepSeek). |
 
-## v0.7.4 - Current release
+## v0.7.4
 
 | Feature                       | Description                                                                                                                                                                                                          |
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Azure v1 GA path fix**      | Drop the `api-version` query parameter on the v1 GA path (`/openai/v1{path}`) per Azure spec. Spec-strict resources rejected it with `"API version not supported"` (observed on gpt-5.5). Legacy deployment-based path still uses `api-version`; opt in via `WithDeploymentBasedURLs(true)` when an explicit dated version is required. |
+
+## v0.7.5 - Current release
+
+| Feature                                | Description                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Streaming tool-call delta forward**  | `provider/openai` (Responses API) and `provider/cohere` now emit `ChunkToolCallDelta` for each upstream argument fragment instead of buffering until the accumulated args parse as JSON. Enables progressive rendering of large tool inputs (e.g. `write.content`, `edit.edits[].newText`). Final `ChunkToolCall` semantics unchanged. (#56) |
 
 ### Planned
 
