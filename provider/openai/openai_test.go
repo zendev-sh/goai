@@ -425,10 +425,14 @@ func TestChat_Responses_ToolCalls(t *testing.T) {
 	}
 
 	var toolCalls []provider.StreamChunk
+	var toolDeltas []provider.StreamChunk
 	var finishReason provider.FinishReason
 	for chunk := range result.Stream {
 		if chunk.Type == provider.ChunkToolCall {
 			toolCalls = append(toolCalls, chunk)
+		}
+		if chunk.Type == provider.ChunkToolCallDelta {
+			toolDeltas = append(toolDeltas, chunk)
 		}
 		if chunk.Type == provider.ChunkStepFinish {
 			finishReason = chunk.FinishReason
@@ -446,6 +450,22 @@ func TestChat_Responses_ToolCalls(t *testing.T) {
 	}
 	if finishReason != provider.FinishToolCalls {
 		t.Errorf("FinishReason = %q, want %q", finishReason, provider.FinishToolCalls)
+	}
+
+	wantDeltas := []string{`{"path":`, `"a.txt"}`}
+	if len(toolDeltas) != len(wantDeltas) {
+		t.Fatalf("expected %d ChunkToolCallDelta, got %d", len(wantDeltas), len(toolDeltas))
+	}
+	for i, want := range wantDeltas {
+		if toolDeltas[i].ToolCallID != "tc1" {
+			t.Errorf("delta[%d].ToolCallID = %q, want %q", i, toolDeltas[i].ToolCallID, "tc1")
+		}
+		if toolDeltas[i].ToolName != "read" {
+			t.Errorf("delta[%d].ToolName = %q, want %q", i, toolDeltas[i].ToolName, "read")
+		}
+		if toolDeltas[i].ToolInput != want {
+			t.Errorf("delta[%d].ToolInput = %q, want %q", i, toolDeltas[i].ToolInput, want)
+		}
 	}
 }
 

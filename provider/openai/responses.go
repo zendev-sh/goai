@@ -553,6 +553,15 @@ func streamResponses(ctx context.Context, body io.ReadCloser, out chan<- provide
 				}
 				active.args.WriteString(ev.Delta)
 
+				if !provider.TrySend(ctx, out, provider.StreamChunk{
+					Type:       provider.ChunkToolCallDelta,
+					ToolCallID: active.id,
+					ToolName:   active.name,
+					ToolInput:  ev.Delta,
+				}) {
+					return
+				}
+
 				if accumulated := active.args.String(); json.Valid([]byte(accumulated)) {
 					if !provider.TrySend(ctx, out, provider.StreamChunk{
 						Type:       provider.ChunkToolCall,

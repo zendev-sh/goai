@@ -343,6 +343,7 @@ func TestStream_ToolCallEvents(t *testing.T) {
 	var gotToolStart bool
 	var gotToolCall bool
 	var gotFinish bool
+	var toolDeltas []provider.StreamChunk
 	for chunk := range result.Stream {
 		if chunk.Type == provider.ChunkToolCallStreamStart {
 			gotToolStart = true
@@ -352,6 +353,9 @@ func TestStream_ToolCallEvents(t *testing.T) {
 			if chunk.ToolCallID != "tc1" {
 				t.Errorf("ToolCallID = %q", chunk.ToolCallID)
 			}
+		}
+		if chunk.Type == provider.ChunkToolCallDelta {
+			toolDeltas = append(toolDeltas, chunk)
 		}
 		if chunk.Type == provider.ChunkToolCall {
 			gotToolCall = true
@@ -370,6 +374,22 @@ func TestStream_ToolCallEvents(t *testing.T) {
 			if chunk.FinishReason != provider.FinishToolCalls {
 				t.Errorf("FinishReason = %q", chunk.FinishReason)
 			}
+		}
+	}
+
+	wantDeltas := []string{`{"city"`, `: "Paris"}`}
+	if len(toolDeltas) != len(wantDeltas) {
+		t.Fatalf("expected %d ChunkToolCallDelta, got %d", len(wantDeltas), len(toolDeltas))
+	}
+	for i, want := range wantDeltas {
+		if toolDeltas[i].ToolCallID != "tc1" {
+			t.Errorf("delta[%d].ToolCallID = %q, want %q", i, toolDeltas[i].ToolCallID, "tc1")
+		}
+		if toolDeltas[i].ToolName != "get_weather" {
+			t.Errorf("delta[%d].ToolName = %q, want %q", i, toolDeltas[i].ToolName, "get_weather")
+		}
+		if toolDeltas[i].ToolInput != want {
+			t.Errorf("delta[%d].ToolInput = %q, want %q", i, toolDeltas[i].ToolInput, want)
 		}
 	}
 	if !gotToolStart {

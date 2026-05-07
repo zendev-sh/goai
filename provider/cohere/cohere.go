@@ -752,7 +752,18 @@ func parseChatStream(ctx context.Context, body io.Reader, out chan<- provider.St
 
 		case "tool-call-delta":
 			if pending != nil {
-				pending.args.WriteString(event.Delta.Message.ToolCalls.Function.Arguments)
+				frag := event.Delta.Message.ToolCalls.Function.Arguments
+				pending.args.WriteString(frag)
+				if frag != "" {
+					if !provider.TrySend(ctx, out, provider.StreamChunk{
+						Type:       provider.ChunkToolCallDelta,
+						ToolCallID: pending.id,
+						ToolName:   pending.name,
+						ToolInput:  frag,
+					}) {
+						return
+					}
+				}
 			}
 
 		case "tool-call-end":
