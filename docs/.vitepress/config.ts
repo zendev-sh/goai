@@ -92,6 +92,7 @@ export default defineConfig({
         items: [
           { text: 'GitHub', link: 'https://github.com/zendev-sh/goai' },
           { text: 'GoDoc', link: 'https://pkg.go.dev/github.com/zendev-sh/goai' },
+          { text: 'zenflow', link: 'https://zenflow.sh' },
         ],
       },
     ],
