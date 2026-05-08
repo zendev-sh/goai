@@ -13,3 +13,5 @@ des/
 *.key
 credentials*
 bedrock.test
+.zencode/
+testdata/
