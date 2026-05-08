@@ -99,11 +99,17 @@
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Azure v1 GA path fix**      | Drop the `api-version` query parameter on the v1 GA path (`/openai/v1{path}`) per Azure spec. Spec-strict resources rejected it with `"API version not supported"` (observed on gpt-5.5). Legacy deployment-based path still uses `api-version`; opt in via `WithDeploymentBasedURLs(true)` when an explicit dated version is required. |
 
-## v0.7.5 - Current release
+## v0.7.5
 
 | Feature                                | Description                                                                                                                                                                                                                                                                                                                            |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Streaming tool-call delta forward**  | `provider/openai` (Responses API) and `provider/cohere` now emit `ChunkToolCallDelta` for each upstream argument fragment instead of buffering until the accumulated args parse as JSON. Enables progressive rendering of large tool inputs (e.g. `write.content`, `edit.edits[].newText`). Final `ChunkToolCall` semantics unchanged. (#56) |
+
+## v0.7.6 - Current release
+
+| Feature                                  | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Server-executed tool calls round-trip** | Anthropic (`web_search`, `code_execution`, `web_fetch`, `mcp`) and OpenAI Responses (`web_search_call`, `file_search_call`, `code_interpreter_call`, `image_generation_call`, `local_shell_call`, `mcp_call`, `computer_call`) provider-executed tool results are now captured into `ToolCall.Metadata` and re-emitted verbatim when the assistant turn is serialized back, so multi-turn conversations no longer drop server search context or trip Anthropic's orphan-`tool_use` 400. New `bedrock.AnthropicChat` constructor routes Anthropic models through Bedrock InvokeModel / InvokeModelWithResponseStream so the anthropic provider's parsing applies. (#61) |
 
 ### Planned
 
