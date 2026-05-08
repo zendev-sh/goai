@@ -6063,3 +6063,32 @@ func TestBuildToolResults(t *testing.T) {
 		}
 	})
 }
+
+// TestIsProviderExecuted covers all branches of the helper that decides
+// whether a tool call was executed by the provider (Anthropic web_search,
+// OpenAI web_search_call, etc.) and therefore must skip the user-side
+// tool map lookup + tool-result message synthesis.
+func TestIsProviderExecuted(t *testing.T) {
+	cases := []struct {
+		name string
+		md   map[string]any
+		want bool
+	}{
+		{"nil metadata", nil, false},
+		{"empty metadata", map[string]any{}, false},
+		{"providerExecuted=true", map[string]any{"providerExecuted": true}, true},
+		{"providerExecuted=false", map[string]any{"providerExecuted": false}, false},
+		{"providerExecuted wrong type", map[string]any{"providerExecuted": "yes"}, false},
+		{"resultBlock attached", map[string]any{"resultBlock": map[string]any{"type": "web_search_tool_result"}}, true},
+		{"rawItem attached", map[string]any{"rawItem": map[string]any{"type": "web_search_call"}}, true},
+		{"unrelated metadata", map[string]any{"reasoning": "foo"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isProviderExecuted(provider.ToolCall{Metadata: tc.md})
+			if got != tc.want {
+				t.Errorf("isProviderExecuted(%v) = %v, want %v", tc.md, got, tc.want)
+			}
+		})
+	}
+}

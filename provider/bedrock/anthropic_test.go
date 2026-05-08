@@ -268,3 +268,173 @@ func TestAnthropicChat_BetaFolding(t *testing.T) {
 
 // Ensure base64.StdEncoding is referenced (test file for clarity).
 var _ = base64.StdEncoding
+
+// TestAnthropicChat_BearerAuth covers the bearer-token branch of the
+// SigV4/bearer transport: when WithBearerToken is set the transport sends
+// "Authorization: Bearer ..." instead of signing.
+func TestAnthropicChat_BearerAuth(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got := r.Header.Get("Authorization")
+		if got != "Bearer test-bedrock-token" {
+			t.Errorf("Authorization = %q, want Bearer test-bedrock-token", got)
+		}
+		// SigV4 headers should be absent.
+		if r.Header.Get("X-Amz-Date") != "" {
+			t.Error("X-Amz-Date should be absent on bearer-auth requests")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"m","model":"t","type":"message","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer server.Close()
+
+	model := AnthropicChat("test-model.v1:0",
+		WithBearerToken("test-bedrock-token"),
+		WithRegion("us-east-1"),
+		WithBaseURL(server.URL),
+	)
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DoGenerate: %v", err)
+	}
+}
+
+// TestAnthropicChat_HTTPError covers the non-200 path: Bedrock returns an
+// error body, the anthropic provider surfaces it as an APIError tagged with
+// the bedrock-anthropic provider name (set by WithErrorProvider).
+func TestAnthropicChat_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprint(w, `{"message":"The provided request is not valid"}`)
+	}))
+	defer server.Close()
+
+	model := AnthropicChat("test-model.v1:0",
+		WithAccessKey("AKIA00000000"),
+		WithSecretKey("testsecret"),
+		WithRegion("us-east-1"),
+		WithBaseURL(server.URL),
+	)
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not valid") {
+		t.Errorf("error = %q, want substring 'not valid'", err.Error())
+	}
+}
+
+// TestAnthropicChat_HeadersPassthrough verifies WithHeaders adds custom
+// headers to the request (still wrapped by SigV4 signing).
+func TestAnthropicChat_HeadersPassthrough(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Custom"); got != "yes" {
+			t.Errorf("X-Custom = %q, want yes", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"m","model":"t","type":"message","content":[{"type":"text","text":""}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":0}}`)
+	}))
+	defer server.Close()
+
+	model := AnthropicChat("test-model.v1:0",
+		WithAccessKey("AKIA00000000"),
+		WithSecretKey("testsecret"),
+		WithRegion("us-east-1"),
+		WithBaseURL(server.URL),
+		WithHeaders(map[string]string{"X-Custom": "yes"}),
+	)
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DoGenerate: %v", err)
+	}
+}
+
+// TestEventStreamSSEReader_ExceptionFrame covers the "exception" / "error"
+// MessageType branch of the translator: such frames are re-emitted as
+// SSE error events so the anthropic provider's parseSSE can classify them.
+func TestEventStreamSSEReader_ExceptionFrame(t *testing.T) {
+	exceptionPayload := []byte(`{"message":"throttled"}`)
+	frame := buildEventStreamFrame("ThrottlingException", exceptionPayload)
+	// Manually rewrite :message-type to "exception".
+	// buildEventStreamFrame defaults to "event"; we need an exception frame.
+	// Build one inline with the helper's primitives instead.
+	headers := buildStringHeader(":message-type", "exception")
+	headers = append(headers, buildStringHeader(":exception-type", "ThrottlingException")...)
+	headers = append(headers, buildStringHeader(":content-type", "application/json")...)
+	headersLen := uint32(len(headers))
+	totalLen := uint32(12 + int(headersLen) + len(exceptionPayload) + 4)
+	var buf strings.Builder
+	writeBE := func(v uint32) {
+		buf.WriteByte(byte(v >> 24))
+		buf.WriteByte(byte(v >> 16))
+		buf.WriteByte(byte(v >> 8))
+		buf.WriteByte(byte(v))
+	}
+	writeBE(totalLen)
+	writeBE(headersLen)
+	prelude := []byte(buf.String())
+	preludeCRC := crc32IEEE(prelude)
+	writeBE(preludeCRC)
+	buf.Write(headers)
+	buf.Write(exceptionPayload)
+	all := []byte(buf.String())
+	msgCRC := crc32IEEE(all)
+	writeBE(msgCRC)
+
+	r := newEventStreamSSEReader(io.NopCloser(strings.NewReader(buf.String())))
+	out, _ := io.ReadAll(r)
+	got := string(out)
+	if !strings.Contains(got, "event: error") {
+		t.Errorf("translated = %q, want substring 'event: error'", got)
+	}
+	if !strings.Contains(got, "throttled") {
+		t.Errorf("translated = %q, want substring 'throttled'", got)
+	}
+	_ = frame // unused but keeps the reference
+}
+
+func crc32IEEE(b []byte) uint32 {
+	var sum uint32 = 0xffffffff
+	for _, c := range b {
+		sum ^= uint32(c)
+		for range 8 {
+			if sum&1 != 0 {
+				sum = (sum >> 1) ^ 0xedb88320
+			} else {
+				sum >>= 1
+			}
+		}
+	}
+	return ^sum
+}
+
+// TestEventStreamSSEReader_Close ensures Close() proxies to the wrapped reader.
+func TestEventStreamSSEReader_Close(t *testing.T) {
+	tr := &trackingReadCloser{src: strings.NewReader("")}
+	r := newEventStreamSSEReader(tr)
+	if err := r.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+	if !tr.closed {
+		t.Error("Close did not propagate to source")
+	}
+}
+
+type trackingReadCloser struct {
+	src    io.Reader
+	closed bool
+}
+
+func (t *trackingReadCloser) Read(p []byte) (int, error) { return t.src.Read(p) }
+func (t *trackingReadCloser) Close() error               { t.closed = true; return nil }
