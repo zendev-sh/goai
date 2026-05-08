@@ -621,14 +621,29 @@ func convertMessages(msgs []provider.Message) []map[string]any {
 				if input == nil {
 					input = map[string]any{}
 				}
+				// Server-executed tools (e.g. web_search) carry the matched
+				// result block via ProviderOptions["resultBlock"]. Emit
+				// "server_tool_use" instead of "tool_use" so the API
+				// recognizes the pairing, then append the raw result block.
+				resultBlock, _ := part.ProviderOptions["resultBlock"].(map[string]any)
+				toolUseType := "tool_use"
+				if resultBlock != nil {
+					toolUseType = "server_tool_use"
+				}
 				p := map[string]any{
-					"type":  "tool_use",
+					"type":  toolUseType,
 					"id":    part.ToolCallID,
 					"name":  part.ToolName,
 					"input": input,
 				}
-				applyCacheControl(p, part.CacheControl, msgCacheControl, isLast)
+				if resultBlock == nil {
+					applyCacheControl(p, part.CacheControl, msgCacheControl, isLast)
+				}
 				content = append(content, p)
+				if resultBlock != nil {
+					applyCacheControl(resultBlock, part.CacheControl, msgCacheControl, isLast)
+					content = append(content, resultBlock)
+				}
 
 			case provider.PartToolResult:
 				p := map[string]any{
@@ -769,9 +784,38 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 	var isRFBlock bool                  // true when current tool_use block is the synthetic response format tool
 	var isFirstDelta bool               // true for first input_json_delta of a tool_use block
 	var isServerTool bool               // true when current block is server_tool_use
+	var isResultBlock bool              // true when current block is a server tool result (e.g. web_search_tool_result)
 	var usage provider.Usage
 	var responseMeta provider.ResponseMetadata
 	var finishMeta map[string]any // metadata accumulated for ChunkFinish
+
+	// Pending server_tool_use ChunkToolCall: deferred so we can attach the
+	// matching result block (which arrives in the next content_block) before
+	// emitting. See parseResponse for the non-streaming equivalent.
+	var pendingHasCall bool
+	var pendingCallID, pendingCallName string
+	var pendingCallArgs string
+	var capturedResultBlock map[string]any
+
+	flushPendingCall := func() bool {
+		if !pendingHasCall {
+			return true
+		}
+		args := cmp.Or(pendingCallArgs, "{}")
+		chunk := provider.StreamChunk{
+			Type:       provider.ChunkToolCall,
+			ToolCallID: pendingCallID,
+			ToolName:   pendingCallName,
+			ToolInput:  args,
+		}
+		if capturedResultBlock != nil {
+			chunk.Metadata = map[string]any{"resultBlock": capturedResultBlock}
+		}
+		pendingHasCall = false
+		pendingCallID, pendingCallName, pendingCallArgs = "", "", ""
+		capturedResultBlock = nil
+		return provider.TrySend(ctx, out, chunk)
+	}
 
 	for data, ok := sseScanner.Next(); ok; data, ok = sseScanner.Next() {
 
@@ -807,6 +851,15 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 		case "content_block_start":
 			if cb, ok := event["content_block"].(map[string]any); ok {
 				cbType, _ := cb["type"].(string)
+				isResultBlock = false
+				// If a pending server_tool_use awaits a result block and the
+				// next block is NOT its matching result, flush it without
+				// resultBlock attached.
+				if pendingHasCall && !isServerToolResultBlock(cbType) {
+					if !flushPendingCall() {
+						return
+					}
+				}
 				switch cbType {
 				case "tool_use":
 					currentToolCallID, _ = cb["id"].(string)
@@ -835,6 +888,20 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 						ToolName:   currentToolName,
 					}) {
 						return
+					}
+				default:
+					if isServerToolResultBlock(cbType) {
+						isResultBlock = true
+						if pendingHasCall {
+							// Anthropic emits the full result block in
+							// content_block_start (no input_json_delta for
+							// these). Capture verbatim for round-trip when
+							// tool_use_id matches the pending call.
+							useID, _ := cb["tool_use_id"].(string)
+							if useID == pendingCallID {
+								capturedResultBlock = cb
+							}
+						}
 					}
 				}
 			}
@@ -919,7 +986,23 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 			}
 
 		case "content_block_stop":
-			if currentToolCallID != "" && !isRFBlock {
+			switch {
+			case isResultBlock:
+				// End of a server tool result block. Flush the deferred
+				// server_tool_use ChunkToolCall with resultBlock attached.
+				if !flushPendingCall() {
+					return
+				}
+				isResultBlock = false
+			case isServerTool && currentToolCallID != "":
+				// Defer ChunkToolCall emission so we can attach the matching
+				// result block (next content_block) before flushing.
+				pendingHasCall = true
+				pendingCallID = currentToolCallID
+				pendingCallName = currentToolName
+				pendingCallArgs = currentToolArgs.String()
+				currentToolArgs.Reset()
+			case currentToolCallID != "" && !isRFBlock:
 				// Emit accumulated tool call with complete JSON args.
 				args := cmp.Or(currentToolArgs.String(), "{}")
 				if !provider.TrySend(ctx, out, provider.StreamChunk{
@@ -942,6 +1025,11 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 		case "message_delta":
 			if delta, ok := event["delta"].(map[string]any); ok {
 				if sr, ok := delta["stop_reason"].(string); ok {
+					// Flush any pending server tool call before signalling
+					// step finish so consumers see the ChunkToolCall first.
+					if !flushPendingCall() {
+						return
+					}
 					fr := mapFinishReason(sr)
 					// In RF mode, tool_use finish → stop (we consumed the tool as text).
 					if isRFMode && fr == provider.FinishToolCalls {
@@ -1008,6 +1096,10 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 			}
 
 		case "message_stop":
+			// Flush pending server tool call without resultBlock if none arrived.
+			if !flushPendingCall() {
+				return
+			}
 			usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 			if !provider.TrySend(ctx, out, provider.StreamChunk{
 				Type:     provider.ChunkFinish,
@@ -1039,6 +1131,7 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 		return
 	}
 	// Clean EOF without message_stop: emit finish with accumulated usage and response meta.
+	_ = flushPendingCall()
 	usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 	provider.TrySend(ctx, out, provider.StreamChunk{
 		Type:     provider.ChunkFinish,
@@ -1085,6 +1178,23 @@ func mapFinishReason(reason string) provider.FinishReason {
 
 // --- Non-streaming response parsing ---
 
+// serverToolResultBlockTypes lists Anthropic block types that pair with a
+// server_tool_use as the matched result. They must be round-tripped on the
+// assistant turn -- omitting them causes the API to reject re-sent transcripts
+// with "tool_use ids were found without `tool_result` blocks".
+var serverToolResultBlockTypes = map[string]bool{
+	"web_search_tool_result":                true,
+	"web_fetch_tool_result":                 true,
+	"code_execution_tool_result":            true,
+	"bash_code_execution_tool_result":       true,
+	"text_editor_code_execution_tool_result": true,
+	"mcp_tool_result":                       true,
+}
+
+func isServerToolResultBlock(t string) bool {
+	return serverToolResultBlockTypes[t]
+}
+
 func parseResponse(body []byte) (*provider.GenerateResult, error) {
 	var resp struct {
 		ID      string `json:"id"`
@@ -1099,6 +1209,7 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 			Thinking  string          `json:"thinking,omitempty"`
 			Signature string          `json:"signature,omitempty"`
 			Data      string          `json:"data,omitempty"` // redacted_thinking
+			ToolUseID string          `json:"tool_use_id,omitempty"` // for server tool result blocks
 			Citations []struct {
 				Type            string  `json:"type"`
 				CitedText       string  `json:"cited_text"`
@@ -1150,6 +1261,17 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 		return nil, fmt.Errorf("parsing anthropic response: %w", err)
 	}
 
+	// Side-channel raw parse of content blocks: server tool result blocks
+	// (e.g. web_search_tool_result) carry provider-specific payloads we cannot
+	// fully model in our typed struct. We preserve them verbatim so they can
+	// be round-tripped on the assistant turn (Anthropic's API rejects
+	// transcripts where a server_tool_use is not immediately followed by its
+	// result block).
+	var rawContent struct {
+		Content []json.RawMessage `json:"content"`
+	}
+	_ = json.Unmarshal(body, &rawContent)
+
 	// Handle error response.
 	if resp.Error != nil {
 		if goai.IsOverflow(resp.Error.Message) {
@@ -1173,7 +1295,10 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 	var textParts []string
 	var reasoningParts []string
 	var providerMeta map[string]any
-	for _, block := range resp.Content {
+	// Index of the last server_tool_use ToolCall, for attaching the matching
+	// result block when it appears immediately after.
+	lastServerToolIdx := -1
+	for i, block := range resp.Content {
 		switch block.Type {
 		case "text":
 			if block.Text != "" {
@@ -1243,6 +1368,25 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 				Name:  block.Name,
 				Input: block.Input,
 			})
+			if block.Type == "server_tool_use" {
+				lastServerToolIdx = len(result.ToolCalls) - 1
+			} else {
+				lastServerToolIdx = -1
+			}
+		default:
+			if isServerToolResultBlock(block.Type) && lastServerToolIdx >= 0 && i < len(rawContent.Content) {
+				// Decode raw block as map[string]any so the request serializer
+				// can re-emit it verbatim alongside the matching server_tool_use.
+				var rb map[string]any
+				if err := json.Unmarshal(rawContent.Content[i], &rb); err == nil {
+					tc := &result.ToolCalls[lastServerToolIdx]
+					if tc.Metadata == nil {
+						tc.Metadata = map[string]any{}
+					}
+					tc.Metadata["resultBlock"] = rb
+				}
+				lastServerToolIdx = -1
+			}
 		}
 	}
 	result.Text = strings.Join(textParts, "")

@@ -1480,6 +1480,30 @@ func requestMessages(system string, msgs []provider.Message) []provider.Message 
 	return append(out, msgs...)
 }
 
+// isProviderExecuted reports whether a tool call was executed by the provider
+// (e.g. Anthropic web_search, OpenAI web_search_call). The provider returns
+// the result inline on the assistant turn, so goai must not look it up in
+// the user's tool map or synthesize a tool-result message for it.
+//
+// Providers mark these calls by setting tc.Metadata["providerExecuted"] = true
+// (or by attaching a non-nil "resultBlock" / "rawItem" payload that the
+// request serializer re-emits verbatim).
+func isProviderExecuted(tc provider.ToolCall) bool {
+	if tc.Metadata == nil {
+		return false
+	}
+	if v, ok := tc.Metadata["providerExecuted"].(bool); ok && v {
+		return true
+	}
+	if _, ok := tc.Metadata["resultBlock"]; ok {
+		return true
+	}
+	if _, ok := tc.Metadata["rawItem"]; ok {
+		return true
+	}
+	return false
+}
+
 // buildToolMap creates a name→Tool lookup from the options.
 func buildToolMap(tools []Tool) map[string]Tool {
 	if len(tools) == 0 {
@@ -1530,6 +1554,14 @@ func executeToolsParallel(
 	var wg sync.WaitGroup
 
 	for i, tc := range calls {
+		// Server-executed tool calls (e.g. Anthropic web_search, OpenAI
+		// web_search_call) are run by the provider itself; their results are
+		// already inline on the assistant turn. They have no Execute and must
+		// not be looked up in toolMap or surfaced as unknown-tool errors.
+		if isProviderExecuted(tc) {
+			results[i] = toolOutput{index: i, result: ""}
+			continue
+		}
 		tool, ok := toolMap[tc.Name]
 		if !ok {
 			// Unknown tool: fire OnToolCallStart + OnToolCall with ErrUnknownTool.
@@ -1797,6 +1829,11 @@ func buildToolResults(calls []provider.ToolCall, results []toolOutput) []provide
 func buildToolMessages(calls []provider.ToolCall, results []toolOutput) []provider.Message {
 	msgs := make([]provider.Message, 0, len(calls))
 	for i, tc := range calls {
+		// Server-executed calls have no separate tool message; their result
+		// is delivered inline on the assistant turn.
+		if isProviderExecuted(tc) {
+			continue
+		}
 		r := results[i]
 		if r.err != nil {
 			errStr := r.err.Error()
