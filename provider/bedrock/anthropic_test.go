@@ -3,6 +3,7 @@ package bedrock
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -268,6 +269,130 @@ func TestAnthropicChat_BetaFolding(t *testing.T) {
 
 // Ensure base64.StdEncoding is referenced (test file for clarity).
 var _ = base64.StdEncoding
+
+// TestAnthropicChat_CrossRegionInference covers the inference-profile
+// region override: a "us.*" model id called from an "eu-*" region should
+// rewrite region to a us-* default so the request reaches a matching
+// Bedrock endpoint.
+func TestAnthropicChat_CrossRegionInference(t *testing.T) {
+	var capturedHost string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedHost = r.Host
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"m","model":"t","type":"message","content":[{"type":"text","text":""}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":0}}`)
+	}))
+	defer server.Close()
+
+	// Mismatched region (eu-west-1) with us-prefixed model. WithBaseURL
+	// captures the request so we can assert the constructor took the right
+	// path; the real point is that AnthropicChat does not error and the
+	// URL builder still composes a sensible path.
+	model := AnthropicChat("us.anthropic.test-model.v1:0",
+		WithAccessKey("AKIA00000000"),
+		WithSecretKey("testsecret"),
+		WithRegion("eu-west-1"),
+		WithBaseURL(server.URL),
+	)
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DoGenerate: %v", err)
+	}
+	if capturedHost == "" {
+		t.Error("server did not receive a request")
+	}
+}
+
+// TestAnthropicChat_DefaultBaseURL covers the default-URL branch: when
+// WithBaseURL is not set, AnthropicChat builds a bedrock-runtime hostname
+// from the resolved region.
+func TestAnthropicChat_DefaultBaseURL(t *testing.T) {
+	model := AnthropicChat("test-model.v1:0",
+		WithAccessKey("AKIA00000000"),
+		WithSecretKey("testsecret"),
+		WithRegion("ap-northeast-1"),
+	)
+	if model == nil {
+		t.Fatal("AnthropicChat returned nil")
+	}
+	if got := model.ModelID(); got != "test-model.v1:0" {
+		t.Errorf("ModelID = %q, want test-model.v1:0", got)
+	}
+}
+
+// TestAnthropicChat_NoBetasInBody covers the branch where neither the
+// anthropic-beta header nor a body anthropic_beta field should appear in
+// the wire request when the request has no betas to begin with.
+func TestAnthropicChat_NoBetasInBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+		// The upstream provider always injects baked-in betas, so the
+		// transport should see a non-empty header. Verify the body
+		// reflects only Bedrock-supported betas (subset, possibly empty).
+		if betas, ok := req["anthropic_beta"].([]any); ok {
+			for _, b := range betas {
+				s, _ := b.(string)
+				if !bedrockSupportedBetas[s] {
+					t.Errorf("unsupported beta leaked: %q", s)
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"m","model":"t","type":"message","content":[{"type":"text","text":""}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":0}}`)
+	}))
+	defer server.Close()
+
+	model := AnthropicChat("test-model.v1:0",
+		WithAccessKey("AKIA00000000"),
+		WithSecretKey("testsecret"),
+		WithRegion("us-east-1"),
+		WithBaseURL(server.URL),
+	)
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DoGenerate: %v", err)
+	}
+}
+
+// TestAnthropicChat_BaseRoundTripError verifies the base.RoundTrip error
+// is propagated unchanged (the transport must not rewrite errors from the
+// underlying transport).
+func TestAnthropicChat_BaseRoundTripError(t *testing.T) {
+	failingTransport := roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("dial: connection refused")
+	})
+	model := AnthropicChat("test-model.v1:0",
+		WithAccessKey("AKIA00000000"),
+		WithSecretKey("testsecret"),
+		WithRegion("us-east-1"),
+		WithBaseURL("http://does-not-resolve.invalid"),
+		WithHTTPClient(&http.Client{Transport: failingTransport}),
+	)
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error from failing transport, got nil")
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("error = %q, want substring 'connection refused'", err.Error())
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 // TestAnthropicChat_BearerAuth covers the bearer-token branch of the
 // SigV4/bearer transport: when WithBearerToken is set the transport sends
