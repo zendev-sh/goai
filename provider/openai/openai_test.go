@@ -3790,3 +3790,136 @@ func TestChat_DoGenerate_PromptCachingWarning(t *testing.T) {
 		t.Errorf("Text = %q, want ok", result.Text)
 	}
 }
+
+// --- Responses API server-executed tool round-trip ---
+
+// TestChat_Responses_Generate_ServerToolRoundTrip verifies that Responses API
+// server-executed items (web_search_call, file_search_call, ...) are captured
+// into ToolCall.Metadata so they survive a multi-turn round-trip.
+func TestChat_Responses_Generate_ServerToolRoundTrip(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{
+			"id": "resp-srv-1",
+			"model": "test-model",
+			"status": "completed",
+			"output": [
+				{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"search","query":"go 1.26"}},
+				{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Go 1.26 was released."}]}
+			],
+			"usage": {"input_tokens": 10, "output_tokens": 5}
+		}`)
+	}))
+	defer server.Close()
+
+	model := Chat("test-model", WithAPIKey("k"), WithBaseURL(server.URL))
+	result, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "what's new in go?"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls = %d, want 1", len(result.ToolCalls))
+	}
+	tc := result.ToolCalls[0]
+	if tc.ID != "ws_1" || tc.Name != "web_search_call" {
+		t.Errorf("ToolCall = %+v, want id=ws_1 name=web_search_call", tc)
+	}
+	if exec, _ := tc.Metadata["providerExecuted"].(bool); !exec {
+		t.Errorf("Metadata[providerExecuted] = false, want true")
+	}
+	raw, _ := tc.Metadata["rawItem"].(map[string]any)
+	if raw["type"] != "web_search_call" {
+		t.Errorf("rawItem type = %v, want web_search_call", raw["type"])
+	}
+}
+
+// TestChat_Responses_Stream_ServerToolRoundTrip is the streaming counterpart.
+func TestChat_Responses_Stream_ServerToolRoundTrip(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: response.output_item.added\n")
+		_, _ = fmt.Fprint(w, `data: {"output_index":0,"item":{"type":"web_search_call","id":"ws_1"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, "event: response.output_item.done\n")
+		_, _ = fmt.Fprint(w, `data: {"output_index":0,"item":{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"search","query":"go 1.26"}}}`+"\n\n")
+		_, _ = fmt.Fprint(w, "event: response.output_text.delta\n")
+		_, _ = fmt.Fprint(w, `data: {"delta":"Go 1.26 was released."}`+"\n\n")
+		_, _ = fmt.Fprint(w, "event: response.completed\n")
+		_, _ = fmt.Fprint(w, `data: {"response":{"id":"resp_1","model":"test-model","usage":{"input_tokens":10,"output_tokens":5}}}`+"\n\n")
+	}))
+	defer server.Close()
+
+	model := Chat("test-model", WithAPIKey("k"), WithBaseURL(server.URL))
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "what's new?"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var sawToolCall provider.StreamChunk
+	for chunk := range result.Stream {
+		if chunk.Type == provider.ChunkToolCall {
+			sawToolCall = chunk
+		}
+	}
+	if sawToolCall.ToolCallID != "ws_1" {
+		t.Fatalf("ChunkToolCall ID = %q, want ws_1", sawToolCall.ToolCallID)
+	}
+	if exec, _ := sawToolCall.Metadata["providerExecuted"].(bool); !exec {
+		t.Errorf("Metadata[providerExecuted] = false, want true")
+	}
+	raw, _ := sawToolCall.Metadata["rawItem"].(map[string]any)
+	if raw["type"] != "web_search_call" {
+		t.Errorf("rawItem type = %v, want web_search_call", raw["type"])
+	}
+	if raw["id"] != "ws_1" {
+		t.Errorf("rawItem id = %v, want ws_1", raw["id"])
+	}
+}
+
+// TestConvertToResponsesInput_ServerToolItem verifies that an assistant
+// PartToolCall carrying ProviderOptions["rawItem"] is re-emitted verbatim
+// instead of being shaped as a function_call.
+func TestConvertToResponsesInput_ServerToolItem(t *testing.T) {
+	rawItem := map[string]any{
+		"type":   "web_search_call",
+		"id":     "ws_1",
+		"status": "completed",
+		"action": map[string]any{"type": "search", "query": "go 1.26"},
+	}
+	input := convertToResponsesInput([]provider.Message{
+		{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "search"}}},
+		{Role: provider.RoleAssistant, Content: []provider.Part{
+			{Type: provider.PartText, Text: "Searching..."},
+			{
+				Type:            provider.PartToolCall,
+				ToolCallID:      "ws_1",
+				ToolName:        "web_search_call",
+				ProviderOptions: map[string]any{"providerExecuted": true, "rawItem": rawItem},
+			},
+		}},
+	})
+
+	var sawWebSearch bool
+	for _, item := range input {
+		if item["type"] == "web_search_call" {
+			sawWebSearch = true
+			if item["id"] != "ws_1" {
+				t.Errorf("web_search_call id = %v, want ws_1", item["id"])
+			}
+			if _, hasFunctionCallShape := item["call_id"]; hasFunctionCallShape {
+				t.Error("web_search_call should not be reshaped as function_call")
+			}
+		}
+	}
+	if !sawWebSearch {
+		t.Errorf("expected web_search_call item in serialized input, got: %+v", input)
+	}
+}
+

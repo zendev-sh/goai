@@ -6063,3 +6063,78 @@ func TestBuildToolResults(t *testing.T) {
 		}
 	})
 }
+
+// TestIsProviderExecuted covers all branches of the helper that decides
+// whether a tool call was executed by the provider (Anthropic web_search,
+// OpenAI web_search_call, etc.) and therefore must skip the user-side
+// tool map lookup + tool-result message synthesis.
+func TestIsProviderExecuted(t *testing.T) {
+	cases := []struct {
+		name string
+		md   map[string]any
+		want bool
+	}{
+		{"nil metadata", nil, false},
+		{"empty metadata", map[string]any{}, false},
+		{"providerExecuted=true", map[string]any{"providerExecuted": true}, true},
+		{"providerExecuted=false", map[string]any{"providerExecuted": false}, false},
+		{"providerExecuted wrong type", map[string]any{"providerExecuted": "yes"}, false},
+		{"resultBlock attached", map[string]any{"resultBlock": map[string]any{"type": "web_search_tool_result"}}, true},
+		{"rawItem attached", map[string]any{"rawItem": map[string]any{"type": "web_search_call"}}, true},
+		{"unrelated metadata", map[string]any{"reasoning": "foo"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isProviderExecuted(provider.ToolCall{Metadata: tc.md})
+			if got != tc.want {
+				t.Errorf("isProviderExecuted(%v) = %v, want %v", tc.md, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestExecuteToolsParallel_SkipsProviderExecuted verifies that server-executed
+// tool calls (Metadata["providerExecuted"]=true) are not looked up in the
+// toolMap and therefore do NOT produce a synthetic ErrUnknownTool result --
+// their inline result on the assistant turn is the source of truth.
+func TestExecuteToolsParallel_SkipsProviderExecuted(t *testing.T) {
+	echoTool := Tool{
+		Name:        "echo",
+		Description: "echo",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+		Execute: func(ctx context.Context, input json.RawMessage) (string, error) {
+			return "echoed", nil
+		},
+	}
+	toolMap := map[string]Tool{"echo": echoTool}
+
+	calls := []provider.ToolCall{
+		{ID: "srvtoolu_1", Name: "web_search", Metadata: map[string]any{
+			"providerExecuted": true,
+			"resultBlock":      map[string]any{"type": "web_search_tool_result"},
+		}},
+		{ID: "tc2", Name: "echo", Input: json.RawMessage(`{}`)},
+	}
+
+	msgs, results := executeToolsParallel(t.Context(), calls, toolMap, 1, toolHooks{})
+
+	// Only the echo client tool should produce a tool message; server-executed
+	// calls don't get a separate tool-result message.
+	if len(msgs) != 1 {
+		t.Fatalf("len(msgs) = %d, want 1 (server tool skipped)", len(msgs))
+	}
+	if msgs[0].Content[0].ToolCallID != "tc2" {
+		t.Errorf("tool message id = %q, want tc2", msgs[0].Content[0].ToolCallID)
+	}
+	// Both ToolResult entries are returned for completeness, but the
+	// server-executed entry must not carry the unknown-tool error.
+	if len(results) != 2 {
+		t.Fatalf("len(results) = %d, want 2", len(results))
+	}
+	if results[0].IsError {
+		t.Errorf("server-executed result should not be an error: %+v", results[0])
+	}
+	if results[1].Output != "echoed" {
+		t.Errorf("client tool result = %q, want echoed", results[1].Output)
+	}
+}

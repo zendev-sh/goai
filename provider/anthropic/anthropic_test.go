@@ -2887,3 +2887,189 @@ func TestWithSkipEnvResolve(t *testing.T) {
 		t.Errorf("baseURL = %q, want %q", model.opts.baseURL, defaultBaseURL)
 	}
 }
+
+// --- Server-side tool round-trip (web_search, code_execution, ...) ---
+
+// TestChat_Generate_ServerToolResultRoundTrip verifies that web_search_tool_result
+// (and similar server-executed tool result blocks) are captured into the
+// matching ToolCall.Metadata so they survive a multi-turn round-trip.
+// Regression for the issue where re-sending ResponseMessages containing a
+// server_tool_use (e.g. web_search) without its inline result was rejected
+// by the API as "tool_use ids were found without `tool_result` blocks".
+func TestChat_Generate_ServerToolResultRoundTrip(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{
+			"id": "msg_srv1",
+			"model": "sonnet-test-model",
+			"type": "message",
+			"content": [
+				{"type": "text", "text": "Searching..."},
+				{"type": "server_tool_use", "id": "srvtoolu_abc", "name": "web_search", "input": {"query": "go 1.26"}},
+				{"type": "web_search_tool_result", "tool_use_id": "srvtoolu_abc", "content": [
+					{"type": "web_search_result", "url": "https://example.com", "title": "Go 1.26 release", "encrypted_content": "xxx"}
+				]},
+				{"type": "text", "text": "Go 1.26 was released in 2026."}
+			],
+			"stop_reason": "end_turn",
+			"usage": {"input_tokens": 30, "output_tokens": 40}
+		}`)
+	}))
+	defer server.Close()
+
+	model := Chat("sonnet-test-model", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	result, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "what's new in go?"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls = %d, want 1", len(result.ToolCalls))
+	}
+	tc := result.ToolCalls[0]
+	if tc.ID != "srvtoolu_abc" || tc.Name != "web_search" {
+		t.Errorf("ToolCall = %+v, want srvtoolu_abc/web_search", tc)
+	}
+	rb, ok := tc.Metadata["resultBlock"].(map[string]any)
+	if !ok {
+		t.Fatalf("ToolCall.Metadata[resultBlock] missing or wrong type: %T", tc.Metadata["resultBlock"])
+	}
+	if rb["type"] != "web_search_tool_result" {
+		t.Errorf("resultBlock type = %v, want web_search_tool_result", rb["type"])
+	}
+	if rb["tool_use_id"] != "srvtoolu_abc" {
+		t.Errorf("resultBlock tool_use_id = %v, want srvtoolu_abc", rb["tool_use_id"])
+	}
+}
+
+// TestChat_Stream_ServerToolResultRoundTrip is the streaming counterpart to
+// TestChat_Generate_ServerToolResultRoundTrip.
+func TestChat_Stream_ServerToolResultRoundTrip(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_start","message":{"id":"msg_srv2","model":"sonnet-test-model","usage":{"input_tokens":30}}}`+"\n\n")
+		// Index 0: text
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Searching..."}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
+		// Index 1: server_tool_use
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_abc","name":"web_search"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"go 1.26\"}"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":1}`+"\n\n")
+		// Index 2: web_search_tool_result (full block in start, no deltas)
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_abc","content":[{"type":"web_search_result","url":"https://example.com","title":"Go 1.26 release","encrypted_content":"xxx"}]}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":2}`+"\n\n")
+		// Index 3: text follow-up
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"Go 1.26 was released in 2026."}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":3}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":40}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
+	}))
+	defer server.Close()
+
+	model := Chat("sonnet-test-model", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "what's new in go?"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var sawToolCall provider.StreamChunk
+	for chunk := range result.Stream {
+		if chunk.Type == provider.ChunkToolCall {
+			sawToolCall = chunk
+		}
+	}
+	if sawToolCall.ToolCallID != "srvtoolu_abc" {
+		t.Fatalf("ChunkToolCall ID = %q, want srvtoolu_abc", sawToolCall.ToolCallID)
+	}
+	rb, ok := sawToolCall.Metadata["resultBlock"].(map[string]any)
+	if !ok {
+		t.Fatalf("ChunkToolCall.Metadata[resultBlock] missing: %v", sawToolCall.Metadata)
+	}
+	if rb["type"] != "web_search_tool_result" {
+		t.Errorf("resultBlock type = %v, want web_search_tool_result", rb["type"])
+	}
+	if rb["tool_use_id"] != "srvtoolu_abc" {
+		t.Errorf("resultBlock tool_use_id = %v, want srvtoolu_abc", rb["tool_use_id"])
+	}
+}
+
+// TestConvertMessages_ServerToolResultBlock verifies that an assistant
+// PartToolCall with ProviderOptions["resultBlock"] re-emits the original
+// server_tool_use + web_search_tool_result pair when sent back to the API.
+func TestConvertMessages_ServerToolResultBlock(t *testing.T) {
+	resultBlock := map[string]any{
+		"type":        "web_search_tool_result",
+		"tool_use_id": "srvtoolu_abc",
+		"content": []any{
+			map[string]any{"type": "web_search_result", "url": "https://example.com", "title": "Go 1.26"},
+		},
+	}
+	msgs := convertMessages([]provider.Message{
+		{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "what's new?"}}},
+		{Role: provider.RoleAssistant, Content: []provider.Part{
+			{Type: provider.PartText, Text: "Searching..."},
+			{
+				Type:            provider.PartToolCall,
+				ToolCallID:      "srvtoolu_abc",
+				ToolName:        "web_search",
+				ToolInput:       json.RawMessage(`{"query":"go 1.26"}`),
+				ProviderOptions: map[string]any{"resultBlock": resultBlock},
+			},
+			{Type: provider.PartText, Text: "Go 1.26 was released in 2026."},
+		}},
+		{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "thanks"}}},
+	})
+
+	if len(msgs) < 2 {
+		t.Fatalf("got %d messages, want at least 2", len(msgs))
+	}
+	asst := msgs[1]["content"].([]map[string]any)
+	// Find server_tool_use and assert the result block follows immediately.
+	// (ReorderAssistantParts moves text before tool_use; what matters is the
+	// tool_use → result adjacency required by the API.)
+	stIdx := -1
+	for i, p := range asst {
+		if p["type"] == "server_tool_use" {
+			stIdx = i
+			break
+		}
+	}
+	if stIdx < 0 {
+		t.Fatalf("no server_tool_use block in assistant content: %+v", asst)
+	}
+	if asst[stIdx]["id"] != "srvtoolu_abc" {
+		t.Errorf("server_tool_use id = %v, want srvtoolu_abc", asst[stIdx]["id"])
+	}
+	if stIdx+1 >= len(asst) {
+		t.Fatalf("no block after server_tool_use; result missing")
+	}
+	rb := asst[stIdx+1]
+	if rb["type"] != "web_search_tool_result" {
+		t.Errorf("block after server_tool_use type = %v, want web_search_tool_result", rb["type"])
+	}
+	if rb["tool_use_id"] != "srvtoolu_abc" {
+		t.Errorf("result tool_use_id = %v, want srvtoolu_abc", rb["tool_use_id"])
+	}
+
+	// No orphan tool_result should be injected for the server tool call --
+	// its result is already inline in the assistant turn. An orphan would
+	// surface as a tool_result block in a following user message.
+	for i := 2; i < len(msgs); i++ {
+		c := msgs[i]["content"].([]map[string]any)
+		for _, p := range c {
+			if p["type"] == "tool_result" && p["tool_use_id"] == "srvtoolu_abc" {
+				t.Errorf("orphan tool_result injected for server tool srvtoolu_abc in msg[%d]: %+v", i, p)
+			}
+		}
+	}
+}

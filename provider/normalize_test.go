@@ -259,3 +259,39 @@ func TestNormalizeToolMessages_EmptyMessages(t *testing.T) {
 		t.Fatalf("len = %d, want 0", len(result))
 	}
 }
+
+// TestEnsureToolResultPairing_SkipsServerExecuted verifies that tool calls
+// whose ProviderOptions["resultBlock"] is set (server-executed) are NOT
+// considered orphaned: their result is delivered inline on the assistant
+// turn, so no synthetic tool_result message is injected.
+func TestEnsureToolResultPairing_SkipsServerExecuted(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleUser, Content: []Part{{Type: PartText, Text: "search go"}}},
+		{Role: RoleAssistant, Content: []Part{
+			{Type: PartText, Text: "Searching..."},
+			{
+				Type:       PartToolCall,
+				ToolCallID: "srvtoolu_1",
+				ToolName:   "web_search",
+				ProviderOptions: map[string]any{
+					"resultBlock": map[string]any{"type": "web_search_tool_result"},
+				},
+			},
+		}},
+		{Role: RoleUser, Content: []Part{{Type: PartText, Text: "thanks"}}},
+	}
+
+	out := ensureToolResultPairing(msgs)
+
+	// No synthetic tool message must be inserted between the assistant and
+	// the next user message -- the original three messages must be intact.
+	if len(out) != 3 {
+		t.Fatalf("len = %d, want 3 (no orphan injected for server tool)", len(out))
+	}
+	if out[1].Role != RoleAssistant {
+		t.Errorf("msg[1].Role = %v, want assistant", out[1].Role)
+	}
+	if out[2].Role != RoleUser {
+		t.Errorf("msg[2].Role = %v, want user (not synthetic tool)", out[2].Role)
+	}
+}
