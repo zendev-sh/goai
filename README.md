@@ -21,7 +21,7 @@
   <a href="https://goai.sh/architecture">Architecture</a> &middot;
   <a href="https://goai.sh/providers/">Providers</a> &middot;
   <a href="https://goai.sh/examples">Examples</a> &middot;
-  <a href="https://zenflow.sh">Orchestration (zenflow)</a>
+  <a href="https://github.com/zendev-sh/zenflow">Orchestration (zenflow)</a>
 </p>
 
 ---
