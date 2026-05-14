@@ -15,3 +15,9 @@ credentials*
 bedrock.test
 .zencode/
 testdata/
+
+# zenflow PR review run artifacts (the workflow YAML at
+# .zenflow/pr-review.yaml is tracked; everything else is per-run state).
+.zenflow/diff.patch
+.zenflow/events.ndjson
+.zenflow/review.md

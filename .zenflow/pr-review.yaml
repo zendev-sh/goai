@@ -1,0 +1,134 @@
+# PR review workflow for goai. Two reviewers (Go idiomatics + security)
+# run in parallel against the diff at .zenflow/diff.patch, then a lead
+# agent synthesises both reviews into a single PR comment written to
+# .zenflow/review.md via the write tool.
+#
+# Triggered by the zenflow-review GitHub Action on `/zenflow-review`
+# comments. The Action fetches the diff (gh pr diff > .zenflow/diff.patch),
+# runs `zenflow flow .zenflow/pr-review.yaml`, then posts review.md back
+# to the PR.
+
+name: goai-pr-review
+version: 1
+description: Two-reviewer (Go idiomatics + security) PR review for goai, synthesised into a single PR comment.
+
+agents:
+  idioms:
+    description: "Senior Go reviewer auditing diffs against goai's coding standards and standard Go idioms."
+    tools:
+      - read
+  security:
+    description: "Security reviewer focused on AI-SDK risks: secret handling, prompt injection, HTTP safety."
+    tools:
+      - read
+  lead:
+    description: "Tech lead who merges two reviews into a single prioritised PR comment."
+    tools:
+      - read
+      - write
+
+steps:
+  - id: review-idioms
+    agent: idioms
+    instructions: |
+      Review the diff at `.zenflow/diff.patch` against goai's coding standards and standard Go idioms.
+
+      Repo-specific rules to enforce:
+      - Vercel AI SDK is the reference for provider behaviour - flag deviations.
+      - errors.As, never type assertion on errors.
+      - No input mutation - functions must copy slices/maps before modifying.
+      - Lock-free network calls - never hold a mutex during HTTP I/O.
+      - Shared utilities live in internal/, not duplicated per provider.
+      - Provider options: WithAPIKey, WithTokenSource, WithBaseURL, WithHTTPClient, WithHeaders.
+      - Compile-time interface check (`var _ provider.LanguageModel = (*chatModel)(nil)`).
+      - Dependencies: keep core minimal (no new third-party deps without strong justification).
+      - 90% test coverage per package, mock HTTP not internals.
+
+      Go idioms beyond the repo rules:
+      - context.Context as first arg, propagated to all I/O calls.
+      - Goroutine lifecycle: leaks, missing waitgroup or cancellation.
+      - defer for cleanup, especially response body close.
+      - Error wrapping with %w not %s, sentinel vs typed errors used correctly.
+      - Naming: short locals, exported godoc starts with identifier.
+      - No premature interfaces, no struct embedding for concrete reuse.
+
+      For each finding output one line:
+      `[severity] file:line - what is wrong and why (link to rule if applicable)`
+
+      Severity is one of: critical, high, medium, nit.
+      Skip nits entirely if you find anything critical or high.
+      If the diff is clean, output exactly: `NO ISSUES`.
+      Output nothing else - no preamble, no headers, no JSON.
+    contextFiles:
+      - ".zenflow/diff.patch"
+
+  - id: review-security
+    agent: security
+    instructions: |
+      Review the diff at `.zenflow/diff.patch` for security issues specific to a multi-provider AI SDK.
+
+      What to look for:
+      - API keys / tokens: never logged, never in error messages, never in panic recover dumps.
+      - HTTP request/response logging redacts Authorization and similar headers.
+      - TLS: production endpoints use https, not http; no InsecureSkipVerify in non-test code.
+      - URL handling: user-supplied baseURL / endpoint values cannot reach internal-only hosts (SSRF).
+      - HTTP client timeouts present, context cancellation respected on all paths.
+      - Input validation at API boundaries (size limits on user content, type checks on JSON).
+      - Prompt injection: tool definitions and user content cannot escape and gain extra tool access.
+      - JSON parsing: no unbounded decoders, no panics on malformed input.
+      - Concurrency: race conditions, goroutine leaks, double-close of channels.
+      - Token sources: lock-free fetch enforced, no mutex held during network calls.
+
+      For each finding output one line:
+      `[severity] file:line - issue, risk/exploit, recommended fix`
+
+      Severity is one of: critical, high, medium, nit.
+      Skip nits entirely if you find anything critical or high.
+      If the diff is clean, output exactly: `NO ISSUES`.
+      Output nothing else - no preamble, no headers, no JSON.
+    contextFiles:
+      - ".zenflow/diff.patch"
+
+  - id: synthesise
+    agent: lead
+    dependsOn:
+      - review-idioms
+      - review-security
+    instructions: |
+      You have two independent reviews of the same diff: one focused on Go idiomatics and repo standards, one on security.
+
+      Merge them into a single markdown PR comment and write it to `.zenflow/review.md` using the write tool.
+
+      Output format inside review.md:
+
+      ```
+      ## zenflow review
+
+      <one-sentence verdict>
+
+      ### Critical & High
+      - file:line - description (reviewer)
+
+      ### Medium
+      - file:line - description (reviewer)
+
+      ### Nits
+      - file:line - description (reviewer)
+
+      <one-line recommendation: approve / comment / request-changes>
+      ```
+
+      Rules:
+      - Drop sections that are empty.
+      - Drop duplicate findings - if both reviewers flagged the same thing keep one entry and cite both reviewers.
+      - If BOTH reviewers said `NO ISSUES`, write exactly:
+        ```
+        ## zenflow review
+
+        LGTM - no issues found by either reviewer.
+        ```
+      - Tag each finding with `(idioms)` or `(security)` so authors know which lens caught it.
+      - Do NOT invent findings beyond what the two reviewers reported.
+      - The comment body is the ENTIRE content of review.md - no preamble, no metadata, no markdown code fence around the comment itself.
+
+      After writing the file, output a one-line confirmation like `wrote N bytes to .zenflow/review.md` so the run is auditable.

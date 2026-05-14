@@ -1,0 +1,103 @@
+name: zenflow PR review
+
+# Comment-triggered AI code review using zenflow + FPT Smart Cloud
+# (Qwen3.6-27B). Repo maintainers post `/zenflow-review` on a PR to
+# trigger a two-reviewer pass (Go idiomatics + security) that
+# synthesises into a single PR comment. See .zenflow/pr-review.yaml for
+# the workflow spec.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    # Run only on PR comments (issue_comment fires for both issues and
+    # PRs - the `pull_request` field on the issue payload disambiguates),
+    # gated to writers (OWNER / MEMBER / COLLABORATOR) so randos cannot
+    # burn org credits.
+    if: |
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '/zenflow-review') &&
+      (github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PR_NUMBER: ${{ github.event.issue.number }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Acknowledge trigger
+        # Eyes reaction tells the requester the job started without
+        # waiting on the model. Failure here is non-fatal so a missing
+        # token scope doesn't tank the whole run.
+        continue-on-error: true
+        run: |
+          gh api -X POST \
+            "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content=eyes
+
+      - name: Checkout PR head
+        # issue_comment fires in the base-repo context; explicit ref
+        # checkout pulls the PR's head commit so the workflow YAML at
+        # .zenflow/pr-review.yaml matches what the PR author proposes.
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ env.PR_NUMBER }}/head
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Install zenflow
+        run: go install github.com/zendev-sh/zenflow/cmd/zenflow@v0.1.5
+
+      - name: Fetch PR diff
+        run: |
+          mkdir -p .zenflow
+          gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" > .zenflow/diff.patch
+          wc -l .zenflow/diff.patch
+
+      - name: Run zenflow review
+        env:
+          ZENFLOW_MODEL: fptcloud/Qwen3.6-27B
+          FPT_API_KEY: ${{ secrets.FPT_API_KEY }}
+          FPT_REGION: jp
+        run: |
+          zenflow flow .zenflow/pr-review.yaml \
+            --json \
+            --timeout 20m \
+            > .zenflow/events.ndjson
+
+      - name: Post review comment
+        run: |
+          if [ ! -s .zenflow/review.md ]; then
+            echo "lead agent did not produce .zenflow/review.md" >&2
+            exit 1
+          fi
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file .zenflow/review.md
+
+      - name: Upload event stream
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zenflow-events-pr-${{ env.PR_NUMBER }}
+          path: |
+            .zenflow/events.ndjson
+            .zenflow/review.md
+            .zenflow/diff.patch
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Report failure
+        if: failure()
+        continue-on-error: true
+        run: |
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --body "zenflow review failed - see [run logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
