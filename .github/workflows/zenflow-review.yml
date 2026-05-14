@@ -70,7 +70,13 @@ jobs:
           FPT_API_KEY: ${{ secrets.FPT_API_KEY }}
           FPT_REGION: jp
         run: |
+          # --sandbox grants the safe tool set (read, write, grep, glob)
+          # without bash. Without an explicit permission flag zenflow
+          # denies every tool call on a non-interactive terminal, so the
+          # lead agent could never write .zenflow/review.md and the
+          # reviewer agents could not even call read on the diff.
           zenflow flow .zenflow/pr-review.yaml \
+            --sandbox \
             --json \
             --timeout 20m \
             > .zenflow/events.ndjson
