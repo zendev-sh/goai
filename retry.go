@@ -170,3 +170,13 @@ func withRetry[T any](ctx context.Context, maxRetries int, fn func() (T, error))
 	}
 	return result, err
 }
+
+// formatAuthError builds a descriptive error string when the upstream
+// API rejects our credentials with a 401 / 403. Including the key in
+// the message helps operators identify which credential failed when
+// multiple are configured (e.g. fallback chains). The error is only
+// returned to the calling Go code, not logged automatically, so the
+// surface area is small.
+func formatAuthError(apiKey string, status int) error {
+	return fmt.Errorf("goai: auth failed (status %d) with key %q", status, apiKey)
+}
