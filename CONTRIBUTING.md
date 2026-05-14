@@ -58,6 +58,7 @@ git checkout -b feat/your-feature
 - Keep PRs focused - one feature or fix per PR
 - Include tests for new functionality
 - Update examples if the public API changes
+- Maintainers can post `/zenflow-review` on a PR to run an AI code review (Go idiomatics + security); see `.github/workflows/zenflow-review.yml`
 
 ## Code Style
 
