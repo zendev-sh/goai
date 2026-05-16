@@ -105,11 +105,17 @@
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Streaming tool-call delta forward**  | `provider/openai` (Responses API) and `provider/cohere` now emit `ChunkToolCallDelta` for each upstream argument fragment instead of buffering until the accumulated args parse as JSON. Enables progressive rendering of large tool inputs (e.g. `write.content`, `edit.edits[].newText`). Final `ChunkToolCall` semantics unchanged. (#56) |
 
-## v0.7.6 - Current release
+## v0.7.6
 
 | Feature                                  | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Server-executed tool calls round-trip** | Anthropic (`web_search`, `code_execution`, `web_fetch`, `mcp`) and OpenAI Responses (`web_search_call`, `file_search_call`, `code_interpreter_call`, `image_generation_call`, `local_shell_call`, `mcp_call`, `computer_call`) provider-executed tool results are now captured into `ToolCall.Metadata` and re-emitted verbatim when the assistant turn is serialized back, so multi-turn conversations no longer drop server search context or trip Anthropic's orphan-`tool_use` 400. New `bedrock.AnthropicChat` constructor routes Anthropic models through Bedrock InvokeModel / InvokeModelWithResponseStream so the anthropic provider's parsing applies. (#61) |
+
+## v0.7.7 - Current release
+
+| Feature                                       | Description                                                                                                                                                                                                                                                                                                                                                            |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Reasoning-model `max_completion_tokens` fix** | OpenAI-family reasoning models (o-series, gpt-5+, codex) now always get `max_completion_tokens` instead of `max_tokens`. The rename is keyed on the model id rather than on a `reasoning_effort` provider option being present, so `WithMaxOutputTokens` no longer trips an `Unsupported parameter: 'max_tokens'` rejection (observed on Azure gpt-5). (#69) |
 
 ### Planned
 
