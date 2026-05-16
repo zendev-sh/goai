@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/zendev-sh/goai"
+	"github.com/zendev-sh/goai/internal/openaicompat"
 	"github.com/zendev-sh/goai/provider"
 )
 
@@ -671,9 +672,9 @@ func TestIsReasoningModel(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
-			got := isReasoningModel(tt.model)
+			got := openaicompat.IsReasoningModel(tt.model)
 			if got != tt.want {
-				t.Errorf("isReasoningModel(%q) = %v, want %v", tt.model, got, tt.want)
+				t.Errorf("IsReasoningModel(%q) = %v, want %v", tt.model, got, tt.want)
 			}
 		})
 	}

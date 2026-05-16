@@ -212,7 +212,7 @@ func BuildRequest(params provider.GenerateParams, modelID string, streaming bool
 	// reasoning model rejects max_tokens outright (Azure gpt-5 returns
 	// `Unsupported parameter: 'max_tokens'`) whether or not the caller
 	// passed a reasoning_effort.
-	if isReasoningModel(modelID) {
+	if IsReasoningModel(modelID) {
 		if v, ok := body["max_tokens"]; ok {
 			body["max_completion_tokens"] = v
 			delete(body, "max_tokens")
@@ -222,12 +222,12 @@ func BuildRequest(params provider.GenerateParams, modelID string, streaming bool
 	return body
 }
 
-// isReasoningModel reports whether modelID is an OpenAI-family reasoning
+// IsReasoningModel reports whether modelID is an OpenAI-family reasoning
 // model (o-series, gpt-5+, codex). Reasoning models require
-// max_completion_tokens in place of max_tokens. Mirrors the predicate
-// in provider/openai; duplicated here to avoid an import cycle
-// (provider/openai imports this package).
-func isReasoningModel(modelID string) bool {
+// max_completion_tokens in place of max_tokens, do not accept a
+// temperature, and support reasoning. provider/openai consumes this
+// predicate for capability detection.
+func IsReasoningModel(modelID string) bool {
 	id := strings.ToLower(modelID)
 	// o-series reasoning models (o1, o3, o4, ...).
 	if len(id) >= 2 && id[0] == 'o' && id[1] >= '0' && id[1] <= '9' {

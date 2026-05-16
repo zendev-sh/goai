@@ -17,7 +17,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 
 	"github.com/zendev-sh/goai"
@@ -117,8 +116,8 @@ func (m *chatModel) ModelID() string { return m.id }
 
 func (m *chatModel) Capabilities() provider.ModelCapabilities {
 	return provider.ModelCapabilities{
-		Temperature: !isReasoningModel(m.id),
-		Reasoning:   isReasoningModel(m.id),
+		Temperature: !openaicompat.IsReasoningModel(m.id),
+		Reasoning:   openaicompat.IsReasoningModel(m.id),
 		ToolCall:    true,
 		Attachment:  true,
 		InputModalities: provider.ModalitySet{
@@ -286,25 +285,3 @@ func (m *chatModel) shouldUseResponsesAPI(params provider.GenerateParams) bool {
 	return true
 }
 
-// isReasoningModel returns true if the model is a reasoning model (o-series, gpt-5+, codex-).
-// Used for capability detection (temperature, reasoning support).
-func isReasoningModel(modelID string) bool {
-	id := strings.ToLower(modelID)
-
-	// o-series reasoning models (o1, o3, o4, etc.)
-	if len(id) >= 2 && id[0] == 'o' && id[1] >= '0' && id[1] <= '9' {
-		return true
-	}
-
-	// GPT-5+ models (except gpt-5-chat which is NOT a reasoning model per Vercel)
-	if strings.HasPrefix(id, "gpt-5") && !strings.HasPrefix(id, "gpt-5-chat") {
-		return true
-	}
-
-	// codex- prefix models
-	if strings.HasPrefix(id, "codex-") {
-		return true
-	}
-
-	return false
-}
