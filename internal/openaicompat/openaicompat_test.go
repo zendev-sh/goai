@@ -870,10 +870,47 @@ func TestBuildRequest_MaxCompletionTokensForReasoning(t *testing.T) {
 	body := BuildRequest(params, "o3", false, RequestConfig{})
 
 	if _, ok := body["max_tokens"]; ok {
-		t.Error("max_tokens should be removed when reasoning_effort is set")
+		t.Error("max_tokens should be renamed to max_completion_tokens for a reasoning model")
 	}
 	if body["max_completion_tokens"] != 2000 {
 		t.Errorf("max_completion_tokens = %v, want 2000", body["max_completion_tokens"])
+	}
+}
+
+// TestBuildRequest_MaxCompletionTokens_NoReasoningEffort: the rename
+// is keyed on the model id, not on reasoning_effort. A reasoning model
+// (gpt-5) rejects max_tokens outright, so the rename must fire even
+// when the caller passed no reasoning_effort.
+func TestBuildRequest_MaxCompletionTokens_NoReasoningEffort(t *testing.T) {
+	params := provider.GenerateParams{
+		Messages:        []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+		MaxOutputTokens: 1500,
+	}
+	body := BuildRequest(params, "gpt-5", false, RequestConfig{})
+
+	if _, ok := body["max_tokens"]; ok {
+		t.Error("max_tokens must be renamed to max_completion_tokens for gpt-5 even without reasoning_effort")
+	}
+	if body["max_completion_tokens"] != 1500 {
+		t.Errorf("max_completion_tokens = %v, want 1500", body["max_completion_tokens"])
+	}
+}
+
+// TestBuildRequest_MaxTokensKeptForNonReasoning: a non-reasoning model
+// keeps the plain max_tokens parameter.
+func TestBuildRequest_MaxTokensKeptForNonReasoning(t *testing.T) {
+	params := provider.GenerateParams{
+		Messages:        []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+		MaxOutputTokens: 1500,
+	}
+	for _, model := range []string{"gpt-4o", "gpt-5-chat"} {
+		body := BuildRequest(params, model, false, RequestConfig{})
+		if body["max_tokens"] != 1500 {
+			t.Errorf("%s: max_tokens = %v, want 1500", model, body["max_tokens"])
+		}
+		if _, ok := body["max_completion_tokens"]; ok {
+			t.Errorf("%s: must not set max_completion_tokens", model)
+		}
 	}
 }
 
