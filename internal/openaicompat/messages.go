@@ -44,12 +44,17 @@ func ConvertMessages(msgs []provider.Message, system string) []map[string]any {
 
 		var toolCalls []map[string]any
 		var textParts []string
+		var reasoningParts []string
 		var hasImage bool
 
 		for _, part := range msg.Content {
 			switch part.Type {
 			case provider.PartText:
 				textParts = append(textParts, part.Text)
+			case provider.PartReasoning:
+				if part.Text != "" {
+					reasoningParts = append(reasoningParts, part.Text)
+				}
 			case provider.PartImage:
 				hasImage = true
 			case provider.PartToolCall:
@@ -99,6 +104,9 @@ func ConvertMessages(msgs []provider.Message, system string) []map[string]any {
 
 		if len(textParts) > 0 {
 			m["content"] = joinText(textParts)
+		}
+		if len(reasoningParts) > 0 {
+			m["reasoning_content"] = joinText(reasoningParts)
 		}
 		if len(toolCalls) > 0 {
 			m["tool_calls"] = toolCalls

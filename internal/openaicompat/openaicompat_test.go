@@ -2286,3 +2286,42 @@ func TestConvertMessages_ToolCallsNoText(t *testing.T) {
 		t.Errorf("marshaled JSON contains %q, want null or no content field; got: %s", `"content":""`, jsonStr)
 	}
 }
+
+// TestConvertMessages_AssistantReasoningRoundtrip verifies that a DeepSeek
+// thinking-mode assistant message — which carries reasoning_content alongside
+// tool_calls — is echoed back on the wire correctly so that multi-turn
+// round-trips don't trigger "reasoning_content must be passed back to the API".
+func TestConvertMessages_AssistantReasoningRoundtrip(t *testing.T) {
+	msgs := []provider.Message{
+		{
+			Role: provider.RoleAssistant,
+			Content: []provider.Part{
+				{Type: provider.PartReasoning, Text: "think"},
+				{Type: provider.PartToolCall, ToolCallID: "call_42", ToolName: "do_thing", ToolInput: json.RawMessage(`{"x":1}`)},
+			},
+		},
+	}
+	result := ConvertMessages(msgs, "")
+
+	if len(result) != 1 {
+		t.Fatalf("got %d messages, want 1", len(result))
+	}
+	m := result[0]
+
+	rc, ok := m["reasoning_content"]
+	if !ok {
+		t.Fatal("reasoning_content key missing from wire map; DeepSeek will 400")
+	}
+	if rc != "think" {
+		t.Errorf("reasoning_content = %v, want \"think\"", rc)
+	}
+
+	tcs, ok := m["tool_calls"].([]map[string]any)
+	if !ok || len(tcs) != 1 {
+		t.Fatalf("tool_calls = %v, want 1-element slice", m["tool_calls"])
+	}
+	fn := tcs[0]["function"].(map[string]any)
+	if fn["name"] != "do_thing" {
+		t.Errorf("tool call name = %v, want do_thing", fn["name"])
+	}
+}
