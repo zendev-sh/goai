@@ -7,9 +7,19 @@ package sse
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 )
+
+// MaxLineSize is the upper bound on a single SSE line, in bytes.
+//
+// Large enough to comfortably hold long tool-call argument deltas and
+// reasoning blocks observed from production providers, while preventing a
+// malicious or buggy upstream from forcing unbounded client-side allocation
+// (a DoS vector). Lines exceeding this size cause Next to stop and Err to
+// report the violation.
+const MaxLineSize = 16 << 20 // 16 MiB
 
 // Scanner reads SSE data payloads from an io.Reader.
 type Scanner struct {
@@ -20,9 +30,9 @@ type Scanner struct {
 
 // NewScanner creates an SSE scanner backed by a bufio.Reader.
 //
-// Unlike bufio.Scanner, the underlying reader grows as needed and has no
-// fixed maximum line length, so it accepts arbitrarily large SSE payloads
-// (e.g. long tool-call argument deltas or reasoning blocks).
+// Lines up to [MaxLineSize] bytes are accepted; longer lines cause the
+// scanner to stop with an error reported via Err. This lifts the 1 MiB
+// limit imposed by bufio.Scanner while still bounding memory use.
 func NewScanner(r io.Reader) *Scanner {
 	return &Scanner{reader: bufio.NewReader(r)}
 }
@@ -36,7 +46,7 @@ func (s *Scanner) Next() (data string, ok bool) {
 	}
 
 	for {
-		line, err := s.reader.ReadString('\n')
+		line, err := s.readLine()
 		if len(line) > 0 {
 			line = strings.TrimRight(line, "\r\n")
 			if strings.HasPrefix(line, "data:") {
@@ -59,7 +69,36 @@ func (s *Scanner) Next() (data string, ok bool) {
 	}
 }
 
-// Err returns the first non-EOF error encountered while reading.
+// readLine reads one '\n'-terminated line, accumulating across the
+// underlying bufio.Reader's internal buffer so we are not limited by its
+// size. It enforces [MaxLineSize] to prevent unbounded memory growth from
+// a hostile or malformed stream.
+//
+// Returns the line (which may include the trailing '\n') together with
+// any terminal error. A final partial line at EOF is returned with
+// io.EOF.
+func (s *Scanner) readLine() (string, error) {
+	var buf []byte
+	for {
+		slice, err := s.reader.ReadSlice('\n')
+		if len(buf)+len(slice) > MaxLineSize {
+			return "", fmt.Errorf("sse: line exceeds %d bytes", MaxLineSize)
+		}
+		// ReadSlice returns a reference into the reader's internal buffer
+		// that may be overwritten on the next read; append copies it out.
+		buf = append(buf, slice...)
+		if err == nil {
+			return string(buf), nil
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		return string(buf), err
+	}
+}
+
+// Err returns the first non-EOF error encountered while reading,
+// including line-size violations.
 func (s *Scanner) Err() error {
 	return s.err
 }

@@ -194,6 +194,24 @@ func TestScanner_VeryLongLine(t *testing.T) {
 	}
 }
 
+func TestScanner_LineExceedsMaxSize(t *testing.T) {
+	// A single line larger than MaxLineSize must be rejected with an error,
+	// not silently consumed (DoS protection).
+	oversized := strings.Repeat("x", MaxLineSize+1)
+	input := "data: " + oversized + "\n"
+	s := NewScanner(strings.NewReader(input))
+
+	data, ok := s.Next()
+	if ok {
+		t.Errorf("expected ok=false for oversized line, got data len=%d", len(data))
+	}
+	if err := s.Err(); err == nil {
+		t.Fatal("expected Err() to report oversized line, got nil")
+	} else if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("expected size-limit error, got: %v", err)
+	}
+}
+
 func TestScanner_LineWithoutTrailingNewline(t *testing.T) {
 	// A final "data:" line lacking a trailing newline must still be emitted.
 	input := "data: first\ndata: last"
