@@ -1368,21 +1368,37 @@ func TestDoHTTP_PerRequestHeaders(t *testing.T) {
 	}
 }
 
-func TestParseSSE_ScannerError(t *testing.T) {
-	// Test parseSSE with a reader that produces a scanner error.
-	out := make(chan provider.StreamChunk, 64)
-	// Create a reader with a line exceeding buffer.
-	longLine := "data: " + strings.Repeat("x", 2*1024*1024) + "\n"
-	go parseSSE(t.Context(), strings.NewReader(longLine), out, false)
+func TestParseSSE_LargeEventPayload(t *testing.T) {
+	// Regression test for issue #70: very long SSE data lines (e.g. large
+	// tool-call argument deltas or reasoning blocks) must not fail with
+	// "bufio.Scanner: token too long". The scanner backs off to a growable
+	// bufio.Reader so lines of any size are accepted.
+	largeText := strings.Repeat("x", 2*1024*1024) // 2 MiB
+	event := map[string]any{
+		"type":  "content_block_delta",
+		"index": 0,
+		"delta": map[string]any{"type": "text_delta", "text": largeText},
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := "data: " + string(payload) + "\n\n"
 
-	var foundError bool
+	out := make(chan provider.StreamChunk, 64)
+	go parseSSE(t.Context(), strings.NewReader(stream), out, false)
+
+	var gotText string
 	for chunk := range out {
 		if chunk.Type == provider.ChunkError {
-			foundError = true
+			t.Fatalf("unexpected error chunk: %v", chunk.Error)
+		}
+		if chunk.Type == provider.ChunkText {
+			gotText += chunk.Text
 		}
 	}
-	if !foundError {
-		t.Error("expected error chunk from scanner overflow")
+	if len(gotText) != len(largeText) {
+		t.Errorf("got text len=%d, want %d", len(gotText), len(largeText))
 	}
 }
 

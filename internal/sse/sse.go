@@ -6,53 +6,62 @@ package sse
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"strings"
 )
 
 // Scanner reads SSE data payloads from an io.Reader.
 type Scanner struct {
-	scanner *bufio.Scanner
-	done    bool
+	reader *bufio.Reader
+	err    error
+	done   bool
 }
 
-// NewScanner creates an SSE scanner with a 1MB buffer.
+// NewScanner creates an SSE scanner backed by a bufio.Reader.
+//
+// Unlike bufio.Scanner, the underlying reader grows as needed and has no
+// fixed maximum line length, so it accepts arbitrarily large SSE payloads
+// (e.g. long tool-call argument deltas or reasoning blocks).
 func NewScanner(r io.Reader) *Scanner {
-	s := bufio.NewScanner(r)
-	s.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	return &Scanner{scanner: s}
+	return &Scanner{reader: bufio.NewReader(r)}
 }
 
 // Next returns the next SSE data payload (with "data: " prefix stripped).
 // Returns ("", false) at EOF or after [DONE].
 // Skips non-"data: " lines and blank lines.
 func (s *Scanner) Next() (data string, ok bool) {
-	if s.done {
+	if s.done || s.err != nil {
 		return "", false
 	}
 
-	for s.scanner.Scan() {
-		line := s.scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
-			continue
+	for {
+		line, err := s.reader.ReadString('\n')
+		if len(line) > 0 {
+			line = strings.TrimRight(line, "\r\n")
+			if strings.HasPrefix(line, "data:") {
+				payload := strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " ")
+				if payload == "[DONE]" {
+					s.done = true
+					return "", false
+				}
+				return payload, true
+			}
+			// Non-"data:" line: skip and continue reading.
 		}
-		data = strings.TrimPrefix(line, "data:")
-		data = strings.TrimPrefix(data, " ")
 
-		if data == "[DONE]" {
-			s.done = true
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				s.err = err
+			}
 			return "", false
 		}
-
-		return data, true
 	}
-
-	return "", false
 }
 
-// Err returns the first non-EOF error encountered by the scanner.
+// Err returns the first non-EOF error encountered while reading.
 func (s *Scanner) Err() error {
-	return s.scanner.Err()
+	return s.err
 }
 
 // IsDone reports whether the scanner has encountered the [DONE] sentinel.

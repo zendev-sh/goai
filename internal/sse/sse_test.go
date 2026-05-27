@@ -166,6 +166,74 @@ func TestScanner_ReadError(t *testing.T) {
 	}
 }
 
+func TestScanner_VeryLongLine(t *testing.T) {
+	// Regression test for "bufio.Scanner: token too long" (issue #70).
+	// The scanner must accept SSE data lines larger than bufio.Scanner's
+	// MaxScanTokenSize (64KiB) and the previous 1MiB cap.
+	payload := strings.Repeat("x", 4*1024*1024) // 4 MiB
+	input := "data: " + payload + "\ndata: [DONE]\n"
+
+	s := NewScanner(strings.NewReader(input))
+
+	data, ok := s.Next()
+	if !ok {
+		t.Fatalf("expected ok=true for long line; Err=%v", s.Err())
+	}
+	if len(data) != len(payload) {
+		t.Errorf("got len=%d, want len=%d", len(data), len(payload))
+	}
+	if data != payload {
+		t.Errorf("payload mismatch")
+	}
+
+	if _, ok := s.Next(); ok {
+		t.Error("expected false after DONE")
+	}
+	if err := s.Err(); err != nil {
+		t.Errorf("Err() = %v, want nil", err)
+	}
+}
+
+func TestScanner_LineWithoutTrailingNewline(t *testing.T) {
+	// A final "data:" line lacking a trailing newline must still be emitted.
+	input := "data: first\ndata: last"
+	s := NewScanner(strings.NewReader(input))
+
+	data, ok := s.Next()
+	if !ok || data != "first" {
+		t.Errorf("first: got %q, %v; want %q, true", data, ok, "first")
+	}
+
+	data, ok = s.Next()
+	if !ok || data != "last" {
+		t.Errorf("last: got %q, %v; want %q, true", data, ok, "last")
+	}
+
+	if _, ok := s.Next(); ok {
+		t.Error("expected false at EOF")
+	}
+}
+
+func TestScanner_CRLFLineEndings(t *testing.T) {
+	// SSE spec allows CRLF line endings; the scanner must strip \r as well as \n.
+	input := "data: hello\r\ndata: world\r\ndata: [DONE]\r\n"
+	s := NewScanner(strings.NewReader(input))
+
+	data, ok := s.Next()
+	if !ok || data != "hello" {
+		t.Errorf("first: got %q, %v; want %q, true", data, ok, "hello")
+	}
+
+	data, ok = s.Next()
+	if !ok || data != "world" {
+		t.Errorf("second: got %q, %v; want %q, true", data, ok, "world")
+	}
+
+	if _, ok := s.Next(); ok {
+		t.Error("expected false after DONE")
+	}
+}
+
 func TestScanner_MultiLineData(t *testing.T) {
 	// Two consecutive data: lines in one event block.
 	// The implementation does NOT concatenate; each data: line is returned independently.
