@@ -319,9 +319,15 @@ func (t *HTTPTransport) OnError(fn func(error)) {
 	t.onError = fn
 }
 
-// Start initiates the SSE connection for server-to-client messages.
-// The HTTP request is made synchronously so connection errors are returned
-// directly. The SSE body read loop runs in a background goroutine.
+// Start initiates the optional server-to-client SSE stream.
+//
+// Per the MCP Streamable HTTP spec (2025-03-26), the GET-for-SSE channel is
+// OPTIONAL: a server that does not offer it SHOULD return HTTP 405. When the
+// server returns 405 (or 404), Start completes successfully without an SSE
+// reader goroutine, and the transport stays usable for POST-only client→
+// server messages (server replies still arrive inline on POST responses).
+// Servers that do offer a stream return 200 + text/event-stream, and the
+// SSE body read loop runs in a background goroutine.
 func (t *HTTPTransport) Start(ctx context.Context) error {
 	sseCtx, cancel := context.WithCancel(ctx)
 	t.mu.Lock()
@@ -353,6 +359,17 @@ func (t *HTTPTransport) Start(ctx context.Context) error {
 	if err != nil {
 		cancel()
 		return fmt.Errorf("mcp: SSE connection: %w", err)
+	}
+	// Streamable HTTP servers that do not expose a server-initiated SSE
+	// stream signal this with 405 (spec) or 404 (some implementations).
+	// Treat both as "POST-only" and keep the transport usable.
+	if resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNotFound {
+		_ = resp.Body.Close()
+		cancel()
+		t.mu.Lock()
+		t.cancel = nil
+		t.mu.Unlock()
+		return nil
 	}
 	if resp.StatusCode != http.StatusOK {
 		_ = resp.Body.Close()
