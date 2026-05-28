@@ -273,3 +273,85 @@ func TestScanner_MultiLineData(t *testing.T) {
 		t.Error("expected false after all lines consumed")
 	}
 }
+
+func TestScanner_NextLine(t *testing.T) {
+	// NextLine must return every line (event:, data:, blank, comment) with
+	// trailing CR/LF stripped, so callers parsing event-typed SSE can do
+	// their own dispatch.
+	input := "event: ping\r\ndata: {\"x\":1}\r\n\r\n: comment\nevent: done\ndata: [DONE]\n"
+	s := NewScanner(strings.NewReader(input))
+
+	want := []string{
+		"event: ping",
+		"data: {\"x\":1}",
+		"",
+		": comment",
+		"event: done",
+		"data: [DONE]",
+	}
+	for i, w := range want {
+		got, ok := s.NextLine()
+		if !ok {
+			t.Fatalf("line %d: ok=false; Err=%v", i, s.Err())
+		}
+		if got != w {
+			t.Errorf("line %d: got %q, want %q", i, got, w)
+		}
+	}
+	if _, ok := s.NextLine(); ok {
+		t.Error("expected ok=false at EOF")
+	}
+	if err := s.Err(); err != nil {
+		t.Errorf("Err() = %v, want nil", err)
+	}
+}
+
+func TestScanner_NextLine_ReadError(t *testing.T) {
+	injected := errors.New("stream broken")
+	r := io.MultiReader(
+		strings.NewReader("event: ping\n"),
+		&errReader{err: injected},
+	)
+	s := NewScanner(r)
+
+	line, ok := s.NextLine()
+	if !ok || line != "event: ping" {
+		t.Fatalf("first: got %q, %v; want %q, true", line, ok, "event: ping")
+	}
+
+	_, ok = s.NextLine()
+	if ok {
+		t.Error("expected ok=false after read error")
+	}
+	if err := s.Err(); !errors.Is(err, injected) {
+		t.Errorf("Err() = %v; want injected %v", err, injected)
+	}
+
+	// Subsequent calls must short-circuit on the cached error.
+	if _, ok := s.NextLine(); ok {
+		t.Error("expected ok=false on repeat call after error")
+	}
+}
+
+func TestScanner_NextLine_LargeLine(t *testing.T) {
+	// Regression test for issue #70: NextLine must accept lines past the
+	// historical 1 MiB bufio.Scanner cap, so event-typed SSE consumers
+	// (OpenAI Responses API) don't choke on long deltas.
+	payload := strings.Repeat("y", 4*1024*1024)
+	input := "event: response.output_text.delta\ndata: " + payload + "\n"
+
+	s := NewScanner(strings.NewReader(input))
+
+	got, ok := s.NextLine()
+	if !ok || got != "event: response.output_text.delta" {
+		t.Fatalf("first line: got %q, %v", got, ok)
+	}
+
+	got, ok = s.NextLine()
+	if !ok {
+		t.Fatalf("expected long data line; Err=%v", s.Err())
+	}
+	if len(got) != len("data: ")+len(payload) {
+		t.Errorf("got len=%d, want %d", len(got), len("data: ")+len(payload))
+	}
+}

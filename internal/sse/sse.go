@@ -37,6 +37,32 @@ func NewScanner(r io.Reader) *Scanner {
 	return &Scanner{reader: bufio.NewReader(r)}
 }
 
+// NextLine returns the next line from the SSE stream with trailing CR/LF
+// stripped. Unlike [Scanner.Next], it returns every line including blank
+// lines and non-"data:" lines, so callers parsing event-typed SSE
+// (interleaved "event:" + "data:" pairs, e.g. the OpenAI Responses API)
+// can implement their own line dispatch while still benefiting from
+// [MaxLineSize]-bounded reads. Returns ("", false) at EOF or after a read
+// error (which is reported via [Scanner.Err]).
+//
+// Mix Next and NextLine on the same scanner at your own risk; pick one
+// mode per stream.
+func (s *Scanner) NextLine() (line string, ok bool) {
+	if s.err != nil {
+		return "", false
+	}
+	raw, err := s.readLine()
+	if err != nil {
+		if !errors.Is(err, io.EOF) {
+			s.err = err
+		}
+		if len(raw) == 0 {
+			return "", false
+		}
+	}
+	return strings.TrimRight(raw, "\r\n"), true
+}
+
 // Next returns the next SSE data payload (with "data: " prefix stripped).
 // Returns ("", false) at EOF or after [DONE].
 // Skips non-"data: " lines and blank lines.

@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"bufio"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -11,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/zendev-sh/goai"
+	"github.com/zendev-sh/goai/internal/sse"
 	"github.com/zendev-sh/goai/provider"
 )
 
@@ -445,14 +445,13 @@ type responsesReasoning struct {
 }
 
 // streamResponses parses SSE from the OpenAI Responses API.
-// Uses bufio.Scanner directly because Responses API has event-typed SSE
+// Uses sse.Scanner.NextLine because the Responses API has event-typed SSE
 // (event: + data: pairs), unlike Chat Completions (data: only).
 func streamResponses(ctx context.Context, body io.ReadCloser, out chan<- provider.StreamChunk) {
 	defer close(out)
 	defer func() { _ = body.Close() }()
 
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner := sse.NewScanner(body)
 
 	var usage provider.Usage
 	var eventType string
@@ -462,8 +461,11 @@ func streamResponses(ctx context.Context, body io.ReadCloser, out chan<- provide
 	activeReasoning := make(map[int]*responsesReasoning)
 	currentReasoningIdx := -1
 
-	for scanner.Scan() {
-		line := scanner.Text()
+	for {
+		line, ok := scanner.NextLine()
+		if !ok {
+			break
+		}
 
 		if strings.HasPrefix(line, "event: ") {
 			eventType = strings.TrimPrefix(line, "event: ")

@@ -1844,6 +1844,44 @@ func TestStreamResponses_DONE(t *testing.T) {
 	}
 }
 
+func TestStreamResponses_LargeDataLine(t *testing.T) {
+	// Regression test for issue #70: bufio.Scanner's 1 MiB token cap caused
+	// "token too long" errors when the Responses API emitted a single very
+	// large SSE event (e.g. a long output_text.delta). The stream must now
+	// accept lines well past 1 MiB.
+	payload := strings.Repeat("x", 4*1024*1024) // 4 MiB
+	delta, err := json.Marshal(struct {
+		Delta string `json:"delta"`
+	}{Delta: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := "event: response.output_text.delta\ndata: " + string(delta) + "\n\n" +
+		"event: response.completed\ndata: {\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
+
+	out := make(chan provider.StreamChunk, 16)
+	go streamResponses(t.Context(), io.NopCloser(strings.NewReader(input)), out)
+
+	var gotText string
+	var gotFinish bool
+	for chunk := range out {
+		switch chunk.Type {
+		case provider.ChunkText:
+			gotText += chunk.Text
+		case provider.ChunkFinish:
+			gotFinish = true
+		case provider.ChunkError:
+			t.Fatalf("unexpected error chunk: %v", chunk.Error)
+		}
+	}
+	if gotText != payload {
+		t.Errorf("text len = %d, want %d", len(gotText), len(payload))
+	}
+	if !gotFinish {
+		t.Error("expected finish chunk")
+	}
+}
+
 func TestStreamResponses_ScannerError(t *testing.T) {
 	// Directly test streamResponses with an error reader.
 	out := make(chan provider.StreamChunk, 64)
