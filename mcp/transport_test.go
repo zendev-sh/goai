@@ -505,6 +505,67 @@ func TestHTTPTransport_Start_SSEConnection(t *testing.T) {
 	_ = ht.Close()
 }
 
+func TestHTTPTransport_Start_NoServerSSE(t *testing.T) {
+	// Regression test for issue #74: Streamable HTTP MCP servers
+	// (Zoho MCP, etc.) reject the optional GET-for-SSE with 405 per spec.
+	// Start must treat 405/404 as "POST-only" and not fail, so Send can
+	// still post JSON-RPC requests and receive inline responses.
+	cases := []struct {
+		name   string
+		status int
+	}{
+		{"405 method not allowed", http.StatusMethodNotAllowed},
+		{"404 not found", http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var posts atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method {
+				case http.MethodGet:
+					w.WriteHeader(tc.status)
+				case http.MethodPost:
+					posts.Add(1)
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprint(w, `{"jsonrpc":"2.0","id":"1","result":{"ok":true}}`)
+				default:
+					w.WriteHeader(http.StatusBadRequest)
+				}
+			}))
+			defer srv.Close()
+
+			ht := NewHTTPTransport(srv.URL)
+
+			received := make(chan JSONRPCMessage, 1)
+			ht.OnMessage(func(m JSONRPCMessage) { received <- m })
+
+			if err := ht.Start(context.Background()); err != nil {
+				t.Fatalf("Start with %d should not fail: %v", tc.status, err)
+			}
+
+			msg := JSONRPCMessage{JSONRPC: "2.0", Method: "initialize", ID: "1"}
+			if err := ht.Send(context.Background(), msg); err != nil {
+				t.Fatalf("Send: %v", err)
+			}
+			if got := posts.Load(); got != 1 {
+				t.Errorf("posts = %d, want 1", got)
+			}
+			select {
+			case got := <-received:
+				if got.ID != "1" {
+					t.Errorf("dispatched ID = %v, want 1", got.ID)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for inline POST response")
+			}
+
+			if err := ht.Close(); err != nil {
+				t.Errorf("Close: %v", err)
+			}
+		})
+	}
+}
+
 func TestHTTPTransport_Close(t *testing.T) {
 	ht := NewHTTPTransport("http://example.com")
 	if err := ht.Close(); err != nil {
