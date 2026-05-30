@@ -56,7 +56,7 @@ func WithTokenSource(ts provider.TokenSource) Option {
 // validation is intentionally not applied (same as ollama, vllm).
 func WithBaseURL(rawURL string) Option {
 	return func(o *options) {
-		if u, err := url.Parse(rawURL); err == nil && u.Scheme != "" {
+		if u, err := url.Parse(rawURL); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
 			o.baseURL = rawURL
 		}
 	}

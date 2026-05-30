@@ -144,9 +144,13 @@ func TestChat_WithTokenSource(t *testing.T) {
 func TestChat_WithBaseURL_Invalid(t *testing.T) {
 	o := options{baseURL: "original"}
 	WithBaseURL("not-a-url")(&o)
-	// Invalid URL should not overwrite the default
 	if o.baseURL != "original" {
 		t.Errorf("expected original, got %q", o.baseURL)
+	}
+	// ftp scheme should be rejected
+	WithBaseURL("ftp://example.com")(&o)
+	if o.baseURL != "original" {
+		t.Errorf("expected original after ftp://, got %q", o.baseURL)
 	}
 }
 
