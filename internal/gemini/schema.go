@@ -33,7 +33,10 @@ func SanitizeSchema(schema map[string]any) map[string]any {
 // inlineRefsAndStripDrafts walks an arbitrary schema value and:
 //   - Replaces every {"$ref": "#/$defs/X"} with a deep copy of $defs.X
 //     (recursively, so nested refs are also resolved).
-//   - Strips "$defs", "if", "then", "else" keys anywhere they appear.
+//   - Strips "$defs", "if", "then", "else" subschema keywords and the
+//     "$schema", "$id", "$comment" meta keywords anywhere they appear
+//     (Gemini's OpenAPI-subset schema rejects them; MCP tool inputSchemas
+//     commonly carry a top-level "$schema").
 //   - Bails out at maxRefInlineDepth to prevent cyclic-ref infinite loops;
 //     at the depth cap, unresolved refs become {type: "object"}.
 //
@@ -58,7 +61,9 @@ func inlineRefsAndStripDrafts(obj any, defs map[string]any, depth int) any {
 		// Recurse into every key except the blocklisted ones.
 		result := make(map[string]any, len(v))
 		for k, val := range v {
-			if k == "$defs" || k == "if" || k == "then" || k == "else" {
+			switch k {
+			case "$defs", "if", "then", "else", // unsupported subschema keywords
+				"$schema", "$id", "$comment": // meta keywords Gemini rejects
 				continue
 			}
 			result[k] = inlineRefsAndStripDrafts(val, defs, depth)

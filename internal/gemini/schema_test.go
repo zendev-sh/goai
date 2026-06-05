@@ -42,6 +42,37 @@ func TestSanitizeSchema_RemovesAdditionalProperties(t *testing.T) {
 	}
 }
 
+func TestSanitizeSchema_RemovesMetaKeywords(t *testing.T) {
+	// MCP tool inputSchemas commonly carry a top-level "$schema"; Gemini rejects
+	// it along with "$id" and "$comment", including when nested.
+	schema := map[string]any{
+		"$schema":  "https://json-schema.org/draft/2020-12/schema",
+		"$id":      "https://example.com/tool",
+		"$comment": "internal note",
+		"type":     "object",
+		"properties": map[string]any{
+			"name": map[string]any{
+				"type":     "string",
+				"$comment": "the name",
+			},
+		},
+	}
+	result := SanitizeSchema(schema)
+	for _, k := range []string{"$schema", "$id", "$comment"} {
+		if _, ok := result[k]; ok {
+			t.Errorf("%s should be removed at top level", k)
+		}
+	}
+	props := result["properties"].(map[string]any)
+	name := props["name"].(map[string]any)
+	if _, ok := name["$comment"]; ok {
+		t.Error("$comment should be removed from nested properties")
+	}
+	if name["type"] != "string" {
+		t.Errorf("nested type = %v, want string", name["type"])
+	}
+}
+
 func TestSanitizeSchema_EnumIntegerToString(t *testing.T) {
 	schema := map[string]any{
 		"type": "integer",
