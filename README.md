@@ -248,7 +248,19 @@ result, _ := goai.GenerateText(ctx, model,
 )
 ```
 
-See [examples/mcp-tools](examples/mcp-tools/) and the [MCP documentation](https://goai.sh/concepts/mcp) for more.
+For OAuth-protected remote servers, GoAI handles authorization-server discovery, dynamic client registration, PKCE, token refresh, and retry-on-401 natively — no external wrapper needed:
+
+```go
+ts, _ := mcp.NewOAuthTokenSource(ctx, mcp.OAuthConfig{
+    ServerURL:   serverURL,
+    RedirectURI: "http://127.0.0.1:8765/callback",
+    Authorize:   openBrowserAndAwaitRedirect, // returns the OAuth redirect URL
+})
+transport := mcp.NewHTTPTransport(serverURL, mcp.WithHTTPClient(mcp.NewOAuthHTTPClient(ts, nil)))
+client := mcp.NewClient("my-app", "1.0", mcp.WithTransport(transport))
+```
+
+See [examples/mcp-tools](examples/mcp-tools/), [examples/mcp-oauth](examples/mcp-oauth/), and the [MCP documentation](https://goai.sh/concepts/mcp) for more.
 
 ## Companion Projects
 
