@@ -16,6 +16,13 @@ bedrock.test
 .zencode/
 testdata/
 
+# Compiled example binaries (built from examples/<name>, named after the dir).
+# Do not commit; the pre-commit hook also blocks compiled executables.
+/agent-loop
+/chat
+/tools
+/streaming
+
 # zenflow PR review run artifacts (the workflow YAML at
 # .zenflow/pr-review.yaml is tracked; everything else is per-run state).
 .zenflow/diff.patch
