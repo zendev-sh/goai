@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -41,6 +42,7 @@ type oauthServer struct {
 	tokenExpiresIn   int
 	registrationCode int  // optional override status for registration
 	failRefresh      bool // reject refresh_token grants with HTTP 400
+	failExchange     bool // reject authorization_code grants with HTTP 400
 }
 
 func newOAuthServer() *oauthServer {
@@ -104,6 +106,13 @@ func (o *oauthServer) handle(w http.ResponseWriter, r *http.Request) {
 		expiresIn := o.tokenExpiresIn
 		o.mu.Unlock()
 		if isRefresh && failRefresh {
+			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+			return
+		}
+		o.mu.Lock()
+		failExchange := o.failExchange
+		o.mu.Unlock()
+		if !isRefresh && failExchange {
 			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
 			return
 		}
@@ -623,15 +632,188 @@ func TestNewOAuthTokenSource_Validation(t *testing.T) {
 	}
 }
 
+// ── error-path coverage ─────────────────────────────────────────────────────
+
+func TestDiscoverAuth_NetworkError(t *testing.T) {
+	// Dead host: every getJSON GET fails, DiscoverAuth returns not-found.
+	if _, err := DiscoverAuth(context.Background(), "http://127.0.0.1:1/mcp", nil); err == nil {
+		t.Fatal("expected error against dead host")
+	}
+}
+
+func TestDiscoverAuth_NonJSONProtectedResource(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			_, _ = w.Write([]byte("not json")) // getJSON decode error (swallowed)
+		case "/.well-known/oauth-authorization-server":
+			writeJSON(w, map[string]any{"authorization_endpoint": r.Host + "/a", "token_endpoint": "/t"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	if _, err := DiscoverAuth(context.Background(), srv.URL+"/mcp", srv.Client()); err != nil {
+		t.Fatalf("expected fallback to succeed, got %v", err)
+	}
+}
+
+func TestDiscoverAuth_ASMetadataMissingAuthEndpoint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-authorization-server" {
+			writeJSON(w, map[string]any{"token_endpoint": "/t"}) // no authorization_endpoint -> continue
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	if _, err := DiscoverAuth(context.Background(), srv.URL+"/mcp", srv.Client()); err == nil {
+		t.Fatal("expected error when AS metadata lacks authorization_endpoint")
+	}
+}
+
+func TestOriginOf_ParseError(t *testing.T) {
+	// A control character makes url.Parse fail outright.
+	if _, err := DiscoverAuth(context.Background(), "http://exa\x7fmple", nil); err == nil {
+		t.Fatal("expected parse error for malformed URL")
+	}
+}
+
+func TestRegisterClient_NetworkError(t *testing.T) {
+	if _, err := RegisterClient(context.Background(), "http://127.0.0.1:1/register", ClientRegistration{}, nil); err == nil {
+		t.Fatal("expected network error")
+	}
+}
+
+func TestNewOAuthTokenSource_NilHTTPClient(t *testing.T) {
+	// Metadata + ClientID provided: constructor needs no network and exercises
+	// the default-HTTPClient branch.
+	ts, err := NewOAuthTokenSource(context.Background(), OAuthConfig{
+		ServerURL: "https://example.com/mcp",
+		ClientID:  "static",
+		Metadata:  &AuthServerMetadata{AuthorizationEndpoint: "https://as/authorize", TokenEndpoint: "https://as/token"},
+	})
+	if err != nil {
+		t.Fatalf("NewOAuthTokenSource: %v", err)
+	}
+	if _, err := ts.Token(context.Background()); !errors.Is(err, ErrAuthorizationRequired) {
+		t.Fatalf("err = %v, want ErrAuthorizationRequired", err)
+	}
+}
+
+func TestOAuthTokenSource_BadRedirectFromAuthorize(t *testing.T) {
+	o := newOAuthServer()
+	defer o.Close()
+	ts, err := NewOAuthTokenSource(context.Background(), OAuthConfig{
+		ServerURL:  o.URL(),
+		ClientID:   "static",
+		HTTPClient: o.srv.Client(),
+		Authorize: func(_ context.Context, _ string) (string, error) {
+			return "http://cb?error=access_denied", nil // codeFromRedirect error
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewOAuthTokenSource: %v", err)
+	}
+	if _, err := ts.Token(context.Background()); err == nil {
+		t.Fatal("expected error from bad redirect")
+	}
+}
+
+func TestOAuthTokenSource_ExchangeError(t *testing.T) {
+	o := newOAuthServer()
+	o.failExchange = true
+	defer o.Close()
+	ts, err := NewOAuthTokenSource(context.Background(), OAuthConfig{
+		ServerURL:  o.URL(),
+		ClientID:   "static",
+		HTTPClient: o.srv.Client(),
+		Authorize: func(_ context.Context, authURL string) (string, error) {
+			u, _ := url.Parse(authURL)
+			return "http://cb?code=c&state=" + url.QueryEscape(u.Query().Get("state")), nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewOAuthTokenSource: %v", err)
+	}
+	if _, err := ts.Token(context.Background()); err == nil {
+		t.Fatal("expected token exchange error")
+	}
+}
+
+func TestOAuthTokenSource_StoreSetError(t *testing.T) {
+	o := newOAuthServer()
+	defer o.Close()
+	ts, err := NewOAuthTokenSource(context.Background(), OAuthConfig{
+		ServerURL:  o.URL(),
+		ClientID:   "static",
+		Store:      failingStore{},
+		HTTPClient: o.srv.Client(),
+		Authorize: func(_ context.Context, authURL string) (string, error) {
+			u, _ := url.Parse(authURL)
+			return "http://cb?code=c&state=" + url.QueryEscape(u.Query().Get("state")), nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewOAuthTokenSource: %v", err)
+	}
+	if _, err := ts.Token(context.Background()); err == nil {
+		t.Fatal("expected store.Set error")
+	}
+}
+
+func TestNewOAuthHTTPClient_TransportError(t *testing.T) {
+	// base.RoundTrip fails (connection refused).
+	hc := NewOAuthHTTPClient(provider.StaticToken("tok"), nil)
+	req, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1:1", nil)
+	if _, err := hc.Do(req); err == nil {
+		t.Fatal("expected transport error")
+	}
+}
+
+func TestNewOAuthHTTPClient_RetryTokenError(t *testing.T) {
+	resource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer resource.Close()
+	// Errors on the second Token() call (the post-401 refresh).
+	ts := &fakeInvalidatingTS{tokens: []string{"first"}, errAfter: 1}
+	hc := NewOAuthHTTPClient(ts, nil)
+	req, _ := http.NewRequest(http.MethodGet, resource.URL, nil)
+	if _, err := hc.Do(req); err == nil {
+		t.Fatal("expected error when retry token fetch fails")
+	}
+}
+
+func TestNewOAuthHTTPClient_CloneBodyError(t *testing.T) {
+	resource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer resource.Close()
+	ts := &fakeInvalidatingTS{tokens: []string{"a", "b"}}
+	hc := NewOAuthHTTPClient(ts, nil)
+	req, _ := http.NewRequest(http.MethodPost, resource.URL, strings.NewReader("body"))
+	req.GetBody = func() (io.ReadCloser, error) { return nil, errors.New("rewind failed") }
+	if _, err := hc.Do(req); err == nil {
+		t.Fatal("expected clone body error on retry")
+	}
+}
+
 // ── test doubles ────────────────────────────────────────────────────────────
 
 type fakeInvalidatingTS struct {
 	tokens      []string
 	idx         int
+	calls       int
+	errAfter    int // when >0, Token returns an error on call number errAfter+
 	invalidated bool
 }
 
 func (f *fakeInvalidatingTS) Token(_ context.Context) (string, error) {
+	f.calls++
+	if f.errAfter > 0 && f.calls > f.errAfter {
+		return "", errors.New("token fetch failed")
+	}
 	tok := f.tokens[f.idx]
 	if f.idx < len(f.tokens)-1 {
 		f.idx++
@@ -646,3 +828,10 @@ type fakeErrTS struct{}
 func (fakeErrTS) Token(_ context.Context) (string, error) {
 	return "", errors.New("boom")
 }
+
+// failingStore returns an error from Set to exercise persistence error paths.
+type failingStore struct{}
+
+func (failingStore) Get(string) (*oauth2.Token, bool) { return nil, false }
+func (failingStore) Set(string, *oauth2.Token) error  { return errors.New("store failed") }
+func (failingStore) Delete(string) error              { return nil }
