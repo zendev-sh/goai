@@ -4087,12 +4087,15 @@ func TestStreamText_OnStepFinishPanic(t *testing.T) {
 	for range stream.Stream() {
 	}
 
-	result := stream.Result()
-	if stream.Err() != nil {
-		t.Fatalf("unexpected error: %v", stream.Err())
+	var pe *PanicError
+	if !errors.As(stream.Err(), &pe) {
+		t.Fatalf("stream.Err() = %v, want *PanicError", stream.Err())
 	}
-	if result.Text != "hello" {
-		t.Errorf("Text = %q, want %q", result.Text, "hello")
+	if pe.Phase != "OnStepFinish" {
+		t.Errorf("Phase = %q, want OnStepFinish", pe.Phase)
+	}
+	if pe.Value != "hook panic" {
+		t.Errorf("Value = %v, want %q", pe.Value, "hook panic")
 	}
 }
 
@@ -4120,12 +4123,12 @@ func TestStreamText_OnResponsePanic(t *testing.T) {
 	for range stream.Stream() {
 	}
 
-	result := stream.Result()
-	if stream.Err() != nil {
-		t.Fatalf("unexpected error: %v", stream.Err())
+	var pe *PanicError
+	if !errors.As(stream.Err(), &pe) {
+		t.Fatalf("stream.Err() = %v, want *PanicError", stream.Err())
 	}
-	if result.Text != "hello" {
-		t.Errorf("Text = %q, want %q", result.Text, "hello")
+	if pe.Phase != "OnResponse" {
+		t.Errorf("Phase = %q, want OnResponse", pe.Phase)
 	}
 }
 
@@ -4140,17 +4143,18 @@ func TestGenerateText_OnStepFinishPanic(t *testing.T) {
 		},
 	}
 
-	result, err := GenerateText(t.Context(), model,
+	_, err := GenerateText(t.Context(), model,
 		WithPrompt("hi"),
 		WithOnStepFinish(func(_ StepResult) {
 			panic("hook panic")
 		}),
 	)
-	if err != nil {
-		t.Fatal(err)
+	var pe *PanicError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want *PanicError", err)
 	}
-	if result.Text != "ok" {
-		t.Errorf("Text = %q, want %q", result.Text, "ok")
+	if pe.Phase != "OnStepFinish" {
+		t.Errorf("Phase = %q, want OnStepFinish", pe.Phase)
 	}
 }
 
@@ -4165,17 +4169,18 @@ func TestGenerateText_OnResponsePanic(t *testing.T) {
 		},
 	}
 
-	result, err := GenerateText(t.Context(), model,
+	_, err := GenerateText(t.Context(), model,
 		WithPrompt("hi"),
 		WithOnResponse(func(_ ResponseInfo) {
 			panic("hook panic")
 		}),
 	)
-	if err != nil {
-		t.Fatal(err)
+	var pe *PanicError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want *PanicError", err)
 	}
-	if result.Text != "ok" {
-		t.Errorf("Text = %q, want %q", result.Text, "ok")
+	if pe.Phase != "OnResponse" {
+		t.Errorf("Phase = %q, want OnResponse", pe.Phase)
 	}
 }
 
@@ -4219,8 +4224,8 @@ func TestBuildToolMap_EmptyToolName(t *testing.T) {
 }
 
 // TestStreamText_ToolLoop_OnRequestPanic verifies that a panicking OnRequest
-// hook on step 2+ is safely recovered: the process does not crash and the
-// stream still delivers the final text from step 2.
+// hook on step 2+ is surfaced as a *PanicError through stream.Err() (the
+// goroutine does not crash the process).
 func TestStreamText_ToolLoop_OnRequestPanic(t *testing.T) {
 	var callCount atomic.Int32
 	model := &mockModel{
@@ -4262,12 +4267,13 @@ func TestStreamText_ToolLoop_OnRequestPanic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := stream.Result()
-	if err := stream.Err(); err != nil {
-		t.Fatalf("unexpected stream error: %v", err)
+	stream.Result()
+	var pe *PanicError
+	if !errors.As(stream.Err(), &pe) {
+		t.Fatalf("stream.Err() = %v, want *PanicError", stream.Err())
 	}
-	if !strings.Contains(result.Text, "done") {
-		t.Errorf("Text = %q, want containing 'done'", result.Text)
+	if pe.Phase != "OnRequest" {
+		t.Errorf("Phase = %q, want OnRequest", pe.Phase)
 	}
 }
 
@@ -4314,8 +4320,8 @@ func TestStreamText_ToolLoop_OnResponsePanicOnError(t *testing.T) {
 }
 
 // TestStreamText_ToolLoop_OnResponsePanicOnSuccess verifies that a panicking
-// OnResponse hook fired after a successful step 2+ drain is safely recovered
-// and the stream still delivers the final text.
+// OnResponse hook fired after a successful step 2+ drain is surfaced as a
+// *PanicError through stream.Err().
 func TestStreamText_ToolLoop_OnResponsePanicOnSuccess(t *testing.T) {
 	var callCount atomic.Int32
 	model := &mockModel{
@@ -4352,18 +4358,16 @@ func TestStreamText_ToolLoop_OnResponsePanicOnSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := stream.Result()
-	if err := stream.Err(); err != nil {
-		t.Fatalf("unexpected stream error: %v", err)
+	stream.Result()
+	var pe *PanicError
+	if !errors.As(stream.Err(), &pe) {
+		t.Fatalf("stream.Err() = %v, want *PanicError", stream.Err())
 	}
-	if !strings.Contains(result.Text, "final") {
-		t.Errorf("Text = %q, want containing 'final'", result.Text)
+	if pe.Phase != "OnResponse" {
+		t.Errorf("Phase = %q, want OnResponse", pe.Phase)
 	}
 }
 
-// TestStreamText_ToolLoop_OnStepFinishPanic verifies that a panicking
-// OnStepFinish hook on step 2+ is safely recovered and the stream still
-// delivers the final text.
 // TestOnToolCall_PanicIsolation verifies that a panicking OnToolCall hook
 // does not prevent a second hook from firing.
 func TestOnToolCall_PanicIsolation(t *testing.T) {
@@ -4452,10 +4456,10 @@ func TestOnToolCallStart_PanicIsolation(t *testing.T) {
 	}
 }
 
-// TestGenerateText_OnResponse_PanicIsolation verifies that in the GenerateText
-// multi-step loop, a panicking OnResponse hook does not prevent the second hook
-// from firing (recover-wrapped path).
-func TestGenerateText_OnResponse_PanicIsolation(t *testing.T) {
+// TestGenerateText_OnResponse_PanicPropagates verifies that a panicking
+// OnResponse hook is surfaced as a *PanicError and prevents subsequent
+// callbacks from firing (propagate-fatal contract).
+func TestGenerateText_OnResponse_PanicPropagates(t *testing.T) {
 	var secondFired atomic.Bool
 	model := &mockModel{
 		id: "test",
@@ -4467,22 +4471,25 @@ func TestGenerateText_OnResponse_PanicIsolation(t *testing.T) {
 		},
 	}
 
-	result, err := GenerateText(t.Context(), model,
+	_, err := GenerateText(t.Context(), model,
 		WithPrompt("hi"),
 		WithOnResponse(func(_ ResponseInfo) { panic("hook1 panic") }),
 		WithOnResponse(func(_ ResponseInfo) { secondFired.Store(true) }),
 	)
-	if err != nil {
-		t.Fatal(err)
+	var pe *PanicError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want *PanicError", err)
 	}
-	if result.Text != "ok" {
-		t.Errorf("Text = %q, want ok", result.Text)
+	if pe.Phase != "OnResponse" {
+		t.Errorf("Phase = %q, want OnResponse", pe.Phase)
 	}
-	if !secondFired.Load() {
-		t.Error("second OnResponse hook should fire even if first panics (GenerateText multi-step is recover-wrapped)")
+	if secondFired.Load() {
+		t.Error("second OnResponse hook should NOT fire after the first panics (propagate-fatal)")
 	}
 }
 
+// TestStreamText_ToolLoop_OnStepFinishPanic verifies that a panicking
+// OnStepFinish hook on step 2+ is surfaced as a *PanicError through stream.Err().
 func TestStreamText_ToolLoop_OnStepFinishPanic(t *testing.T) {
 	var callCount atomic.Int32
 	model := &mockModel{
@@ -4519,12 +4526,13 @@ func TestStreamText_ToolLoop_OnStepFinishPanic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := stream.Result()
-	if err := stream.Err(); err != nil {
-		t.Fatalf("unexpected stream error: %v", err)
+	stream.Result()
+	var pe *PanicError
+	if !errors.As(stream.Err(), &pe) {
+		t.Fatalf("stream.Err() = %v, want *PanicError", stream.Err())
 	}
-	if !strings.Contains(result.Text, "final") {
-		t.Errorf("Text = %q, want containing 'final'", result.Text)
+	if pe.Phase != "OnStepFinish" {
+		t.Errorf("Phase = %q, want OnStepFinish", pe.Phase)
 	}
 }
 

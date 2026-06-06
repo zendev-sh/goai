@@ -3,6 +3,7 @@ package goai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -1133,10 +1134,10 @@ func TestOnBeforeToolExecute_SkipFiresOnToolCallWithSkipped(t *testing.T) {
 	}
 }
 
-// --- Finding 7: OnBeforeStep panic recovery ---
+// --- Finding 7: OnBeforeStep panic propagation ---
 
-func TestOnBeforeStep_PanicRecovery_GenerateText(t *testing.T) {
-	// OnBeforeStep panics --should be recovered, step proceeds normally.
+func TestOnBeforeStep_PanicPropagates_GenerateText(t *testing.T) {
+	// OnBeforeStep panics --surfaced as *PanicError, loop stops before step 2.
 	callCount := 0
 	model := &mockModel{
 		id: "test",
@@ -1152,7 +1153,7 @@ func TestOnBeforeStep_PanicRecovery_GenerateText(t *testing.T) {
 		},
 	}
 
-	result, err := GenerateText(t.Context(), model,
+	_, err := GenerateText(t.Context(), model,
 		WithPrompt("go"),
 		WithMaxSteps(3),
 		WithTools(Tool{
@@ -1163,18 +1164,19 @@ func TestOnBeforeStep_PanicRecovery_GenerateText(t *testing.T) {
 			panic("step panic!")
 		}),
 	)
-	if err != nil {
-		t.Fatal(err)
+	var pe *PanicError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want *PanicError", err)
 	}
-	if callCount != 2 {
-		t.Errorf("LLM called %d times, want 2 (panic recovered, step proceeded)", callCount)
+	if pe.Phase != "OnBeforeStep" {
+		t.Errorf("Phase = %q, want OnBeforeStep", pe.Phase)
 	}
-	if result.Text != "done after panic" {
-		t.Errorf("Text = %q, want 'done after panic'", result.Text)
+	if callCount != 1 {
+		t.Errorf("LLM called %d times, want 1 (loop stops at the panicking hook before step 2)", callCount)
 	}
 }
 
-func TestOnBeforeStep_PanicRecovery_StreamText(t *testing.T) {
+func TestOnBeforeStep_PanicPropagates_StreamText(t *testing.T) {
 	callCount := 0
 	model := &mockModel{
 		id: "test",
@@ -1207,12 +1209,16 @@ func TestOnBeforeStep_PanicRecovery_StreamText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := stream.Result()
-	if callCount != 2 {
-		t.Errorf("LLM called %d times, want 2", callCount)
+	stream.Result()
+	var pe *PanicError
+	if !errors.As(stream.Err(), &pe) {
+		t.Fatalf("stream.Err() = %v, want *PanicError", stream.Err())
 	}
-	if result.Text != "recovered" {
-		t.Errorf("Text = %q, want recovered", result.Text)
+	if pe.Phase != "OnBeforeStep" {
+		t.Errorf("Phase = %q, want OnBeforeStep", pe.Phase)
+	}
+	if callCount != 1 {
+		t.Errorf("LLM called %d times, want 1 (loop stops at the panicking hook)", callCount)
 	}
 }
 
@@ -1419,8 +1425,8 @@ func TestOnBeforeStep_GenerateObject_InjectMessages(t *testing.T) {
 	}
 }
 
-func TestOnBeforeStep_GenerateObject_PanicRecovery(t *testing.T) {
-	// OnBeforeStep panics in GenerateObject -- recovered, step proceeds.
+func TestOnBeforeStep_GenerateObject_PanicPropagates(t *testing.T) {
+	// OnBeforeStep panics in GenerateObject -- surfaced as *PanicError.
 	callCount := 0
 	model := &mockModel{
 		id: "test",
@@ -1444,7 +1450,7 @@ func TestOnBeforeStep_GenerateObject_PanicRecovery(t *testing.T) {
 		Value int    `json:"value"`
 	}
 
-	result, err := GenerateObject[TestObj](t.Context(), model,
+	_, err := GenerateObject[TestObj](t.Context(), model,
 		WithPrompt("go"),
 		WithMaxSteps(3),
 		WithTools(Tool{
@@ -1455,14 +1461,15 @@ func TestOnBeforeStep_GenerateObject_PanicRecovery(t *testing.T) {
 			panic("object step panic!")
 		}),
 	)
-	if err != nil {
-		t.Fatal(err)
+	var pe *PanicError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want *PanicError", err)
 	}
-	if callCount != 2 {
-		t.Errorf("LLM called %d times, want 2 (panic recovered)", callCount)
+	if pe.Phase != "OnBeforeStep" {
+		t.Errorf("Phase = %q, want OnBeforeStep", pe.Phase)
 	}
-	if result.Object.Name != "recovered" {
-		t.Errorf("Object.Name = %q, want recovered", result.Object.Name)
+	if callCount != 1 {
+		t.Errorf("LLM called %d times, want 1 (loop stops at the panicking hook)", callCount)
 	}
 }
 
@@ -2350,8 +2357,8 @@ func TestOnFinish_StreamText(t *testing.T) {
 	}
 }
 
-func TestOnFinish_PanicRecovery(t *testing.T) {
-	// OnFinish panics. Verify no crash and second hook still fires.
+func TestOnFinish_PanicPropagates(t *testing.T) {
+	// OnFinish panics. Surfaced as *PanicError; the second hook does NOT fire.
 	var secondCalled bool
 	model := &mockModel{
 		id: "test",
@@ -2373,11 +2380,15 @@ func TestOnFinish_PanicRecovery(t *testing.T) {
 			secondCalled = true
 		}),
 	)
-	if err != nil {
-		t.Fatal(err)
+	var pe *PanicError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want *PanicError", err)
 	}
-	if !secondCalled {
-		t.Error("second OnFinish hook should fire even when first panics")
+	if pe.Phase != "OnFinish" {
+		t.Errorf("Phase = %q, want OnFinish", pe.Phase)
+	}
+	if secondCalled {
+		t.Error("second OnFinish hook should NOT fire after the first panics (propagate-fatal)")
 	}
 }
 

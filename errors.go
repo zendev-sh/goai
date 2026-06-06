@@ -18,6 +18,41 @@ func (e *ContextOverflowError) Error() string {
 	return e.Message
 }
 
+// PanicError wraps a value recovered from a panic in a user-provided callback
+// (a lifecycle hook or the StopWhen predicate). It is returned by GenerateText
+// and GenerateObject, and surfaced through stream.Err() for StreamText and
+// StreamObject, so callers can intercept callback panics programmatically
+// instead of having them swallowed.
+//
+// Panics inside the tool path (tool Execute, OnToolCallStart, OnToolCall,
+// OnBeforeToolExecute, OnAfterToolExecute) are NOT wrapped in a PanicError:
+// they keep their resilient behavior (converted to a tool error, the agent
+// loop continues). They are still reported to any OnPanic hook.
+type PanicError struct {
+	// Phase identifies the callback that panicked, e.g. "OnStepFinish",
+	// "OnFinish", "OnResponse", "OnRequest", "OnBeforeStep", "StopWhen".
+	Phase string
+
+	// Value is the value passed to panic().
+	Value any
+
+	// Stack is the goroutine stack captured at the recovery point.
+	Stack []byte
+}
+
+func (e *PanicError) Error() string {
+	return fmt.Sprintf("goai: panic in %s: %v", e.Phase, e.Value)
+}
+
+// Unwrap returns the panic value if it is itself an error, enabling
+// errors.Is/errors.As against the original cause; otherwise it returns nil.
+func (e *PanicError) Unwrap() error {
+	if err, ok := e.Value.(error); ok {
+		return err
+	}
+	return nil
+}
+
 // APIError represents a non-overflow API error.
 type APIError struct {
 	Message         string

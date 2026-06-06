@@ -120,6 +120,11 @@ type options struct {
 	// Only one callback supported; setting a second replaces the first.
 	OnBeforeStep func(BeforeStepInfo) BeforeStepResult
 
+	// OnPanic is called whenever a user callback or the StopWhen predicate panics,
+	// before the panic is surfaced (as a *PanicError) or, for the tool path,
+	// recovered. Multiple callbacks are called in registration order.
+	OnPanic []func(PanicInfo)
+
 	// ExplicitSchema overrides auto-generated JSON Schema for GenerateObject/StreamObject.
 	ExplicitSchema json.RawMessage
 

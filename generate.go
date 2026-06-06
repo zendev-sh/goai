@@ -175,6 +175,7 @@ type TextStream struct {
 	onResponse   []func(ResponseInfo)
 	onStepFinish []func(StepResult)
 	onFinish     []func(FinishInfo)
+	onPanic      []func(PanicInfo)
 	startTime    time.Time
 
 	// stateRef, when non-nil, is transitioned to StepIdle when the consume
@@ -276,6 +277,15 @@ func (ts *TextStream) Err() error {
 
 func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<- string) {
 	defer close(ts.doneCh)
+	// Surface a panic from any user hook fired during teardown (OnStepFinish,
+	// OnResponse, OnFinish) through stream.Err(). Registered near the top so it
+	// runs after (LIFO) the hook defers below, catching panics they re-raise via
+	// callHook. A pre-existing stream error is preserved as the root cause.
+	defer recoverToStreamErr(ts.onPanic, "stream", func(e error) {
+		if ts.streamErr == nil {
+			ts.streamErr = e
+		}
+	})
 	// FIX 34: transition StateRef to StepIdle as the consume goroutine
 	// exits. Single-shot StreamText wires this (stateRef is nil for the
 	// multi-step streamWithToolLoop path, which owns its own StateRef
@@ -304,7 +314,7 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 	// Deferred BEFORE OnStepFinish so it runs AFTER it (LIFO order).
 	if len(ts.onFinish) > 0 {
 		defer func() {
-			fireOnFinish(ts.onFinish, FinishInfo{
+			fireOnFinish(ts.onPanic, ts.onFinish, FinishInfo{
 				TotalSteps:   1,
 				TotalUsage:   ts.usage,
 				FinishReason: ts.finishReason,
@@ -331,14 +341,7 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 				ProviderMetadata: ts.providerMetadata,
 			}
 			for _, fn := range ts.onStepFinish {
-				func(f func(StepResult)) {
-					defer func() {
-						if r := recover(); r != nil {
-							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
-						}
-					}()
-					f(stepResult)
-				}(fn)
+				callHook(ts.onPanic, "OnStepFinish", func() { fn(stepResult) })
 			}
 		}()
 	}
@@ -357,14 +360,7 @@ func (ts *TextStream) consume(rawOut chan<- provider.StreamChunk, textOut chan<-
 				info.StatusCode = apiErr.StatusCode
 			}
 			for _, fn := range ts.onResponse {
-				func(f func(ResponseInfo)) {
-					defer func() {
-						if r := recover(); r != nil {
-							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
-						}
-					}()
-					f(info)
-				}(fn)
+				callHook(ts.onPanic, "OnResponse", func() { fn(info) })
 			}
 		}()
 	}
@@ -706,6 +702,22 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 
 	go func() {
 		defer close(out)
+		// Surface a panic from any inline-fired hook (OnBeforeStep, OnRequest,
+		// OnResponse, OnStepFinish) or the StopWhen predicate as a *PanicError
+		// on the stream: emit it as a ChunkError (consume sets stream.Err() from
+		// it) followed by a ChunkFinish so the stream terminates cleanly. The
+		// OnPanic observers already fired via callHook for a *PanicError; a raw
+		// runtime panic is wrapped here so the goroutine never crashes.
+		defer func() {
+			if r := recover(); r != nil {
+				pe, ok := r.(*PanicError)
+				if !ok {
+					pe = newPanicError(o.OnPanic, "stream", r)
+				}
+				provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: pe})
+				provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkFinish, StoppedBy: provider.StopCauseAbort})
+			}
+		}()
 		if timeoutCancel != nil {
 			defer timeoutCancel()
 		}
@@ -715,10 +727,10 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 		var lastReasoning []provider.Part
 		var steps []StepResult
 		var stepsExhausted bool
-		var hookStopped bool              // true iff WithStopWhen or OnBeforeStep.Stop broke the loop
-		var stopCause provider.StopCause  // classifies how the loop exited (FIX 5)
-		firstStep := true                 // true only for step 1 (already have firstResult)
-		stepStart := step1Start           // goroutine-local start time per step
+		var hookStopped bool             // true iff WithStopWhen or OnBeforeStep.Stop broke the loop
+		var stopCause provider.StopCause // classifies how the loop exited (FIX 5)
+		firstStep := true                // true only for step 1 (already have firstResult)
+		stepStart := step1Start          // goroutine-local start time per step
 
 		// highestInflightStep tracks the maximum step counter announced via
 		// o.StateRef.set(StepLLMInFlight, ...). The deferred StepIdle publish
@@ -776,18 +788,13 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 				// Steps 2+: OnBeforeStep hook (can inject messages or stop loop).
 				if o.OnBeforeStep != nil {
 					var bsr BeforeStepResult
-					func() {
-						defer func() {
-							if r := recover(); r != nil {
-								fmt.Fprintf(os.Stderr, "goai: recovered panic in OnBeforeStep hook: %v\n", r)
-							}
-						}()
+					callHook(o.OnPanic, "OnBeforeStep", func() {
 						bsr = o.OnBeforeStep(BeforeStepInfo{
 							Ctx:      ctx,
 							Step:     step,
 							Messages: slices.Clone(params.Messages),
 						})
-					}()
+					})
 					if bsr.Stop {
 						// Semantic parity with WithStopWhen: mark as hookStopped.
 						hookStopped = true
@@ -801,13 +808,8 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 
 				// Steps 2+: DoStream inside goroutine.
 				for _, fn := range o.OnRequest {
-					func(f func(RequestInfo)) {
-						defer func() {
-							if r := recover(); r != nil {
-								fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
-							}
-						}()
-						f(RequestInfo{
+					callHook(o.OnPanic, "OnRequest", func() {
+						fn(RequestInfo{
 							Ctx:          ctx,
 							Model:        model.ModelID(),
 							MessageCount: len(params.Messages),
@@ -815,7 +817,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 							Timestamp:    time.Now(),
 							Messages:     requestMessages(params.System, params.Messages),
 						})
-					}(fn)
+					})
 				}
 
 				stepStart = time.Now()
@@ -826,21 +828,14 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 					return model.DoStream(ctx, params)
 				})
 				if err != nil {
-					// Fire OnResponse on error (recover-wrapped).
+					// Fire OnResponse on error.
 					for _, fn := range o.OnResponse {
-						func(f func(ResponseInfo)) {
-							defer func() {
-								if r := recover(); r != nil {
-									fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
-								}
-							}()
-							info := ResponseInfo{Latency: time.Since(stepStart), Error: err}
-							var apiErr *APIError
-							if errors.As(err, &apiErr) {
-								info.StatusCode = apiErr.StatusCode
-							}
-							f(info)
-						}(fn)
+						info := ResponseInfo{Latency: time.Since(stepStart), Error: err}
+						var apiErr *APIError
+						if errors.As(err, &apiErr) {
+							info.StatusCode = apiErr.StatusCode
+						}
+						callHook(o.OnPanic, "OnResponse", func() { fn(info) })
 					}
 					// responseMessages intentionally not set on error , buildResult falls back to
 					// a minimal assistant message from accumulated text. Intermediate tool round-trip
@@ -853,7 +848,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 					if len(steps) > 0 {
 						lastFinish = steps[len(steps)-1].FinishReason
 					}
-					fireOnFinish(o.OnFinish, FinishInfo{
+					fireOnFinish(o.OnPanic, o.OnFinish, FinishInfo{
 						TotalSteps:   len(steps),
 						TotalUsage:   totalUsage,
 						FinishReason: lastFinish,
@@ -877,7 +872,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 				if len(steps) > 0 {
 					lastFinish = steps[len(steps)-1].FinishReason
 				}
-				fireOnFinish(o.OnFinish, FinishInfo{
+				fireOnFinish(o.OnPanic, o.OnFinish, FinishInfo{
 					TotalSteps:   len(steps),
 					TotalUsage:   totalUsage,
 					FinishReason: lastFinish,
@@ -899,18 +894,13 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 
 			// OnResponse: Error is NOT set (call succeeded). Mid-stream errors use stream.Err().
 			for _, fn := range o.OnResponse {
-				func(f func(ResponseInfo)) {
-					defer func() {
-						if r := recover(); r != nil {
-							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
-						}
-					}()
-					f(ResponseInfo{
+				callHook(o.OnPanic, "OnResponse", func() {
+					fn(ResponseInfo{
 						Latency:      time.Since(stepStart),
 						Usage:        ds.usage,
 						FinishReason: ds.finishReason,
 					})
-				}(fn)
+				})
 			}
 
 			// --- Build StepResult, fire OnStepFinish ---
@@ -935,16 +925,9 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			// in this window must see StepStepFinished, not StepLLMInFlight.
 			o.StateRef.set(StepStepFinished, step)
 
-			// OnStepFinish (recover-wrapped).
+			// OnStepFinish.
 			for _, fn := range o.OnStepFinish {
-				func(f func(StepResult)) {
-					defer func() {
-						if r := recover(); r != nil {
-							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
-						}
-					}()
-					f(stepResult)
-				}(fn)
+				callHook(o.OnPanic, "OnStepFinish", func() { fn(stepResult) })
 			}
 
 			// Normalize: providers that send empty/wrong finish_reason with tool calls
@@ -993,6 +976,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 				onToolCall:      o.OnToolCall,
 				onBeforeExecute: o.OnBeforeToolExecute,
 				onAfterExecute:  o.OnAfterToolExecute,
+				onPanic:         o.OnPanic,
 			})
 			// Attach ToolResults to the step BEFORE the stop predicate sees it
 			// (FIX 7 / Vercel DefaultStepResult parity). steps[-1] is this step.
@@ -1022,7 +1006,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 			// here is a valid replay transcript (matching tool_use /
 			// tool_result pairs). Matches
 			// vercel-ai/packages/ai/src/generate-text/generate-text.ts.
-			if o.StopWhen != nil && stopSafe(o.StopWhen, steps) {
+			if o.StopWhen != nil && stopSafe(o.OnPanic, o.StopWhen, steps) {
 				hookStopped = true
 				stopCause = provider.StopCausePredicate
 				break
@@ -1036,7 +1020,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 		ts.stepsExhausted = stepsExhausted
 		ts.responseMessages = buildResponseMessages(params.Messages[originalLen:], steps, lastReasoning)
 
-		fireOnFinish(o.OnFinish, FinishInfo{
+		fireOnFinish(o.OnPanic, o.OnFinish, FinishInfo{
 			StepsExhausted: stepsExhausted,
 			TotalSteps:     len(steps),
 			TotalUsage:     totalUsage,
@@ -1148,6 +1132,7 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 	ts.onResponse = o.OnResponse
 	ts.onStepFinish = o.OnStepFinish
 	ts.onFinish = o.OnFinish
+	ts.onPanic = o.OnPanic
 	ts.startTime = start
 	// FIX 34: hand StateRef ownership to the consume goroutine; it will
 	// transition to StepIdle when the stream drains / errors. Only set on
@@ -1159,12 +1144,17 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 // GenerateText performs a non-streaming text generation.
 // When tools with Execute functions are provided and MaxSteps > 1,
 // it automatically runs a tool loop: generate → execute tools → re-generate.
-func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Option) (*TextResult, error) {
+func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Option) (_ *TextResult, err error) {
 	// Apply options FIRST so o.StateRef is populated before any early return.
 	// Registered BEFORE nil-model / prompt validation so pre-loop error returns
 	// also transition observers to StepIdle (otherwise pollers waiting for
 	// StepIdle would deadlock on validation errors).
 	o := applyOptions(opts...)
+
+	// Convert a *PanicError raised by a panicking hook or the StopWhen predicate
+	// into the returned error. Registered first so it runs last (after the
+	// StepIdle transition below), catching panics from the whole body.
+	defer recoverToError(&err)
 
 	var steps []StepResult
 	// highestInflightStep tracks the largest step index we have announced
@@ -1213,18 +1203,13 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		// OnBeforeStep: step 2+ only (step 1 has no prior tool results to act on).
 		if step > 1 && o.OnBeforeStep != nil {
 			var bsr BeforeStepResult
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						fmt.Fprintf(os.Stderr, "goai: recovered panic in OnBeforeStep hook: %v\n", r)
-					}
-				}()
+			callHook(o.OnPanic, "OnBeforeStep", func() {
 				bsr = o.OnBeforeStep(BeforeStepInfo{
 					Ctx:      ctx,
 					Step:     step,
 					Messages: slices.Clone(params.Messages),
 				})
-			}()
+			})
 			if bsr.Stop {
 				// Semantic parity with WithStopWhen: mark as hookStopped so
 				// post-loop StepsExhausted derivation does not mistake a
@@ -1239,13 +1224,15 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		}
 
 		for _, fn := range o.OnRequest {
-			fn(RequestInfo{
-				Ctx:          ctx,
-				Model:        model.ModelID(),
-				MessageCount: len(params.Messages),
-				ToolCount:    len(params.Tools),
-				Timestamp:    time.Now(),
-				Messages:     requestMessages(params.System, params.Messages),
+			callHook(o.OnPanic, "OnRequest", func() {
+				fn(RequestInfo{
+					Ctx:          ctx,
+					Model:        model.ModelID(),
+					MessageCount: len(params.Messages),
+					ToolCount:    len(params.Tools),
+					Timestamp:    time.Now(),
+					Messages:     requestMessages(params.System, params.Messages),
+				})
 			})
 		}
 
@@ -1257,23 +1244,16 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		})
 
 		for _, fn := range o.OnResponse {
-			func(f func(ResponseInfo)) {
-				defer func() {
-					if r := recover(); r != nil {
-						fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
-					}
-				}()
-				info := ResponseInfo{Latency: time.Since(start), Error: err}
-				if err == nil {
-					info.Usage = result.Usage
-					info.FinishReason = result.FinishReason
-				}
-				var apiErr *APIError
-				if errors.As(err, &apiErr) {
-					info.StatusCode = apiErr.StatusCode
-				}
-				f(info)
-			}(fn)
+			info := ResponseInfo{Latency: time.Since(start), Error: err}
+			if err == nil {
+				info.Usage = result.Usage
+				info.FinishReason = result.FinishReason
+			}
+			var apiErr *APIError
+			if errors.As(err, &apiErr) {
+				info.StatusCode = apiErr.StatusCode
+			}
+			callHook(o.OnPanic, "OnResponse", func() { fn(info) })
 		}
 
 		if err != nil {
@@ -1284,7 +1264,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 			if len(steps) > 0 {
 				lastFinish = steps[len(steps)-1].FinishReason
 			}
-			fireOnFinish(o.OnFinish, FinishInfo{
+			fireOnFinish(o.OnPanic, o.OnFinish, FinishInfo{
 				TotalSteps:   len(steps),
 				TotalUsage:   totalUsage,
 				FinishReason: lastFinish,
@@ -1313,14 +1293,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		o.StateRef.set(StepStepFinished, step)
 
 		for _, fn := range o.OnStepFinish {
-			func(f func(StepResult)) {
-				defer func() {
-					if r := recover(); r != nil {
-						fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
-					}
-				}()
-				f(stepResult)
-			}(fn)
+			callHook(o.OnPanic, "OnStepFinish", func() { fn(stepResult) })
 		}
 
 		// If no tools have Execute functions, skip the tool loop regardless of MaxSteps.
@@ -1344,7 +1317,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 			if len(result.ToolCalls) > 0 && len(toolMap) == 0 {
 				cause = provider.StopCauseNoExecutableTools
 			}
-			fireOnFinish(o.OnFinish, FinishInfo{
+			fireOnFinish(o.OnPanic, o.OnFinish, FinishInfo{
 				TotalSteps:   len(steps),
 				TotalUsage:   totalUsage,
 				FinishReason: tr.FinishReason,
@@ -1364,6 +1337,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 			onToolCall:      o.OnToolCall,
 			onBeforeExecute: o.OnBeforeToolExecute,
 			onAfterExecute:  o.OnAfterToolExecute,
+			onPanic:         o.OnPanic,
 		})
 		// Attach ToolResults to the step BEFORE the stop predicate sees it
 		// (FIX 7 / Vercel DefaultStepResult parity). steps[-1] is this step.
@@ -1379,7 +1353,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 		// tool_use paired with matching tool_result). Matches
 		// vercel-ai/packages/ai/src/generate-text/generate-text.ts where
 		// stopWhen() gates the next iteration only after tools have run.
-		if o.StopWhen != nil && stopSafe(o.StopWhen, steps) {
+		if o.StopWhen != nil && stopSafe(o.OnPanic, o.StopWhen, steps) {
 			hookStopped = true
 			stopCause = provider.StopCausePredicate
 			break
@@ -1404,7 +1378,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 	stopCause, stepsExhausted = finalizeStopCause(hookStopped, stopCause, steps, o.MaxSteps)
 	tr.StepsExhausted = stepsExhausted
 	tr.ResponseMessages = buildResponseMessages(params.Messages[originalLen:], steps, nil)
-	fireOnFinish(o.OnFinish, FinishInfo{
+	fireOnFinish(o.OnPanic, o.OnFinish, FinishInfo{
 		StepsExhausted: tr.StepsExhausted,
 		TotalSteps:     len(steps),
 		TotalUsage:     totalUsage,
@@ -1436,13 +1410,8 @@ func finalizeStopCause(hookStopped bool, current provider.StopCause, steps []Ste
 	return current, stepsExhausted
 }
 
-func stopSafe(pred StopCondition, steps []StepResult) (stop bool) {
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Fprintf(os.Stderr, "goai: recovered panic in StopWhen predicate: %v\n", r)
-			stop = false
-		}
-	}()
+func stopSafe(onPanic []func(PanicInfo), pred StopCondition, steps []StepResult) bool {
+	var stop bool
 	// Pass a shallow defensive copy so predicates cannot re-order or truncate
 	// the internal slice. NOTE: this is a TOP-LEVEL copy only - nested slices
 	// (StepResult.ToolCalls, StepResult.ToolResults, StepResult.Content) are
@@ -1451,19 +1420,16 @@ func stopSafe(pred StopCondition, steps []StepResult) (stop bool) {
 	// state and is a contract violation. Deep-clone would be prohibitively
 	// expensive per-step for a feature (predicate side-effects) that is not
 	// a supported use case.
-	return pred(slices.Clone(steps))
+	//
+	// A panic in the predicate is fired to OnPanic and surfaced as a
+	// *PanicError (returned by GenerateText, or via stream.Err() for StreamText).
+	callHook(onPanic, "StopWhen", func() { stop = pred(slices.Clone(steps)) })
+	return stop
 }
 
-func fireOnFinish(hooks []func(FinishInfo), info FinishInfo) {
+func fireOnFinish(onPanic []func(PanicInfo), hooks []func(FinishInfo), info FinishInfo) {
 	for _, fn := range hooks {
-		func(f func(FinishInfo)) {
-			defer func() {
-				if r := recover(); r != nil {
-					fmt.Fprintf(os.Stderr, "goai: recovered panic in OnFinish hook: %v\n", r)
-				}
-			}()
-			f(info)
-		}(fn)
+		callHook(onPanic, "OnFinish", func() { fn(info) })
 	}
 }
 
@@ -1535,11 +1501,12 @@ type toolOutput struct {
 
 // toolHooks bundles the hook functions and options passed to executeToolsParallel.
 type toolHooks struct {
-	sequential         bool // when true, execute tools one at a time
-	onToolCallStart    []func(ToolCallStartInfo)
-	onToolCall         []func(ToolCallInfo)
-	onBeforeExecute    func(BeforeToolExecuteInfo) BeforeToolExecuteResult
-	onAfterExecute     func(AfterToolExecuteInfo) AfterToolExecuteResult
+	sequential      bool // when true, execute tools one at a time
+	onToolCallStart []func(ToolCallStartInfo)
+	onToolCall      []func(ToolCallInfo)
+	onBeforeExecute func(BeforeToolExecuteInfo) BeforeToolExecuteResult
+	onAfterExecute  func(AfterToolExecuteInfo) AfterToolExecuteResult
+	onPanic         []func(PanicInfo)
 }
 
 func executeToolsParallel(
@@ -1577,7 +1544,7 @@ func executeToolsParallel(
 				func(f func(ToolCallStartInfo)) {
 					defer func() {
 						if r := recover(); r != nil {
-							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+							firePanic(hooks.onPanic, "OnToolCallStart", r)
 						}
 					}()
 					f(ToolCallStartInfo{ToolCallID: tc.ID, ToolName: tc.Name, Step: step, Input: tc.Input})
@@ -1587,7 +1554,7 @@ func executeToolsParallel(
 				func(f func(ToolCallInfo)) {
 					defer func() {
 						if r := recover(); r != nil {
-							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+							firePanic(hooks.onPanic, "OnToolCall", r)
 						}
 					}()
 					f(ToolCallInfo{
@@ -1611,12 +1578,17 @@ func executeToolsParallel(
 			defer func() {
 				if r := recover(); r != nil {
 					if !executed {
+						// Distinguish OnToolCallStart panic from Execute panic.
+						if !hookFired {
+							firePanic(hooks.onPanic, "OnToolCallStart", r)
+						} else {
+							firePanic(hooks.onPanic, "tool:"+tc.Name, r)
+						}
 						panicStr := fmt.Sprintf("%v", r)
 						runes := []rune(panicStr)
 						if len(runes) > 500 {
 							panicStr = string(runes[:500]) + "..."
 						}
-						// Distinguish OnToolCallStart panic from Execute panic.
 						if !hookFired {
 							results[i] = toolOutput{index: i, err: fmt.Errorf("goai: OnToolCallStart hook for tool %q panicked: %s", tc.Name, panicStr)}
 						} else {
@@ -1634,7 +1606,7 @@ func executeToolsParallel(
 				func(f func(ToolCallStartInfo)) {
 					defer func() {
 						if r := recover(); r != nil {
-							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+							firePanic(hooks.onPanic, "OnToolCallStart", r)
 							hookPanicked = true
 						}
 					}()
@@ -1662,7 +1634,7 @@ func executeToolsParallel(
 				func() {
 					defer func() {
 						if r := recover(); r != nil {
-							fmt.Fprintf(os.Stderr, "goai: recovered panic in OnBeforeToolExecute hook: %v\n", r)
+							firePanic(hooks.onPanic, "OnBeforeToolExecute", r)
 							beforeResult = BeforeToolExecuteResult{
 								Skip:  true,
 								Error: fmt.Errorf("goai: OnBeforeToolExecute hook panicked: %v", r),
@@ -1689,7 +1661,7 @@ func executeToolsParallel(
 						func(f func(ToolCallInfo)) {
 							defer func() {
 								if r := recover(); r != nil {
-									fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+									firePanic(hooks.onPanic, "OnToolCall", r)
 								}
 							}()
 							f(ToolCallInfo{
@@ -1725,7 +1697,7 @@ func executeToolsParallel(
 				func() {
 					defer func() {
 						if r := recover(); r != nil {
-							fmt.Fprintf(os.Stderr, "goai: recovered panic in OnAfterToolExecute hook: %v\n", r)
+							firePanic(hooks.onPanic, "OnAfterToolExecute", r)
 							// Preserve original result on panic.
 						}
 					}()
@@ -1755,7 +1727,7 @@ func executeToolsParallel(
 				func(f func(ToolCallInfo)) {
 					defer func() {
 						if r := recover(); r != nil {
-							fmt.Fprintf(os.Stderr, "goai: recovered panic in hook: %v\n", r)
+							firePanic(hooks.onPanic, "OnToolCall", r)
 						}
 					}()
 					info := ToolCallInfo{
@@ -1879,7 +1851,7 @@ func appendToolRoundTrip(
 			ToolCallID:      tc.ID,
 			ToolName:        tc.Name,
 			ToolInput:       append(json.RawMessage(nil), tc.Input...), // clone byte slice
-			ProviderOptions: maps.Clone(tc.Metadata),                  // shallow clone (matches buildFinalAssistantMessages)
+			ProviderOptions: maps.Clone(tc.Metadata),                   // shallow clone (matches buildFinalAssistantMessages)
 		})
 	}
 	msgs = append(msgs, provider.Message{Role: provider.RoleAssistant, Content: parts})
@@ -2012,10 +1984,10 @@ func buildFinalAssistantMessages(text string, toolCalls []provider.ToolCall, rea
 }
 
 type drainResult struct {
-	text          string          // text-only (ChunkText), used for appendToolRoundTrip
-	reasoning     []provider.Part // reasoning/thinking parts, echoed back for providers that require it (e.g. Bedrock)
-	reasoningText string          // consolidated reasoning text (PartReasoning), surfaced via StepResult.Reasoning
-	toolCalls     []provider.ToolCall
+	text             string          // text-only (ChunkText), used for appendToolRoundTrip
+	reasoning        []provider.Part // reasoning/thinking parts, echoed back for providers that require it (e.g. Bedrock)
+	reasoningText    string          // consolidated reasoning text (PartReasoning), surfaced via StepResult.Reasoning
+	toolCalls        []provider.ToolCall
 	usage            provider.Usage
 	finishReason     provider.FinishReason
 	sources          []provider.Source
@@ -2030,10 +2002,10 @@ func drainStep(
 	out chan<- provider.StreamChunk,
 ) drainResult {
 	var (
-		textBuf      strings.Builder // ChunkText only (reasoning excluded)
-		reasoningBuf strings.Builder // accumulated reasoning text
-		reasoningMeta map[string]any // last metadata (contains signature)
-		dr           drainResult
+		textBuf       strings.Builder // ChunkText only (reasoning excluded)
+		reasoningBuf  strings.Builder // accumulated reasoning text
+		reasoningMeta map[string]any  // last metadata (contains signature)
+		dr            drainResult
 	)
 
 	for chunk := range source {

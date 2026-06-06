@@ -109,9 +109,11 @@ type ToolCallInfo struct {
 }
 
 // WithOnStepFinish adds a callback invoked after each generation step completes.
-// Multiple callbacks are called in registration order. Each callback is individually
-// panic-recovered in all paths (GenerateText, StreamText, GenerateObject, StreamObject).
-// A panic in one callback does not prevent subsequent callbacks from firing.
+// Multiple callbacks are called in registration order.
+//
+// A panic in a callback is reported to any OnPanic hook and then surfaced as a
+// *PanicError: returned by GenerateText/GenerateObject, or via stream.Err() for
+// StreamText/StreamObject. Subsequent callbacks do not run.
 //
 // Timing: OnStepFinish fires after the LLM call for the step returns and
 // BEFORE any tool executions for that step run. The StepResult passed to
@@ -156,8 +158,11 @@ type FinishInfo struct {
 }
 
 // WithOnFinish adds a callback invoked once after all generation steps complete.
-// Multiple callbacks are called in registration order. Each callback is individually
-// panic-recovered so a panic in one does not prevent subsequent callbacks from firing.
+// Multiple callbacks are called in registration order.
+//
+// A panic in a callback is reported to any OnPanic hook and then surfaced as a
+// *PanicError: returned by GenerateText/GenerateObject, or via stream.Err() for
+// StreamText/StreamObject. Subsequent callbacks do not run.
 //
 // This hook fires in all code paths:
 //   - GenerateText: after the tool loop exits (natural, max_steps, or hook_stopped)
@@ -176,27 +181,29 @@ func WithOnFinish(fn func(FinishInfo)) Option {
 
 // WithOnRequest adds a callback invoked before each model call.
 // Multiple callbacks are called in registration order.
-// In GenerateText, GenerateObject, and StreamText's first step, panics propagate
-// to the caller (a panic in one callback prevents subsequent callbacks from firing).
-// In StreamText step 2+ (goroutine), each callback is individually panic-recovered.
+//
+// A panic in a callback is reported to any OnPanic hook and then surfaced as a
+// *PanicError: returned by GenerateText/GenerateObject, or via stream.Err() for
+// StreamText/StreamObject (step 2+ panics, fired in the stream goroutine, also
+// surface through stream.Err()). Subsequent callbacks do not run.
 func WithOnRequest(fn func(RequestInfo)) Option {
 	return func(o *options) { o.OnRequest = append(o.OnRequest, fn) }
 }
 
 // WithOnResponse adds a callback invoked after each model call completes.
 // Multiple callbacks are called in registration order.
-// Each callback is individually panic-recovered in GenerateText (all steps),
-// all StreamText success paths (single-step consume goroutine and multi-step goroutine),
-// GenerateObject (all steps), StreamObject's success path (consume goroutine),
-// and StreamObject's error path.
-// In StreamText's first-step error path, panics propagate to the caller.
+//
+// A panic in a callback is reported to any OnPanic hook and then surfaced as a
+// *PanicError: returned by GenerateText/GenerateObject, or via stream.Err() for
+// StreamText/StreamObject. Subsequent callbacks do not run.
 func WithOnResponse(fn func(ResponseInfo)) Option {
 	return func(o *options) { o.OnResponse = append(o.OnResponse, fn) }
 }
 
 // WithOnToolCall adds a callback invoked after each tool execution.
 // Multiple callbacks are called in registration order. Each callback is individually
-// panic-recovered so a panic in one does not prevent others from firing.
+// panic-recovered (and reported to any OnPanic hook) so a panic in one does not
+// prevent others from firing or abort the agent loop.
 func WithOnToolCall(fn func(ToolCallInfo)) Option {
 	return func(o *options) { o.OnToolCall = append(o.OnToolCall, fn) }
 }
@@ -218,8 +225,8 @@ type ToolCallStartInfo struct {
 
 // WithOnToolCallStart adds a callback invoked before each tool execution.
 // Multiple callbacks are called in registration order. Each callback is individually
-// panic-recovered so a panic in one does not prevent others from firing. If any callback
-// panics, the tool does not execute.
+// panic-recovered (and reported to any OnPanic hook) so a panic in one does not
+// prevent others from firing. If any callback panics, the tool does not execute.
 func WithOnToolCallStart(fn func(ToolCallStartInfo)) Option {
 	return func(o *options) { o.OnToolCallStart = append(o.OnToolCallStart, fn) }
 }
@@ -286,7 +293,8 @@ type BeforeToolExecuteResult struct {
 // The callback can inspect the tool call and return a BeforeToolExecuteResult to skip
 // execution (e.g., for permission checks, rate limiting, or doom-loop detection).
 // Only one callback is supported; setting a second replaces the first.
-// The callback is panic-recovered; a panic skips the tool with an error result.
+// The callback is panic-recovered (and reported to any OnPanic hook); a panic
+// skips the tool with an error result.
 func WithOnBeforeToolExecute(fn func(BeforeToolExecuteInfo) BeforeToolExecuteResult) Option {
 	return func(o *options) { o.OnBeforeToolExecute = fn }
 }
@@ -341,7 +349,8 @@ type AfterToolExecuteResult struct {
 // Not called when OnBeforeToolExecute skips execution or for unknown tools.
 // Use OnToolCall with Skipped=true to observe skipped tool results.
 // Only one callback is supported; setting a second replaces the first.
-// The callback is panic-recovered; a panic preserves the original tool result.
+// The callback is panic-recovered (and reported to any OnPanic hook); a panic
+// preserves the original tool result.
 func WithOnAfterToolExecute(fn func(AfterToolExecuteInfo) AfterToolExecuteResult) Option {
 	return func(o *options) { o.OnAfterToolExecute = fn }
 }
@@ -381,9 +390,44 @@ type BeforeStepResult struct {
 // tool loop (step 2+, after tool execution). The callback can inject additional
 // messages or stop the loop early.
 // Only one callback is supported; setting a second replaces the first.
-// The callback is panic-recovered; a panic is logged and the step proceeds normally.
+//
+// A panic in the callback is reported to any OnPanic hook and then surfaced as a
+// *PanicError: returned by GenerateText/GenerateObject, or via stream.Err() for
+// StreamText. The loop stops at the panicking step.
 func WithOnBeforeStep(fn func(BeforeStepInfo) BeforeStepResult) Option {
 	return func(o *options) { o.OnBeforeStep = fn }
+}
+
+// PanicInfo is passed to the OnPanic hook when a user callback or the StopWhen
+// predicate panics.
+type PanicInfo struct {
+	// Phase identifies the callback that panicked, e.g. "OnStepFinish",
+	// "OnFinish", "OnResponse", "OnRequest", "OnBeforeStep", "StopWhen",
+	// "OnToolCallStart", "OnToolCall", "OnBeforeToolExecute",
+	// "OnAfterToolExecute", or "tool:<name>" for a tool's Execute function.
+	Phase string
+
+	// Value is the value passed to panic().
+	Value any
+
+	// Stack is the goroutine stack captured at the recovery point.
+	Stack []byte
+}
+
+// WithOnPanic adds a callback invoked whenever a user callback or the StopWhen
+// predicate panics. Multiple callbacks are called in registration order.
+//
+// It fires for every panicking callback, both the propagate-fatal lifecycle
+// hooks (OnRequest, OnResponse, OnStepFinish, OnFinish, OnBeforeStep, StopWhen)
+// and the resilient tool-path callbacks (tool Execute, OnToolCallStart,
+// OnToolCall, OnBeforeToolExecute, OnAfterToolExecute). Use it for observability
+// (otel spans, metrics, logging) regardless of how the panic is ultimately
+// handled.
+//
+// OnPanic fires before the panic is surfaced or recovered. A panic inside an
+// OnPanic callback itself is recovered and discarded.
+func WithOnPanic(fn func(PanicInfo)) Option {
+	return func(o *options) { o.OnPanic = append(o.OnPanic, fn) }
 }
 
 // WrapOnBeforeToolExecute returns an Option that wraps the existing OnBeforeToolExecute hook.

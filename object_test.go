@@ -1940,9 +1940,9 @@ func TestGenerateObject_ToolLoop_OnToolCallStart(t *testing.T) {
 	}
 }
 
-// TestGenerateObject_OnStepFinishPanicRecovery verifies that a panicking
-// OnStepFinish hook in GenerateObject is recovered and does not crash the caller.
-func TestGenerateObject_OnStepFinishPanicRecovery(t *testing.T) {
+// TestGenerateObject_OnStepFinishPanicPropagates verifies that a panicking
+// OnStepFinish hook in GenerateObject is surfaced as a *PanicError.
+func TestGenerateObject_OnStepFinishPanicPropagates(t *testing.T) {
 	model := &mockModel{
 		id: "test",
 		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
@@ -1954,21 +1954,23 @@ func TestGenerateObject_OnStepFinishPanicRecovery(t *testing.T) {
 		},
 	}
 
-	result, err := GenerateObject[simpleObject](t.Context(), model,
+	_, err := GenerateObject[simpleObject](t.Context(), model,
 		WithPrompt("generate"),
 		WithOnStepFinish(func(_ StepResult) { panic("test panic in OnStepFinish") }),
 	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	var pe *PanicError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want *PanicError", err)
 	}
-	if result.Object.Name != "Dave" {
-		t.Errorf("Object.Name = %q, want Dave", result.Object.Name)
+	if pe.Phase != "OnStepFinish" {
+		t.Errorf("Phase = %q, want OnStepFinish", pe.Phase)
 	}
 }
 
-// TestStreamObject_OnResponsePanicRecovery verifies that a panicking OnResponse
-// hook in ObjectStream.consume is recovered and does not crash the caller.
-func TestStreamObject_OnResponsePanicRecovery(t *testing.T) {
+// TestStreamObject_OnResponsePanicPropagates verifies that a panicking OnResponse
+// hook in ObjectStream.consume is surfaced as a *PanicError through stream.Err()
+// without crashing the caller.
+func TestStreamObject_OnResponsePanicPropagates(t *testing.T) {
 	model := &mockModel{
 		id: "test",
 		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
@@ -1989,13 +1991,13 @@ func TestStreamObject_OnResponsePanicRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Panic is recovered inside consume(); result should be returned cleanly.
-	result, err := stream.Result()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err = stream.Result()
+	var pe *PanicError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want *PanicError", err)
 	}
-	if result.Object.Name != "Carol" {
-		t.Errorf("Object.Name = %q, want Carol", result.Object.Name)
+	if pe.Phase != "OnResponse" {
+		t.Errorf("Phase = %q, want OnResponse", pe.Phase)
 	}
 }
 

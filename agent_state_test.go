@@ -646,9 +646,10 @@ func TestWithStopWhen_NilPredicate_NoOp(t *testing.T) {
 	}
 }
 
-// TestWithStopWhen_Panic_Recovered: a panicking predicate is treated as "do
-// not stop" and logged; loop continues normally.
-func TestWithStopWhen_Panic_Recovered(t *testing.T) {
+// TestWithStopWhen_Panic_Propagates: a panicking predicate is surfaced as a
+// *PanicError returned from GenerateText, and the loop stops immediately. When
+// the panic value is an error, PanicError.Unwrap exposes it.
+func TestWithStopWhen_Panic_Propagates(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	var callCount atomic.Int32
@@ -666,17 +667,25 @@ func TestWithStopWhen_Panic_Recovered(t *testing.T) {
 			return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop, Usage: provider.Usage{InputTokens: 1, OutputTokens: 1}}, nil
 		},
 	}
+	boom := errors.New("boom")
 	_, err := GenerateText(t.Context(), model,
 		WithPrompt("go"),
 		WithMaxSteps(5),
 		WithTools(Tool{Name: "t", Execute: func(context.Context, json.RawMessage) (string, error) { return "ok", nil }}),
-		WithStopWhen(func(steps []StepResult) bool { panic(errors.New("boom")) }),
+		WithStopWhen(func(steps []StepResult) bool { panic(boom) }),
 	)
-	if err != nil {
-		t.Fatal(err)
+	var pe *PanicError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want *PanicError", err)
 	}
-	if callCount.Load() != 2 {
-		t.Errorf("callCount=%d want 2 (loop should have proceeded past panic)", callCount.Load())
+	if pe.Phase != "StopWhen" {
+		t.Errorf("Phase = %q, want StopWhen", pe.Phase)
+	}
+	if !errors.Is(err, boom) {
+		t.Errorf("errors.Is(err, boom) = false; PanicError.Unwrap should expose the error panic value")
+	}
+	if callCount.Load() != 1 {
+		t.Errorf("callCount=%d want 1 (loop should stop at the panicking predicate)", callCount.Load())
 	}
 }
 
@@ -1631,7 +1640,7 @@ func TestStopSafe_AliasingContract_ShallowCloneIsolatesTopLevel(t *testing.T) {
 		_ = steps
 		return false
 	})
-	stop := stopSafe(pred, internal)
+	stop := stopSafe(nil, pred, internal)
 	if stop {
 		t.Fatalf("stopSafe returned true; predicate returned false")
 	}
@@ -1665,7 +1674,7 @@ func TestStopSafe_AliasingContract_ShallowCloneIsolatesTopLevel(t *testing.T) {
 		}
 		return false
 	})
-	if stopSafe(hazardous, internal) {
+	if stopSafe(nil, hazardous, internal) {
 		t.Fatalf("hazardous predicate returned false but stopSafe reported true")
 	}
 	if got := internal[0].ToolResults[0].Output; got != "CORRUPTED_BY_PREDICATE" {
