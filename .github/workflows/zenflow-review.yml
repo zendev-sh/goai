@@ -1,8 +1,8 @@
 name: zenflow PR review
 
-# Comment-triggered AI code review using zenflow + FPT Smart Cloud
-# (Qwen3.6-27B). Repo maintainers post `/zenflow-review` on a PR to
-# trigger a two-reviewer pass (Go idiomatics + security) that
+# Comment-triggered AI code review using zenflow + Google Gemini
+# (gemini-3-flash-preview). Repo maintainers post `/zenflow-review` on a
+# PR to trigger a two-reviewer pass (Go idiomatics + security) that
 # synthesises into a single PR comment. See .zenflow/pr-review.yaml for
 # the workflow spec.
 
@@ -66,9 +66,8 @@ jobs:
 
       - name: Run zenflow review
         env:
-          ZENFLOW_MODEL: fptcloud/Qwen3.6-27B
-          FPT_API_KEY: ${{ secrets.FPT_API_KEY }}
-          FPT_REGION: jp
+          ZENFLOW_MODEL: google/gemini-3-flash-preview
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           # --sandbox grants the safe tool set (read, write, grep, glob)
           # without bash. Without an explicit permission flag zenflow
