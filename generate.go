@@ -716,8 +716,8 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 		// runtime panic is wrapped here so the goroutine never crashes.
 		defer func() {
 			if r := recover(); r != nil {
-				pe, ok := r.(*PanicError)
-				if !ok {
+				pe := asPanicError(r)
+				if pe == nil {
 					pe = newPanicError(o.OnPanic, "stream", r)
 				}
 				provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: pe})

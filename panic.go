@@ -1,6 +1,9 @@
 package goai
 
-import "runtime/debug"
+import (
+	"errors"
+	"runtime/debug"
+)
 
 // firePanicHooks notifies every registered OnPanic observer. It never itself
 // panics: a panic inside an OnPanic callback is recovered and discarded so it
@@ -41,12 +44,9 @@ func newPanicError(onPanic []func(PanicInfo), phase string, r any) *PanicError {
 func callHook(onPanic []func(PanicInfo), phase string, fn func()) {
 	defer func() {
 		if r := recover(); r != nil {
-			// r is the recover() value (any). The direct type assertion is
-			// intentional, NOT errors.As: we detect whether THIS exact value is
-			// the sentinel we already wrapped, to avoid double-wrapping and
-			// re-firing OnPanic. errors.As would wrongly match a panic value that
-			// merely wraps a *PanicError and would drop the current phase.
-			if pe, ok := r.(*PanicError); ok {
+			// Already a *PanicError (re-panicked from an inner callHook): pass it
+			// through unchanged so OnPanic is not fired twice.
+			if pe := asPanicError(r); pe != nil {
 				panic(pe)
 			}
 			panic(newPanicError(onPanic, phase, r))
@@ -55,12 +55,25 @@ func callHook(onPanic []func(PanicInfo), phase string, fn func()) {
 	fn()
 }
 
+// asPanicError reports whether a recover() value is (or wraps) a *PanicError,
+// returning it if so. It bridges recover()'s any to errors.As: a non-error
+// panic value (e.g. a string) yields nil.
+func asPanicError(r any) *PanicError {
+	if err, ok := r.(error); ok {
+		var pe *PanicError
+		if errors.As(err, &pe) {
+			return pe
+		}
+	}
+	return nil
+}
+
 // recoverToError is deferred at synchronous entry points (GenerateText,
 // GenerateObject). It converts a *PanicError panic into the named return error
 // and re-panics any other value (genuine runtime panics are not masked).
 func recoverToError(err *error) {
 	if r := recover(); r != nil {
-		if pe, ok := r.(*PanicError); ok {
+		if pe := asPanicError(r); pe != nil {
 			*err = pe
 			return
 		}
@@ -75,7 +88,7 @@ func recoverToError(err *error) {
 // crashes the process.
 func recoverToStreamErr(onPanic []func(PanicInfo), phase string, set func(error)) {
 	if r := recover(); r != nil {
-		if pe, ok := r.(*PanicError); ok {
+		if pe := asPanicError(r); pe != nil {
 			set(pe)
 			return
 		}
