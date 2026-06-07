@@ -642,9 +642,14 @@ func buildParams(opts options) provider.GenerateParams {
 	}
 }
 
-func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o options, toolMap map[string]Tool) (*TextStream, error) {
+func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o options, toolMap map[string]Tool) (_ *TextStream, err error) {
 	params := buildParams(o)
 	originalLen := len(params.Messages)
+
+	// Convert a *PanicError from a synchronous step-1 hook (OnRequest, or
+	// OnResponse on the initial DoStream error) into the returned error. Hooks
+	// fired inside the streaming goroutine surface through stream.Err().
+	defer recoverToError(&err)
 
 	var timeoutCancel context.CancelFunc
 	if o.Timeout > 0 {
@@ -659,21 +664,23 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 	// fails, regardless of MaxSteps. Eliminates the split error contract.
 	o.StateRef.set(StepLLMInFlight, 1)
 	for _, fn := range o.OnRequest {
-		fn(RequestInfo{
-			Ctx:          ctx,
-			Model:        model.ModelID(),
-			MessageCount: len(params.Messages),
-			ToolCount:    len(params.Tools),
-			Timestamp:    time.Now(),
-			Messages:     requestMessages(params.System, params.Messages),
+		callHook(o.OnPanic, "OnRequest", func() {
+			fn(RequestInfo{
+				Ctx:          ctx,
+				Model:        model.ModelID(),
+				MessageCount: len(params.Messages),
+				ToolCount:    len(params.Tools),
+				Timestamp:    time.Now(),
+				Messages:     requestMessages(params.System, params.Messages),
+			})
 		})
 	}
 
 	start := time.Now()
-	firstResult, err := withRetry(ctx, o.MaxRetries, func() (*provider.StreamResult, error) {
+	firstResult, streamErr := withRetry(ctx, o.MaxRetries, func() (*provider.StreamResult, error) {
 		return model.DoStream(ctx, params)
 	})
-	if err != nil {
+	if streamErr != nil {
 		if timeoutCancel != nil {
 			timeoutCancel()
 		}
@@ -681,18 +688,17 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 		// already moved the step counter to 1 (StepLLMInFlight, 1); a poller
 		// observing between the two stores must not see step regress to 0.
 		o.StateRef.set(StepIdle, 1)
-		// OnRequest/OnResponse: not recover-wrapped (caller's goroutine).
-		// OnStepFinish: always recover-wrapped (prevents losing accumulated results).
-		// Inside goroutines: all hooks recover-wrapped.
+		// Step-1 OnResponse runs in the caller's goroutine; callHook surfaces a
+		// panic as a *PanicError via the deferred recoverToError above.
 		for _, fn := range o.OnResponse {
-			info := ResponseInfo{Latency: time.Since(start), Error: err}
+			info := ResponseInfo{Latency: time.Since(start), Error: streamErr}
 			var apiErr *APIError
-			if errors.As(err, &apiErr) {
+			if errors.As(streamErr, &apiErr) {
 				info.StatusCode = apiErr.StatusCode
 			}
-			fn(info)
+			callHook(o.OnPanic, "OnResponse", func() { fn(info) })
 		}
-		return nil, err // SAME error contract as single-step StreamText
+		return nil, streamErr // SAME error contract as single-step StreamText
 	}
 
 	// Step 1 succeeded. Goroutine-local copy of start time avoids closure capture.
@@ -1046,12 +1052,17 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 // When MaxSteps > 1 and executable tools are provided, StreamText runs an automatic
 // tool loop. The initial DoStream failure still returns (nil, error). Subsequent step
 // errors flow through the stream as ChunkError chunks; check stream.Err() after consuming.
-func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Option) (*TextStream, error) {
+func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Option) (_ *TextStream, err error) {
 	// Apply options FIRST so o.StateRef is populated before any early return.
 	// This guarantees pollers waiting for StepIdle do not deadlock when we
 	// return (nil, err) before the streaming goroutine starts (e.g. nil model,
 	// empty prompt, initial DoStream failure).
 	o := applyOptions(opts...)
+
+	// Convert a *PanicError from a synchronous step-1 hook (OnRequest, or
+	// OnResponse on a DoStream error) into the returned error. Hooks fired in
+	// the consume goroutine surface through stream.Err() instead.
+	defer recoverToError(&err)
 
 	if model == nil {
 		// Transition StepStarting→StepIdle for any observer so pollers do not deadlock.
@@ -1090,21 +1101,23 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 	o.StateRef.set(StepLLMInFlight, 1)
 
 	for _, fn := range o.OnRequest {
-		fn(RequestInfo{
-			Ctx:          ctx,
-			Model:        model.ModelID(),
-			MessageCount: len(params.Messages),
-			ToolCount:    len(params.Tools),
-			Timestamp:    time.Now(),
-			Messages:     requestMessages(params.System, params.Messages),
+		callHook(o.OnPanic, "OnRequest", func() {
+			fn(RequestInfo{
+				Ctx:          ctx,
+				Model:        model.ModelID(),
+				MessageCount: len(params.Messages),
+				ToolCount:    len(params.Tools),
+				Timestamp:    time.Now(),
+				Messages:     requestMessages(params.System, params.Messages),
+			})
 		})
 	}
 
 	start := time.Now()
-	result, err := withRetry(ctx, o.MaxRetries, func() (*provider.StreamResult, error) {
+	result, streamErr := withRetry(ctx, o.MaxRetries, func() (*provider.StreamResult, error) {
 		return model.DoStream(ctx, params)
 	})
-	if err != nil {
+	if streamErr != nil {
 		if timeoutCancel != nil {
 			timeoutCancel()
 		}
@@ -1117,14 +1130,14 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 		// see a monotonically non-decreasing step counter.
 		o.StateRef.set(StepIdle, 1)
 		for _, fn := range o.OnResponse {
-			info := ResponseInfo{Latency: time.Since(start), Error: err}
+			info := ResponseInfo{Latency: time.Since(start), Error: streamErr}
 			var apiErr *APIError
-			if errors.As(err, &apiErr) {
+			if errors.As(streamErr, &apiErr) {
 				info.StatusCode = apiErr.StatusCode
 			}
-			fn(info)
+			callHook(o.OnPanic, "OnResponse", func() { fn(info) })
 		}
-		return nil, err
+		return nil, streamErr
 	}
 
 	ts := newTextStream(ctx, result.Stream)

@@ -239,6 +239,70 @@ func TestRecoverToStreamErr(t *testing.T) {
 	}()
 }
 
+// TestStreamText_Step1OnRequestPanic verifies that a panic in the synchronous
+// step-1 OnRequest hook (single-step StreamText) is surfaced as a *PanicError
+// returned by StreamText, not propagated raw into the caller's goroutine.
+func TestStreamText_Step1OnRequestPanic(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "hi"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop},
+			), nil
+		},
+	}
+
+	var fired int
+	_, err := StreamText(t.Context(), model,
+		WithPrompt("hi"),
+		WithOnRequest(func(_ RequestInfo) { panic("step1 onrequest boom") }),
+		WithOnPanic(func(_ PanicInfo) { fired++ }),
+	)
+	var pe *PanicError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want *PanicError", err)
+	}
+	if pe.Phase != "OnRequest" {
+		t.Errorf("Phase = %q, want OnRequest", pe.Phase)
+	}
+	if fired != 1 {
+		t.Errorf("OnPanic fired %d times, want 1", fired)
+	}
+}
+
+// TestStreamText_ToolLoop_Step1OnRequestPanic verifies the same for the
+// multi-step path (streamWithToolLoop), where step-1 hooks also run
+// synchronously in the caller's goroutine.
+func TestStreamText_ToolLoop_Step1OnRequestPanic(t *testing.T) {
+	model := &mockModel{
+		id: "test",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "hi"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop},
+			), nil
+		},
+	}
+
+	_, err := StreamText(t.Context(), model,
+		WithPrompt("hi"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "t",
+			Execute: func(context.Context, json.RawMessage) (string, error) { return "ok", nil },
+		}),
+		WithOnRequest(func(_ RequestInfo) { panic("step1 onrequest boom") }),
+	)
+	var pe *PanicError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want *PanicError", err)
+	}
+	if pe.Phase != "OnRequest" {
+		t.Errorf("Phase = %q, want OnRequest", pe.Phase)
+	}
+}
+
 // TestOnPanic_MultipleObserversInOrder verifies all registered OnPanic hooks fire.
 func TestOnPanic_MultipleObserversInOrder(t *testing.T) {
 	model := &mockModel{

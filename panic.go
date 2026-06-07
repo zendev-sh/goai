@@ -41,6 +41,11 @@ func newPanicError(onPanic []func(PanicInfo), phase string, r any) *PanicError {
 func callHook(onPanic []func(PanicInfo), phase string, fn func()) {
 	defer func() {
 		if r := recover(); r != nil {
+			// r is the recover() value (any). The direct type assertion is
+			// intentional, NOT errors.As: we detect whether THIS exact value is
+			// the sentinel we already wrapped, to avoid double-wrapping and
+			// re-firing OnPanic. errors.As would wrongly match a panic value that
+			// merely wraps a *PanicError and would drop the current phase.
 			if pe, ok := r.(*PanicError); ok {
 				panic(pe)
 			}
