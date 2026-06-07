@@ -423,7 +423,10 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 		Schema: schema,
 	}
 
-	toolMap := buildToolMap(o.Tools)
+	toolMap, err := buildToolMap(o.Tools)
+	if err != nil {
+		return nil, err
+	}
 
 	var steps []StepResult
 	var totalUsage provider.Usage

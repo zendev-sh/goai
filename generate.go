@@ -1079,7 +1079,11 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 		return nil, errors.New("goai: prompt or messages must not be empty")
 	}
 
-	toolMap := buildToolMap(o.Tools)
+	toolMap, err := buildToolMap(o.Tools)
+	if err != nil {
+		o.StateRef.set(StepIdle, 0)
+		return nil, err
+	}
 
 	if o.MaxSteps > 1 && len(toolMap) > 0 {
 		return streamWithToolLoop(ctx, model, o, toolMap)
@@ -1206,7 +1210,10 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 	originalLen := len(params.Messages)
 
 	// Build tool lookup for auto loop.
-	toolMap := buildToolMap(o.Tools)
+	toolMap, err := buildToolMap(o.Tools)
+	if err != nil {
+		return nil, err
+	}
 
 	var totalUsage provider.Usage
 	var hookStopped bool             // true iff WithStopWhen or OnBeforeStep.Stop broke the loop
@@ -1484,9 +1491,9 @@ func isProviderExecuted(tc provider.ToolCall) bool {
 }
 
 // buildToolMap creates a name→Tool lookup from the options.
-func buildToolMap(tools []Tool) map[string]Tool {
+func buildToolMap(tools []Tool) (map[string]Tool, error) {
 	if len(tools) == 0 {
-		return nil
+		return nil, nil
 	}
 	m := make(map[string]Tool, len(tools))
 	for _, t := range tools {
@@ -1495,13 +1502,16 @@ func buildToolMap(tools []Tool) map[string]Tool {
 				fmt.Fprintf(os.Stderr, "goai: tool with empty name skipped\n")
 				continue
 			}
+			if _, exists := m[t.Name]; exists {
+				return nil, fmt.Errorf("goai: duplicate tool name %q: tool names must be unique", t.Name)
+			}
 			m[t.Name] = t
 		}
 	}
 	if len(m) == 0 {
-		return nil
+		return nil, nil
 	}
-	return m
+	return m, nil
 }
 
 // toolOutput holds the result of a single tool execution (package-level type
