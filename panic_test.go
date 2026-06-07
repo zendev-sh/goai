@@ -14,8 +14,13 @@ import (
 func TestPanicError_ErrorAndUnwrap(t *testing.T) {
 	cause := errors.New("boom")
 	pe := &PanicError{Phase: "OnFinish", Value: cause}
-	if got := pe.Error(); got != "goai: panic in OnFinish: boom" {
-		t.Errorf("Error() = %q", got)
+	// Error() identifies the phase only; the raw value is omitted to avoid
+	// leaking sensitive data into logged error strings.
+	if got := pe.Error(); got != "goai: panic in OnFinish" {
+		t.Errorf("Error() = %q, want %q", got, "goai: panic in OnFinish")
+	}
+	if strings.Contains(pe.Error(), "boom") {
+		t.Error("Error() must not contain the raw panic value")
 	}
 	if !errors.Is(pe, cause) {
 		t.Error("errors.Is(pe, cause) = false; Unwrap should expose an error panic value")

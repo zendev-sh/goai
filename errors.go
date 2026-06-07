@@ -28,20 +28,30 @@ func (e *ContextOverflowError) Error() string {
 // OnBeforeToolExecute, OnAfterToolExecute) are NOT wrapped in a PanicError:
 // they keep their resilient behavior (converted to a tool error, the agent
 // loop continues). They are still reported to any OnPanic hook.
+//
+// Value and Stack may contain sensitive data (panic arguments, captured
+// variables, credentials). They are deliberately NOT included in Error() so a
+// logged error string cannot leak them; access the fields explicitly and
+// sanitize before logging or exporting.
 type PanicError struct {
 	// Phase identifies the callback that panicked, e.g. "OnStepFinish",
 	// "OnFinish", "OnResponse", "OnRequest", "OnBeforeStep", "StopWhen".
 	Phase string
 
-	// Value is the value passed to panic().
+	// Value is the value passed to panic(). May contain sensitive data; see the
+	// type doc. Not included in Error().
 	Value any
 
-	// Stack is the goroutine stack captured at the recovery point.
+	// Stack is the goroutine stack captured at the recovery point. May contain
+	// sensitive data; see the type doc. Not included in Error().
 	Stack []byte
 }
 
+// Error returns a message identifying the phase only. The panic value is
+// intentionally omitted to avoid leaking sensitive data into logged error
+// strings; read Value/Unwrap for the underlying cause.
 func (e *PanicError) Error() string {
-	return fmt.Sprintf("goai: panic in %s: %v", e.Phase, e.Value)
+	return fmt.Sprintf("goai: panic in %s", e.Phase)
 }
 
 // Unwrap returns the panic value if it is itself an error, enabling

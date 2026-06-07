@@ -399,7 +399,8 @@ func WithOnBeforeStep(fn func(BeforeStepInfo) BeforeStepResult) Option {
 }
 
 // PanicInfo is passed to the OnPanic hook when a user callback or the StopWhen
-// predicate panics.
+// predicate panics. Value and Stack may contain sensitive data (panic arguments,
+// captured variables, credentials); sanitize before logging or exporting.
 type PanicInfo struct {
 	// Phase identifies the callback that panicked, e.g. "OnStepFinish",
 	// "OnFinish", "OnResponse", "OnRequest", "OnBeforeStep", "StopWhen",
@@ -407,10 +408,11 @@ type PanicInfo struct {
 	// "OnAfterToolExecute", or "tool:<name>" for a tool's Execute function.
 	Phase string
 
-	// Value is the value passed to panic().
+	// Value is the value passed to panic(). May contain sensitive data.
 	Value any
 
 	// Stack is the goroutine stack captured at the recovery point.
+	// May contain sensitive data.
 	Stack []byte
 }
 

@@ -1591,21 +1591,15 @@ func executeToolsParallel(
 			defer func() {
 				if r := recover(); r != nil {
 					if !executed {
-						// Distinguish OnToolCallStart panic from Execute panic.
+						// The full panic value + stack go to OnPanic (firePanic);
+						// the tool error sent to the LLM omits the raw value so a
+						// panic carrying sensitive data is not echoed to the model.
 						if !hookFired {
 							firePanic(hooks.onPanic, "OnToolCallStart", r)
+							results[i] = toolOutput{index: i, err: fmt.Errorf("goai: OnToolCallStart hook for tool %q panicked", tc.Name)}
 						} else {
 							firePanic(hooks.onPanic, "tool:"+tc.Name, r)
-						}
-						panicStr := fmt.Sprintf("%v", r)
-						runes := []rune(panicStr)
-						if len(runes) > 500 {
-							panicStr = string(runes[:500]) + "..."
-						}
-						if !hookFired {
-							results[i] = toolOutput{index: i, err: fmt.Errorf("goai: OnToolCallStart hook for tool %q panicked: %s", tc.Name, panicStr)}
-						} else {
-							results[i] = toolOutput{index: i, err: fmt.Errorf("goai: tool %q panicked: %s", tc.Name, panicStr)}
+							results[i] = toolOutput{index: i, err: fmt.Errorf("goai: tool %q panicked", tc.Name)}
 						}
 					}
 					// executed==true: Execute succeeded, results[i] already set.
@@ -1648,9 +1642,11 @@ func executeToolsParallel(
 					defer func() {
 						if r := recover(); r != nil {
 							firePanic(hooks.onPanic, "OnBeforeToolExecute", r)
+							// Raw value goes to OnPanic only; omit it here so a
+							// panic with sensitive data is not echoed to the model.
 							beforeResult = BeforeToolExecuteResult{
 								Skip:  true,
-								Error: fmt.Errorf("goai: OnBeforeToolExecute hook panicked: %v", r),
+								Error: errors.New("goai: OnBeforeToolExecute hook panicked"),
 							}
 						}
 					}()
