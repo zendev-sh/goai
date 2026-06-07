@@ -1,5 +1,7 @@
 package provider
 
+import "slices"
+
 // NormalizeToolMessages prepares messages for providers that require:
 // 1. Every assistant tool-call has a matching tool-result (orphan fix)
 // 2. Alternating user/assistant roles (merge consecutive same-role)
@@ -20,6 +22,7 @@ func NormalizeToolMessages(msgs []Message) []Message {
 // ProviderOptions["resultBlock"], so no following tool-result message is
 // expected.
 func ensureToolResultPairing(msgs []Message) []Message {
+	msgs = cloneMessages(msgs)
 	for i := 0; i < len(msgs); i++ {
 		if msgs[i].Role != RoleAssistant {
 			continue
@@ -73,6 +76,20 @@ func ensureToolResultPairing(msgs []Message) []Message {
 		}
 	}
 	return msgs
+}
+
+func cloneMessages(msgs []Message) []Message {
+	if len(msgs) == 0 {
+		return msgs
+	}
+	out := make([]Message, len(msgs))
+	for i, msg := range msgs {
+		out[i] = Message{
+			Role:    msg.Role,
+			Content: slices.Clone(msg.Content),
+		}
+	}
+	return out
 }
 
 // mergeConsecutiveRoles merges consecutive messages with the same role.

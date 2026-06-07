@@ -121,6 +121,33 @@ func TestNormalizeToolMessages_EndOfConversationOrphan(t *testing.T) {
 	}
 }
 
+func TestEnsureToolResultPairing_SyntheticOrphanCarriesToolName(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleAssistant, Content: []Part{
+			{Type: PartToolCall, ToolCallID: "tc1", ToolName: "lookup_weather"},
+		}},
+		{Role: RoleUser, Content: []Part{{Type: PartText, Text: "cancelled"}}},
+	}
+
+	out := ensureToolResultPairing(msgs)
+
+	var synthetic *Part
+	for _, m := range out {
+		for i := range m.Content {
+			p := &m.Content[i]
+			if p.Type == PartToolResult && p.ToolCallID == "tc1" && p.ToolOutput == "Tool execution aborted" {
+				synthetic = p
+			}
+		}
+	}
+	if synthetic == nil {
+		t.Fatal("expected synthetic tool result for orphaned tc1")
+	}
+	if synthetic.ToolName != "lookup_weather" {
+		t.Errorf("ToolName = %q, want lookup_weather", synthetic.ToolName)
+	}
+}
+
 func TestNormalizeToolMessages_MultipleConsecutiveToolMessages(t *testing.T) {
 	// GoAI buildToolMessages pattern: multiple tool messages after one assistant.
 	msgs := []Message{
