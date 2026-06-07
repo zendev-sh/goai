@@ -84,10 +84,11 @@ func cloneMessages(msgs []Message) []Message {
 	}
 	out := make([]Message, len(msgs))
 	for i, msg := range msgs {
-		out[i] = Message{
-			Role:    msg.Role,
-			Content: slices.Clone(msg.Content),
-		}
+		// Copy the whole struct (preserving ProviderOptions and any future
+		// fields), then clone the Content slice, which is the only part this
+		// package appends to.
+		out[i] = msg
+		out[i].Content = slices.Clone(msg.Content)
 	}
 	return out
 }
