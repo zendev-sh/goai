@@ -13,7 +13,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -53,22 +52,16 @@ func main() {
 	defer func() { _ = tp.Shutdown(context.Background()) }()
 	otel.SetTracerProvider(tp)
 
-	model := google.Chat("gemini-2.0-flash", google.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
+	model := google.Chat("gemini-3-flash-preview", google.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
 
 	// Tool that simulates fetching weather data.
-	weatherTool := goai.Tool{
-		Name:        "get_weather",
-		Description: "Get the current weather for a city.",
-		InputSchema: goai.SchemaFrom[struct {
-			City string `json:"city" jsonschema:"description=City name,required"`
-		}](),
-		Execute: func(_ context.Context, input json.RawMessage) (string, error) {
-			var args struct{ City string }
-			_ = json.Unmarshal(input, &args)
+	weatherTool := goai.NewTool("get_weather", "Get the current weather for a city.",
+		func(_ context.Context, args struct {
+			City string `json:"city" jsonschema:"description=City name"`
+		}) (string, error) {
 			time.Sleep(50 * time.Millisecond)
 			return fmt.Sprintf(`{"city":%q,"temp":"22°C","condition":"sunny"}`, args.City), nil
-		},
-	}
+		})
 
 	ctx := context.Background()
 

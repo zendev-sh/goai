@@ -185,6 +185,25 @@ When `Execute` is non-nil and `MaxSteps > 1`, `GenerateText` automatically invok
 
 When using provider-defined tools (web search, code execution, etc.), set `ProviderDefinedType` and leave `Execute` nil - the provider handles execution server-side.
 
+### NewTool
+
+Builds a `Tool` from a typed input struct and a typed execute function. The JSON Schema is generated from `In` via `SchemaFrom`, and the model's raw JSON arguments are unmarshaled into `In` before execute runs - so callers neither hand-write JSON Schema nor unmarshal input.
+
+```go
+func NewTool[In any](name, description string, execute func(ctx context.Context, input In) (string, error)) Tool
+```
+
+```go
+weatherTool := goai.NewTool("get_weather", "Get the current weather for a city.",
+    func(ctx context.Context, in struct {
+        City string `json:"city" jsonschema:"description=City name"`
+    }) (string, error) {
+        return forecast(in.City), nil
+    })
+```
+
+`In` is typically a struct using `json`/`jsonschema` tags (see [SchemaFrom](#schemafrom)); use `struct{}` for a no-parameter tool. If the model's arguments fail to unmarshal into `In`, execute is not called and the error is returned to the model as the tool result. For a hand-written schema or a provider-defined tool, build the `Tool` struct directly instead.
+
 ### Option
 
 A function that configures a generation call. See [Options](options.md) for all available option functions.

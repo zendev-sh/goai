@@ -191,27 +191,17 @@ final, err := stream.Result()
 
 ## Tools
 
-Define tools with JSON Schema and an `Execute` handler. Set `MaxSteps` to enable the auto tool loop.
+Define a tool from a typed input struct with `goai.NewTool` - the JSON Schema is
+generated from the struct and arguments are unmarshaled for you. Set `MaxSteps`
+to enable the auto tool loop.
 
 ```go
-import "encoding/json"
-
-weatherTool := goai.Tool{
-	Name:        "get_weather",
-	Description: "Get the current weather for a city.",
-	InputSchema: json.RawMessage(`{
-		"type": "object",
-		"properties": {"city": {"type": "string", "description": "City name"}},
-		"required": ["city"]
-	}`),
-	Execute: func(ctx context.Context, input json.RawMessage) (string, error) {
-		var args struct{ City string `json:"city"` }
-		if err := json.Unmarshal(input, &args); err != nil {
-			return "", err
-		}
+weatherTool := goai.NewTool("get_weather", "Get the current weather for a city.",
+	func(ctx context.Context, args struct {
+		City string `json:"city" jsonschema:"description=City name"`
+	}) (string, error) {
 		return fmt.Sprintf("22°C and sunny in %s", args.City), nil
-	},
-}
+	})
 
 result, err := goai.GenerateText(ctx, model,
 	goai.WithPrompt("What's the weather in Tokyo?"),

@@ -19,7 +19,7 @@ import (
 )
 
 func main() {
-	model := google.Chat("gemini-2.0-flash", google.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
+	model := google.Chat("gemini-3-flash-preview", google.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
 
 	result, err := goai.GenerateText(context.Background(), model,
 		goai.WithSystem("You are a helpful assistant. Be concise."),

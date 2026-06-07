@@ -10,7 +10,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -23,26 +22,12 @@ import (
 func main() {
 	model := openai.Chat("gpt-4o-mini", openai.WithAPIKey(os.Getenv("OPENAI_API_KEY")))
 
-	weatherTool := goai.Tool{
-		Name:        "get_weather",
-		Description: "Get the current weather for a city.",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"city": {"type": "string", "description": "City name"}
-			},
-			"required": ["city"]
-		}`),
-		Execute: func(_ context.Context, input json.RawMessage) (string, error) {
-			var args struct {
-				City string `json:"city"`
-			}
-			if err := json.Unmarshal(input, &args); err != nil {
-				return "", err
-			}
+	weatherTool := goai.NewTool("get_weather", "Get the current weather for a city.",
+		func(_ context.Context, args struct {
+			City string `json:"city" jsonschema:"description=City name"`
+		}) (string, error) {
 			return fmt.Sprintf(`{"city": %q, "temp": "18°C", "condition": "partly cloudy"}`, args.City), nil
-		},
-	}
+		})
 
 	stream, err := goai.StreamText(context.Background(), model,
 		goai.WithSystem("You are a helpful weather assistant. Be concise."),

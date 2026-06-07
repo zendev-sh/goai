@@ -135,7 +135,7 @@ ts := provider.CachedTokenSource(func(ctx context.Context) (*provider.Token, err
     }, nil
 })
 
-model := vertex.Chat("gemini-2.0-flash", vertex.WithTokenSource(ts))
+model := vertex.Chat("gemini-3-flash-preview", vertex.WithTokenSource(ts))
 ```
 
 ### Custom OAuth

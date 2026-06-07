@@ -10,7 +10,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -20,29 +19,15 @@ import (
 )
 
 func main() {
-	model := google.Chat("gemini-2.0-flash", google.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
+	model := google.Chat("gemini-3-flash-preview", google.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
 
-	weatherTool := goai.Tool{
-		Name:        "get_weather",
-		Description: "Get the current weather for a city.",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"city": {"type": "string", "description": "City name"}
-			},
-			"required": ["city"]
-		}`),
-		Execute: func(ctx context.Context, input json.RawMessage) (string, error) {
-			var args struct {
-				City string `json:"city"`
-			}
-			if err := json.Unmarshal(input, &args); err != nil {
-				return "", err
-			}
+	weatherTool := goai.NewTool("get_weather", "Get the current weather for a city.",
+		func(ctx context.Context, args struct {
+			City string `json:"city" jsonschema:"description=City name"`
+		}) (string, error) {
 			// Simulated weather lookup.
 			return fmt.Sprintf("The weather in %s is 22°C and sunny.", args.City), nil
-		},
-	}
+		})
 
 	// MaxSteps=2: step 1 = model calls tool, step 2 = model uses result.
 	result, err := goai.GenerateText(context.Background(), model,

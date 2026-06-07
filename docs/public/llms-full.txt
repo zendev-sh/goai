@@ -235,24 +235,21 @@ Tools let the model call functions defined in your code.
 
 ### Defining a Tool
 
+`goai.NewTool` builds a tool from a typed input struct: the JSON Schema is
+generated from the struct and the model's arguments are unmarshaled into it
+before execute runs (no hand-written schema, no manual unmarshaling).
+
 ```go
-tool := goai.Tool{
-    Name:        "get_weather",
-    Description: "Get weather for a city.",
-    InputSchema: json.RawMessage(`{
-        "type": "object",
-        "properties": {
-            "city": {"type": "string", "description": "City name"}
-        },
-        "required": ["city"]
-    }`),
-    Execute: func(ctx context.Context, input json.RawMessage) (string, error) {
-        var params struct { City string `json:"city"` }
-        json.Unmarshal(input, &params)
+tool := goai.NewTool("get_weather", "Get weather for a city.",
+    func(ctx context.Context, params struct {
+        City string `json:"city" jsonschema:"description=City name"`
+    }) (string, error) {
         return fmt.Sprintf("72F and sunny in %s", params.City), nil
-    },
-}
+    })
 ```
+
+For a hand-written JSON Schema or a provider-defined tool, build the `goai.Tool`
+struct directly (set `InputSchema` and an `Execute` that receives raw JSON).
 
 ### Auto Tool Loop
 

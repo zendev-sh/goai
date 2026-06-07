@@ -9,7 +9,33 @@ Tools let the model call functions defined in your code. The model decides when 
 
 ## Defining a Tool
 
-A `goai.Tool` has a name, description, JSON Schema for input, and an `Execute` function:
+`goai.NewTool` builds a tool from a typed input struct and a typed `execute`
+function. The JSON Schema is generated from the struct (via `SchemaFrom`), and
+the model's arguments are unmarshaled into the struct before `execute` runs - so
+you write no JSON Schema by hand and no manual unmarshaling:
+
+```go
+weatherTool := goai.NewTool("get_weather", "Get the current weather for a city.",
+    func(ctx context.Context, params struct {
+        City string `json:"city" jsonschema:"description=City name"`
+    }) (string, error) {
+        // Call your weather API here.
+        return fmt.Sprintf("72F and sunny in %s", params.City), nil
+    })
+```
+
+The input struct uses `json` and `jsonschema` tags (see [Structured
+Output](/getting-started/structured-output) for the supported tags). Use
+`struct{}` for a tool that takes no parameters. If the model sends arguments that
+do not unmarshal into the struct, `execute` is not called and the error is
+returned to the model as the tool result.
+
+### Building a Tool by hand
+
+For full control - a hand-written JSON Schema, a dynamically built schema, or a
+provider-defined tool - construct the `goai.Tool` struct directly. It has a name,
+description, JSON Schema for input, and an `Execute` function that receives raw
+JSON:
 
 ```go
 weatherTool := goai.Tool{

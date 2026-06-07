@@ -32,7 +32,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	model := google.Chat("gemini-2.0-flash", google.WithAPIKey(apiKey))
+	model := google.Chat("gemini-3-flash-preview", google.WithAPIKey(apiKey))
 
 	// Prefer the local MCP test server if present; otherwise fall back to the
 	// public filesystem MCP server so this example still runs in OSS checkouts.

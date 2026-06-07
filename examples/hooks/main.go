@@ -16,7 +16,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -27,43 +26,23 @@ import (
 )
 
 func main() {
-	model := google.Chat("gemini-2.0-flash", google.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
+	model := google.Chat("gemini-3-flash-preview", google.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
 
 	// Define tools.
-	readFile := goai.Tool{
-		Name:        "read_file",
-		Description: "Read the contents of a file.",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"path": {"type": "string", "description": "File path to read"}
-			},
-			"required": ["path"]
-		}`),
-		Execute: func(_ context.Context, input json.RawMessage) (string, error) {
-			var args struct {
-				Path string `json:"path"`
-			}
-			json.Unmarshal(input, &args)
+	readFile := goai.NewTool("read_file", "Read the contents of a file.",
+		func(_ context.Context, args struct {
+			Path string `json:"path" jsonschema:"description=File path to read"`
+		}) (string, error) {
 			// Simulate returning sensitive content.
 			return fmt.Sprintf("Contents of %s:\nAPI_KEY=sk-secret-12345\nDB_HOST=prod.example.com", args.Path), nil
-		},
-	}
+		})
 
-	deleteFile := goai.Tool{
-		Name:        "delete_file",
-		Description: "Delete a file from disk.",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"path": {"type": "string", "description": "File path to delete"}
-			},
-			"required": ["path"]
-		}`),
-		Execute: func(_ context.Context, input json.RawMessage) (string, error) {
+	deleteFile := goai.NewTool("delete_file", "Delete a file from disk.",
+		func(_ context.Context, _ struct {
+			Path string `json:"path" jsonschema:"description=File path to delete"`
+		}) (string, error) {
 			return "deleted", nil
-		},
-	}
+		})
 
 	result, err := goai.GenerateText(context.Background(), model,
 		goai.WithPrompt("Read the .env file, then delete the temp.log file."),

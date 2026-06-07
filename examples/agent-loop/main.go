@@ -10,7 +10,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -20,43 +19,24 @@ import (
 )
 
 func main() {
-	model := google.Chat("gemini-2.0-flash", google.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
+	model := google.Chat("gemini-3-flash-preview", google.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
 
 	// Define multiple tools for a multi-step workflow.
-	searchTool := goai.Tool{
-		Name:        "search",
-		Description: "Search for information on a topic.",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"query": {"type": "string", "description": "Search query"}
-			},
-			"required": ["query"]
-		}`),
-		Execute: func(_ context.Context, input json.RawMessage) (string, error) {
-			var args struct{ Query string }
-			_ = json.Unmarshal(input, &args)
+	searchTool := goai.NewTool("search", "Search for information on a topic.",
+		func(_ context.Context, args struct {
+			Query string `json:"query" jsonschema:"description=Search query"`
+		}) (string, error) {
 			return fmt.Sprintf("Search results for %q: Go was created by Google in 2009.", args.Query), nil
-		},
-	}
+		})
 
-	calculatorTool := goai.Tool{
-		Name:        "calculate",
-		Description: "Calculate: subtract second number from first. Input: {\"a\": 2026, \"b\": 2009}",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"a": {"type": "integer", "description": "First number"},
-				"b": {"type": "integer", "description": "Second number"}
-			},
-			"required": ["a", "b"]
-		}`),
-		Execute: func(_ context.Context, input json.RawMessage) (string, error) {
-			var args struct{ A, B int }
-			_ = json.Unmarshal(input, &args)
+	calculatorTool := goai.NewTool("calculate",
+		"Calculate: subtract second number from first. Input: {\"a\": 2026, \"b\": 2009}",
+		func(_ context.Context, args struct {
+			A int `json:"a" jsonschema:"description=First number"`
+			B int `json:"b" jsonschema:"description=Second number"`
+		}) (string, error) {
 			return fmt.Sprintf("%d", args.A-args.B), nil
-		},
-	}
+		})
 
 	result, err := goai.GenerateText(context.Background(), model,
 		goai.WithSystem("You are a research assistant. Use tools to find information and calculate."),
