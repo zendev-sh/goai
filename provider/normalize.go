@@ -24,16 +24,16 @@ func ensureToolResultPairing(msgs []Message) []Message {
 		if msgs[i].Role != RoleAssistant {
 			continue
 		}
-		var callIDs []string
+		var toolCalls []Part
 		for _, p := range msgs[i].Content {
 			if p.Type == PartToolCall && p.ToolCallID != "" {
 				if _, hasInlineResult := p.ProviderOptions["resultBlock"]; hasInlineResult {
 					continue
 				}
-				callIDs = append(callIDs, p.ToolCallID)
+				toolCalls = append(toolCalls, p)
 			}
 		}
-		if len(callIDs) == 0 {
+		if len(toolCalls) == 0 {
 			continue
 		}
 		// Scan all consecutive tool/user messages after assistant
@@ -50,12 +50,13 @@ func ensureToolResultPairing(msgs []Message) []Message {
 			}
 		}
 		var orphans []Part
-		for _, id := range callIDs {
-			if !resultIDs[id] {
+		for _, toolCall := range toolCalls {
+			if !resultIDs[toolCall.ToolCallID] {
 				orphans = append(orphans, Part{
 					Type:       PartToolResult,
-					ToolCallID: id,
+					ToolCallID: toolCall.ToolCallID,
 					ToolOutput: "Tool execution aborted",
+					ToolName:   toolCall.ToolName,
 				})
 			}
 		}
