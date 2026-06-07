@@ -761,9 +761,14 @@ func streamResponses(ctx context.Context, body io.ReadCloser, out chan<- provide
 				} `json:"error"`
 			}
 			if json.Unmarshal([]byte(data), &ev) == nil {
+				// Prefer the nested error fields when present, but fall back to
+				// the flat fields per-field so a partial nested object (e.g. a
+				// nested code with no nested message) does not clobber a flat
+				// message/code with an empty string.
 				msg, code := ev.Message, ev.Code
 				if ev.Error != nil {
-					msg, code = ev.Error.Message, ev.Error.Code
+					msg = cmp.Or(ev.Error.Message, msg)
+					code = cmp.Or(ev.Error.Code, code)
 				}
 				if !provider.TrySend(ctx, out, responsesStreamError(data, msg, code, "stream error")) {
 					return

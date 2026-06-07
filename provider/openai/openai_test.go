@@ -1605,6 +1605,45 @@ func TestStreamResponses_ErrorEventFlatRateLimit(t *testing.T) {
 	t.Error("expected retryable APIError for flat rate_limit_exceeded")
 }
 
+// TestStreamResponses_ErrorEventPartialNested verifies per-field fallback: when
+// the nested error object carries a code but no message, the flat message is
+// preserved (not clobbered with an empty string) while the nested code still
+// drives classification.
+func TestStreamResponses_ErrorEventPartialNested(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: error\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"error","message":"flat detail","error":{"code":"rate_limit_exceeded"}}`+"\n\n")
+	}))
+	defer server.Close()
+
+	model := Chat("o3", WithAPIKey("key"), WithBaseURL(server.URL))
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for chunk := range result.Stream {
+		if chunk.Type == provider.ChunkError {
+			var apiErr *goai.APIError
+			if errors.As(chunk.Error, &apiErr) {
+				if apiErr.StatusCode != 429 || !apiErr.IsRetryable {
+					t.Errorf("nested code should classify as retryable 429, got status=%d retryable=%v", apiErr.StatusCode, apiErr.IsRetryable)
+				}
+				if apiErr.Message != "flat detail" {
+					t.Errorf("Message = %q, want flat message preserved (not clobbered by empty nested message)", apiErr.Message)
+				}
+				return
+			}
+		}
+	}
+	t.Error("expected APIError for partial nested error event")
+}
+
 func TestStreamResponses_ServerErrorRetryable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
