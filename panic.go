@@ -69,15 +69,18 @@ func asPanicError(r any) *PanicError {
 }
 
 // recoverToError is deferred at synchronous entry points (GenerateText,
-// GenerateObject). It converts a *PanicError panic into the named return error
-// and re-panics any other value (genuine runtime panics are not masked).
-func recoverToError(err *error) {
+// GenerateObject, StreamText, StreamObject). It converts any panic into the
+// named return error: a *PanicError passes through; any other value is wrapped
+// with newPanicError(phase="internal") and reported to OnPanic. This catch-all
+// (consistent with recoverToStreamErr) keeps a panic carrying sensitive data
+// from being printed to stderr as an uncaught crash dump.
+func recoverToError(onPanic []func(PanicInfo), err *error) {
 	if r := recover(); r != nil {
 		if pe := asPanicError(r); pe != nil {
 			*err = pe
 			return
 		}
-		panic(r)
+		*err = newPanicError(onPanic, "internal", r)
 	}
 }
 

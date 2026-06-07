@@ -649,7 +649,7 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 	// Convert a *PanicError from a synchronous step-1 hook (OnRequest, or
 	// OnResponse on the initial DoStream error) into the returned error. Hooks
 	// fired inside the streaming goroutine surface through stream.Err().
-	defer recoverToError(&err)
+	defer recoverToError(o.OnPanic, &err)
 
 	var timeoutCancel context.CancelFunc
 	if o.Timeout > 0 {
@@ -1062,7 +1062,7 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 	// Convert a *PanicError from a synchronous step-1 hook (OnRequest, or
 	// OnResponse on a DoStream error) into the returned error. Hooks fired in
 	// the consume goroutine surface through stream.Err() instead.
-	defer recoverToError(&err)
+	defer recoverToError(o.OnPanic, &err)
 
 	if model == nil {
 		// Transition StepStarting→StepIdle for any observer so pollers do not deadlock.
@@ -1167,7 +1167,7 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 	// Convert a *PanicError raised by a panicking hook or the StopWhen predicate
 	// into the returned error. Registered first so it runs last (after the
 	// StepIdle transition below), catching panics from the whole body.
-	defer recoverToError(&err)
+	defer recoverToError(o.OnPanic, &err)
 
 	var steps []StepResult
 	// highestInflightStep tracks the largest step index we have announced

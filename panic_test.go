@@ -168,37 +168,46 @@ func TestCallHook_NestedPanicErrorPassesThrough(t *testing.T) {
 	callHook(onPanic, "Outer", func() { panic(orig) })
 }
 
-// recoverToError converts a *PanicError to the error pointer and re-panics any
-// other value (genuine runtime panics are not masked).
+// recoverToError converts a *PanicError to the error pointer as-is, and wraps
+// any other panic value as a *PanicError(phase="internal") rather than letting
+// it escape as an uncaught crash.
 func TestRecoverToError(t *testing.T) {
-	// *PanicError -> assigned.
+	// *PanicError -> assigned, phase preserved.
 	func() {
 		var err error
 		defer func() {
-			if err == nil {
-				t.Error("recoverToError did not set err for *PanicError")
-			}
 			var pe *PanicError
 			if !errors.As(err, &pe) {
-				t.Errorf("err = %v, want *PanicError", err)
+				t.Fatalf("err = %v, want *PanicError", err)
+			}
+			if pe.Phase != "X" {
+				t.Errorf("Phase = %q, want X", pe.Phase)
 			}
 		}()
-		defer recoverToError(&err)
+		defer recoverToError(nil, &err)
 		panic(&PanicError{Phase: "X", Value: "y"})
 	}()
 
-	// Non-*PanicError -> re-panicked, err untouched.
+	// Non-*PanicError -> wrapped as internal, OnPanic fired, no re-panic escapes.
 	func() {
 		var err error
+		var fired int
 		defer func() {
-			if r := recover(); r != "raw" {
-				t.Errorf("recovered %v, want raw re-panic", r)
+			if r := recover(); r != nil {
+				t.Errorf("recoverToError must not re-panic; got %v", r)
 			}
-			if err != nil {
-				t.Errorf("err = %v, want nil (non-PanicError must not be captured)", err)
+			var pe *PanicError
+			if !errors.As(err, &pe) {
+				t.Fatalf("err = %v, want *PanicError", err)
+			}
+			if pe.Phase != "internal" || pe.Value != "raw" {
+				t.Errorf("PanicError = {%q, %v}, want {internal, raw}", pe.Phase, pe.Value)
+			}
+			if fired != 1 {
+				t.Errorf("OnPanic fired %d times, want 1", fired)
 			}
 		}()
-		defer recoverToError(&err)
+		defer recoverToError([]func(PanicInfo){func(PanicInfo) { fired++ }}, &err)
 		panic("raw")
 	}()
 }

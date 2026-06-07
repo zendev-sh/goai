@@ -386,7 +386,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 	o := applyOptions(opts...)
 
 	// Convert a *PanicError raised by a panicking hook into the returned error.
-	defer recoverToError(&err)
+	defer recoverToError(o.OnPanic, &err)
 
 	if o.StopWhen != nil {
 		warnStopWhenIgnoredForObject("GenerateObject")
@@ -588,7 +588,7 @@ func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts
 	// Convert a *PanicError from a pre-stream hook (OnRequest, or OnResponse on a
 	// DoStream error) into the returned error. Hooks fired inside the consume
 	// goroutine surface through stream.Err() instead.
-	defer recoverToError(&err)
+	defer recoverToError(o.OnPanic, &err)
 
 	if o.StopWhen != nil {
 		warnStopWhenIgnoredForObject("StreamObject")
