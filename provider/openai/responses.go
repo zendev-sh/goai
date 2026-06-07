@@ -744,84 +744,29 @@ func streamResponses(ctx context.Context, body io.ReadCloser, out chan<- provide
 				} `json:"response"`
 			}
 			if json.Unmarshal([]byte(data), &ev) == nil {
-				msg := cmp.Or(ev.Response.Error.Message, "response failed")
-				code := ev.Response.Error.Code
-				switch code {
-				case "context_length_exceeded":
-					if !provider.TrySend(ctx, out, provider.StreamChunk{
-						Type:  provider.ChunkError,
-						Error: &goai.ContextOverflowError{Message: msg, ResponseBody: data},
-					}) {
-						return
-					}
-				case "insufficient_quota":
-					if !provider.TrySend(ctx, out, provider.StreamChunk{
-						Type:  provider.ChunkError,
-						Error: &goai.APIError{Message: "Quota exceeded. Check your plan and billing details.", IsRetryable: false},
-					}) {
-						return
-					}
-				case "usage_not_included":
-					if !provider.TrySend(ctx, out, provider.StreamChunk{
-						Type:  provider.ChunkError,
-						Error: &goai.APIError{Message: "Usage not included in response. Check your plan supports usage reporting for this model.", IsRetryable: false},
-					}) {
-						return
-					}
-				case "invalid_prompt":
-					if !provider.TrySend(ctx, out, provider.StreamChunk{
-						Type:  provider.ChunkError,
-						Error: &goai.APIError{Message: msg, IsRetryable: false},
-					}) {
-						return
-					}
-				case "rate_limit_exceeded", "429":
-					if !provider.TrySend(ctx, out, provider.StreamChunk{
-						Type:  provider.ChunkError,
-						Error: &goai.APIError{Message: msg, StatusCode: 429, IsRetryable: true},
-					}) {
-						return
-					}
-				case "server_error", "503", "502", "500":
-					if !provider.TrySend(ctx, out, provider.StreamChunk{
-						Type:  provider.ChunkError,
-						Error: &goai.APIError{Message: msg, IsRetryable: true},
-					}) {
-						return
-					}
-				default:
-					if !provider.TrySend(ctx, out, provider.StreamChunk{
-						Type:  provider.ChunkError,
-						Error: &goai.APIError{Message: msg},
-					}) {
-						return
-					}
+				if !provider.TrySend(ctx, out, responsesStreamError(data, ev.Response.Error.Message, ev.Response.Error.Code, "response failed")) {
+					return
 				}
 			}
 			return
 
 		case "error":
+			// OpenAI documents flat message/code fields, but production often nests them under error.
 			var ev struct {
 				Message string `json:"message"`
 				Code    string `json:"code"`
+				Error   *struct {
+					Message string `json:"message"`
+					Code    string `json:"code"`
+				} `json:"error"`
 			}
 			if json.Unmarshal([]byte(data), &ev) == nil {
-				msg := cmp.Or(ev.Message, "stream error")
-				if ev.Code == "context_overflow" || ev.Code == "max_tokens" ||
-					ev.Code == "context_length_exceeded" {
-					if !provider.TrySend(ctx, out, provider.StreamChunk{
-						Type:  provider.ChunkError,
-						Error: &goai.ContextOverflowError{Message: msg, ResponseBody: data},
-					}) {
-						return
-					}
-				} else {
-					if !provider.TrySend(ctx, out, provider.StreamChunk{
-						Type:  provider.ChunkError,
-						Error: &goai.APIError{Message: msg},
-					}) {
-						return
-					}
+				msg, code := ev.Message, ev.Code
+				if ev.Error != nil {
+					msg, code = ev.Error.Message, ev.Error.Code
+				}
+				if !provider.TrySend(ctx, out, responsesStreamError(data, msg, code, "stream error")) {
+					return
 				}
 			}
 			return
@@ -834,6 +779,26 @@ func streamResponses(ctx context.Context, body io.ReadCloser, out chan<- provide
 		if !provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: fmt.Errorf("reading stream: %w", err)}) {
 			return
 		}
+	}
+}
+
+func responsesStreamError(data, msg, code, defaultMsg string) provider.StreamChunk {
+	msg = cmp.Or(msg, defaultMsg)
+	switch code {
+	case "context_length_exceeded", "context_overflow", "max_tokens":
+		return provider.StreamChunk{Type: provider.ChunkError, Error: &goai.ContextOverflowError{Message: msg, ResponseBody: data}}
+	case "insufficient_quota":
+		return provider.StreamChunk{Type: provider.ChunkError, Error: &goai.APIError{Message: "Quota exceeded. Check your plan and billing details.", IsRetryable: false}}
+	case "usage_not_included":
+		return provider.StreamChunk{Type: provider.ChunkError, Error: &goai.APIError{Message: "Usage not included in response. Check your plan supports usage reporting for this model.", IsRetryable: false}}
+	case "invalid_prompt":
+		return provider.StreamChunk{Type: provider.ChunkError, Error: &goai.APIError{Message: msg, IsRetryable: false}}
+	case "rate_limit_exceeded", "429":
+		return provider.StreamChunk{Type: provider.ChunkError, Error: &goai.APIError{Message: msg, StatusCode: 429, IsRetryable: true}}
+	case "server_error", "503", "502", "500":
+		return provider.StreamChunk{Type: provider.ChunkError, Error: &goai.APIError{Message: msg, IsRetryable: true}}
+	default:
+		return provider.StreamChunk{Type: provider.ChunkError, Error: &goai.APIError{Message: msg}}
 	}
 }
 

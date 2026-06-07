@@ -1532,6 +1532,79 @@ func TestStreamResponses_RateLimitRetryable(t *testing.T) {
 	t.Error("expected retryable APIError for rate_limit_exceeded")
 }
 
+func TestStreamResponses_ErrorEventNestedRateLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: error\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"error","error":{"type":"tokens","code":"rate_limit_exceeded","message":"Rate limit reached for gpt-4o","param":null},"sequence_number":2}`+"\n\n")
+	}))
+	defer server.Close()
+
+	model := Chat("o3", WithAPIKey("key"), WithBaseURL(server.URL))
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for chunk := range result.Stream {
+		if chunk.Type == provider.ChunkError {
+			var apiErr *goai.APIError
+			if errors.As(chunk.Error, &apiErr) {
+				if !apiErr.IsRetryable {
+					t.Error("rate_limit_exceeded should be retryable")
+				}
+				if apiErr.StatusCode != 429 {
+					t.Errorf("expected StatusCode=429, got %d", apiErr.StatusCode)
+				}
+				if apiErr.Message != "Rate limit reached for gpt-4o" {
+					t.Errorf("Message = %q", apiErr.Message)
+				}
+				return
+			}
+		}
+	}
+	t.Error("expected retryable APIError for nested rate_limit_exceeded")
+}
+
+func TestStreamResponses_ErrorEventFlatRateLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: error\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"error","code":"rate_limit_exceeded","message":"Rate limit reached","param":null,"sequence_number":1}`+"\n\n")
+	}))
+	defer server.Close()
+
+	model := Chat("o3", WithAPIKey("key"), WithBaseURL(server.URL))
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for chunk := range result.Stream {
+		if chunk.Type == provider.ChunkError {
+			var apiErr *goai.APIError
+			if errors.As(chunk.Error, &apiErr) {
+				if !apiErr.IsRetryable {
+					t.Error("rate_limit_exceeded should be retryable")
+				}
+				if apiErr.StatusCode != 429 {
+					t.Errorf("expected StatusCode=429, got %d", apiErr.StatusCode)
+				}
+				return
+			}
+		}
+	}
+	t.Error("expected retryable APIError for flat rate_limit_exceeded")
+}
+
 func TestStreamResponses_ServerErrorRetryable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
