@@ -48,6 +48,7 @@ jobs:
         with:
           files: coverage.out,observability/langfuse/coverage-langfuse.out,observability/otel/coverage-otel.out
           fail_ci_if_error: true
+          skip_validation: true
           token: ${{ secrets.CODECOV_TOKEN }}
 
   lint:

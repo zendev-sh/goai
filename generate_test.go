@@ -1252,21 +1252,32 @@ func TestGenerateText_ToolLoop_TextAccumulation(t *testing.T) {
 
 func TestBuildToolMap(t *testing.T) {
 	// No tools → nil.
-	if m := buildToolMap(nil); m != nil {
+	m, err := buildToolMap(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m != nil {
 		t.Error("expected nil for no tools")
 	}
 
 	// Tools without Execute → nil.
-	if m := buildToolMap([]Tool{{Name: "read"}}); m != nil {
+	m, err = buildToolMap([]Tool{{Name: "read"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m != nil {
 		t.Error("expected nil for tools without Execute")
 	}
 
 	// Mixed.
 	exec := func(_ context.Context, _ json.RawMessage) (string, error) { return "", nil }
-	m := buildToolMap([]Tool{
+	m, err = buildToolMap([]Tool{
 		{Name: "read", Execute: exec},
 		{Name: "write"},
 	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(m) != 1 {
 		t.Errorf("expected 1 executable tool, got %d", len(m))
 	}
@@ -5974,13 +5985,13 @@ func TestFinalizeStopCause(t *testing.T) {
 	stepWithoutTools := StepResult{}
 
 	cases := []struct {
-		name           string
-		hookStopped    bool
-		current        provider.StopCause
-		steps          []StepResult
-		maxSteps       int
-		wantCause      provider.StopCause
-		wantExhausted  bool
+		name          string
+		hookStopped   bool
+		current       provider.StopCause
+		steps         []StepResult
+		maxSteps      int
+		wantCause     provider.StopCause
+		wantExhausted bool
 	}{
 		{
 			name:          "max-steps guard trips",
@@ -6144,5 +6155,66 @@ func TestExecuteToolsParallel_SkipsProviderExecuted(t *testing.T) {
 	}
 	if results[1].Output != "echoed" {
 		t.Errorf("client tool result = %q, want echoed", results[1].Output)
+	}
+}
+
+func TestBuildToolMap_DuplicateToolName(t *testing.T) {
+	dupe := Tool{
+		Name:    "same",
+		Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "", nil },
+	}
+	_, err := buildToolMap([]Tool{dupe, dupe})
+	if err == nil {
+		t.Fatal("expected error for duplicate tool name, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate tool name") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "duplicate tool name")
+	}
+}
+
+func TestGenerateText_DuplicateToolName(t *testing.T) {
+	dupe := Tool{
+		Name:    "clash",
+		Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "", nil },
+	}
+	model := &mockModel{id: "test"}
+	_, err := GenerateText(t.Context(), model, WithPrompt("hi"), WithTools(dupe, dupe))
+	if err == nil {
+		t.Fatal("expected error for duplicate tool name, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate tool name") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "duplicate tool name")
+	}
+}
+
+func TestStreamText_DuplicateToolName(t *testing.T) {
+	dupe := Tool{
+		Name:    "clash",
+		Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "", nil },
+	}
+	model := &mockModel{id: "test"}
+	_, err := StreamText(t.Context(), model, WithPrompt("hi"), WithTools(dupe, dupe))
+	if err == nil {
+		t.Fatal("expected error for duplicate tool name, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate tool name") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "duplicate tool name")
+	}
+}
+
+func TestBuildToolMap_DuplicateAcrossExecutable(t *testing.T) {
+	exec := func(_ context.Context, _ json.RawMessage) (string, error) { return "", nil }
+	// Same name on an executable and a non-executable tool must still error:
+	// names are unique across all tools, matching the Vercel AI SDK reference.
+	if _, err := buildToolMap([]Tool{{Name: "dup", Execute: exec}, {Name: "dup"}}); err == nil {
+		t.Fatal("expected error for name shared by executable and non-executable tool")
+	}
+	// Duplicate among purely non-executable tools also errors.
+	_, err := buildToolMap([]Tool{{Name: "x"}, {Name: "x"}})
+	if err == nil {
+		t.Fatal("expected error for duplicate non-executable tool name, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate tool name") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "duplicate tool name")
 	}
 }

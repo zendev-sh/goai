@@ -1079,7 +1079,15 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 		return nil, errors.New("goai: prompt or messages must not be empty")
 	}
 
-	toolMap := buildToolMap(o.Tools)
+	toolMap, err := buildToolMap(o.Tools)
+	if err != nil {
+		// Pre-loop validation error must still transition any observer
+		// StepStarting->StepIdle so pollers waiting on it do not deadlock,
+		// consistent with the nil-model and empty-prompt checks above.
+		o.StateRef.set(StepStarting, 0)
+		o.StateRef.set(StepIdle, 0)
+		return nil, err
+	}
 
 	if o.MaxSteps > 1 && len(toolMap) > 0 {
 		return streamWithToolLoop(ctx, model, o, toolMap)
@@ -1206,7 +1214,10 @@ func GenerateText(ctx context.Context, model provider.LanguageModel, opts ...Opt
 	originalLen := len(params.Messages)
 
 	// Build tool lookup for auto loop.
-	toolMap := buildToolMap(o.Tools)
+	toolMap, err := buildToolMap(o.Tools)
+	if err != nil {
+		return nil, err
+	}
 
 	var totalUsage provider.Usage
 	var hookStopped bool             // true iff WithStopWhen or OnBeforeStep.Stop broke the loop
@@ -1483,25 +1494,37 @@ func isProviderExecuted(tc provider.ToolCall) bool {
 	return false
 }
 
-// buildToolMap creates a name→Tool lookup from the options.
-func buildToolMap(tools []Tool) map[string]Tool {
+// buildToolMap creates a name→Tool lookup of executable tools from the options.
+//
+// Tool names must be unique across all tools, not just executable ones: the
+// Vercel AI SDK (our reference) keys its tool set by name, so a collision there
+// is impossible. We validate every named tool to match that guarantee, while
+// the returned map only contains tools that have an Execute function.
+func buildToolMap(tools []Tool) (map[string]Tool, error) {
 	if len(tools) == 0 {
-		return nil
+		return nil, nil
 	}
 	m := make(map[string]Tool, len(tools))
+	seen := make(map[string]struct{}, len(tools))
 	for _, t := range tools {
-		if t.Execute != nil {
-			if t.Name == "" {
+		if t.Name == "" {
+			if t.Execute != nil {
 				fmt.Fprintf(os.Stderr, "goai: tool with empty name skipped\n")
-				continue
 			}
+			continue
+		}
+		if _, exists := seen[t.Name]; exists {
+			return nil, fmt.Errorf("goai: duplicate tool name %q: tool names must be unique", t.Name)
+		}
+		seen[t.Name] = struct{}{}
+		if t.Execute != nil {
 			m[t.Name] = t
 		}
 	}
 	if len(m) == 0 {
-		return nil
+		return nil, nil
 	}
-	return m
+	return m, nil
 }
 
 // toolOutput holds the result of a single tool execution (package-level type

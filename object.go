@@ -423,7 +423,10 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 		Schema: schema,
 	}
 
-	toolMap := buildToolMap(o.Tools)
+	toolMap, err := buildToolMap(o.Tools)
+	if err != nil {
+		return nil, err
+	}
 
 	var steps []StepResult
 	var totalUsage provider.Usage
@@ -599,6 +602,12 @@ func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts
 
 	if o.Prompt == "" && len(o.Messages) == 0 {
 		return nil, errors.New("goai: prompt or messages must not be empty")
+	}
+
+	// Validate tool name uniqueness like GenerateText/StreamText/GenerateObject.
+	// StreamObject does not run a tool loop, so the map itself is unused.
+	if _, err := buildToolMap(o.Tools); err != nil {
+		return nil, err
 	}
 
 	var timeoutCancel context.CancelFunc
