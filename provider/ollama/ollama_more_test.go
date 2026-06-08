@@ -434,3 +434,23 @@ func TestDoEmbed_SendError(t *testing.T) {
 		t.Fatal("expected send error, got nil")
 	}
 }
+
+func TestWithHeaders_CopiesMap(t *testing.T) {
+	src := map[string]string{"X-A": "1"}
+	model := Chat("m", WithHeaders(src))
+	// Mutating the caller's map after construction must not affect the model.
+	src["X-A"] = "mutated"
+	src["X-B"] = "added"
+	if model.headers["X-A"] != "1" {
+		t.Errorf("header X-A = %q, want 1 (external mutation leaked in)", model.headers["X-A"])
+	}
+	if _, ok := model.headers["X-B"]; ok {
+		t.Error("externally added key leaked into model headers")
+	}
+}
+
+func TestWithHeaders_Empty(t *testing.T) {
+	if model := Chat("m", WithHeaders(nil)); model.headers != nil {
+		t.Errorf("nil headers = %v, want nil", model.headers)
+	}
+}

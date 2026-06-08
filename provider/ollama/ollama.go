@@ -26,16 +26,16 @@
 package ollama
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
+	goai "github.com/zendev-sh/goai"
+	"github.com/zendev-sh/goai/internal/sse"
 	"github.com/zendev-sh/goai/provider"
 )
 
@@ -55,6 +55,14 @@ const (
 
 	// streamBufSize is the channel buffer size for streaming chunks.
 	streamBufSize = 32
+
+	// maxEmbedResponseBytes caps the embedding response body read to bound
+	// memory use on an unexpectedly large or malicious response.
+	maxEmbedResponseBytes = 128 << 20 // 128 MiB
+
+	// maxErrorBodyBytes caps how much of a non-200 response body is read into
+	// the returned error to avoid unbounded memory use.
+	maxErrorBodyBytes = 64 << 10 // 64 KiB
 )
 
 // --- Wire types ---
@@ -144,9 +152,18 @@ func WithBaseURL(rawURL string) Option {
 }
 
 // WithHeaders sets additional HTTP headers to include in every request.
+// The map is copied so later mutations by the caller do not affect the model.
 func WithHeaders(h map[string]string) Option {
 	return func(o *options) {
-		o.headers = h
+		if len(h) == 0 {
+			o.headers = nil
+			return
+		}
+		cp := make(map[string]string, len(h))
+		for k, v := range h {
+			cp[k] = v
+		}
+		o.headers = cp
 	}
 }
 
@@ -237,42 +254,44 @@ func (m *Model) DoGenerate(ctx context.Context, params provider.GenerateParams) 
 		toolCalls   []provider.ToolCall
 	)
 
-	// Use bufio.Reader rather than bufio.Scanner: NDJSON lines (e.g. large
-	// tool-call arguments) can exceed bufio.MaxScanTokenSize (64 KiB), which
-	// would abort a Scanner with "token too long".
-	reader := bufio.NewReader(resp.Body)
+	// Read NDJSON with sse.Scanner: it uses a bufio.Reader (no 64 KiB
+	// per-line limit like bufio.Scanner) while bounding each line to
+	// sse.MaxLineSize so a malicious response cannot exhaust memory.
+	scanner := sse.NewScanner(resp.Body)
 	for {
-		line, readErr := reader.ReadBytes('\n')
-		if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 {
-			var chunk ollamaChatResponse
-			if decErr := json.Unmarshal(trimmed, &chunk); decErr != nil {
-				return nil, fmt.Errorf("ollama: decode response: %w", decErr)
-			}
-			lastResp = chunk
-
-			if chunk.Message.Content != "" {
-				textParts = append(textParts, chunk.Message.Content)
-			}
-			if chunk.Message.Thinking != "" {
-				reasonParts = append(reasonParts, chunk.Message.Thinking)
-			}
-			for _, tc := range chunk.Message.ToolCalls {
-				raw := tc.Function.Arguments
-				if raw == nil {
-					raw = json.RawMessage("{}")
-				}
-				toolCalls = append(toolCalls, provider.ToolCall{
-					Name:  tc.Function.Name,
-					Input: raw,
-				})
-			}
-		}
-		if readErr != nil {
-			if !errors.Is(readErr, io.EOF) {
-				return nil, fmt.Errorf("ollama: reading response: %w", readErr)
-			}
+		line, ok := scanner.NextLine()
+		if !ok {
 			break
 		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		var chunk ollamaChatResponse
+		if decErr := json.Unmarshal([]byte(trimmed), &chunk); decErr != nil {
+			return nil, fmt.Errorf("ollama: decode response: %w", decErr)
+		}
+		lastResp = chunk
+
+		if chunk.Message.Content != "" {
+			textParts = append(textParts, chunk.Message.Content)
+		}
+		if chunk.Message.Thinking != "" {
+			reasonParts = append(reasonParts, chunk.Message.Thinking)
+		}
+		for _, tc := range chunk.Message.ToolCalls {
+			raw := tc.Function.Arguments
+			if raw == nil {
+				raw = json.RawMessage("{}")
+			}
+			toolCalls = append(toolCalls, provider.ToolCall{
+				Name:  tc.Function.Name,
+				Input: raw,
+			})
+		}
+	}
+	if scanErr := scanner.Err(); scanErr != nil {
+		return nil, fmt.Errorf("ollama: reading response: %w", scanErr)
 	}
 
 	return &provider.GenerateResult{
@@ -319,72 +338,74 @@ func (m *Model) DoStream(ctx context.Context, params provider.GenerateParams) (*
 
 		var lastResp ollamaChatResponse
 
-		// Use bufio.Reader rather than bufio.Scanner so that NDJSON lines larger
-		// than bufio.MaxScanTokenSize (64 KiB) do not abort with "token too long".
-		reader := bufio.NewReader(resp.Body)
+		// Read NDJSON with sse.Scanner: no 64 KiB per-line limit (unlike
+		// bufio.Scanner) while still bounding each line to sse.MaxLineSize.
+		scanner := sse.NewScanner(resp.Body)
 		for {
-			line, readErr := reader.ReadBytes('\n')
-			if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 {
-				var chunk ollamaChatResponse
-				if decErr := json.Unmarshal(trimmed, &chunk); decErr != nil {
-					provider.TrySend(ctx, ch, provider.StreamChunk{
-						Type:  provider.ChunkError,
-						Error: fmt.Errorf("ollama: decode stream chunk: %w", decErr),
-					})
-					return
-				}
-				lastResp = chunk
-
-				if chunk.Message.Content != "" {
-					if !provider.TrySend(ctx, ch, provider.StreamChunk{
-						Type: provider.ChunkText,
-						Text: chunk.Message.Content,
-					}) {
-						return
-					}
-				}
-
-				if chunk.Message.Thinking != "" {
-					if !provider.TrySend(ctx, ch, provider.StreamChunk{
-						Type: provider.ChunkReasoning,
-						Text: chunk.Message.Thinking,
-					}) {
-						return
-					}
-				}
-
-				for _, tc := range chunk.Message.ToolCalls {
-					raw := tc.Function.Arguments
-					if raw == nil {
-						raw = json.RawMessage("{}")
-					}
-					// Emit start signal first.
-					if !provider.TrySend(ctx, ch, provider.StreamChunk{
-						Type:     provider.ChunkToolCallStreamStart,
-						ToolName: tc.Function.Name,
-					}) {
-						return
-					}
-					// Ollama delivers complete tool calls in one chunk; emit the full call immediately.
-					if !provider.TrySend(ctx, ch, provider.StreamChunk{
-						Type:      provider.ChunkToolCall,
-						ToolName:  tc.Function.Name,
-						ToolInput: string(raw),
-					}) {
-						return
-					}
-				}
-			}
-			if readErr != nil {
-				if !errors.Is(readErr, io.EOF) {
-					provider.TrySend(ctx, ch, provider.StreamChunk{
-						Type:  provider.ChunkError,
-						Error: fmt.Errorf("ollama: reading stream: %w", readErr),
-					})
-					return
-				}
+			line, ok := scanner.NextLine()
+			if !ok {
 				break
 			}
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			var chunk ollamaChatResponse
+			if decErr := json.Unmarshal([]byte(trimmed), &chunk); decErr != nil {
+				provider.TrySend(ctx, ch, provider.StreamChunk{
+					Type:  provider.ChunkError,
+					Error: fmt.Errorf("ollama: decode stream chunk: %w", decErr),
+				})
+				return
+			}
+			lastResp = chunk
+
+			if chunk.Message.Content != "" {
+				if !provider.TrySend(ctx, ch, provider.StreamChunk{
+					Type: provider.ChunkText,
+					Text: chunk.Message.Content,
+				}) {
+					return
+				}
+			}
+
+			if chunk.Message.Thinking != "" {
+				if !provider.TrySend(ctx, ch, provider.StreamChunk{
+					Type: provider.ChunkReasoning,
+					Text: chunk.Message.Thinking,
+				}) {
+					return
+				}
+			}
+
+			for _, tc := range chunk.Message.ToolCalls {
+				raw := tc.Function.Arguments
+				if raw == nil {
+					raw = json.RawMessage("{}")
+				}
+				// Emit start signal first.
+				if !provider.TrySend(ctx, ch, provider.StreamChunk{
+					Type:     provider.ChunkToolCallStreamStart,
+					ToolName: tc.Function.Name,
+				}) {
+					return
+				}
+				// Ollama delivers complete tool calls in one chunk; emit the full call immediately.
+				if !provider.TrySend(ctx, ch, provider.StreamChunk{
+					Type:      provider.ChunkToolCall,
+					ToolName:  tc.Function.Name,
+					ToolInput: string(raw),
+				}) {
+					return
+				}
+			}
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			provider.TrySend(ctx, ch, provider.StreamChunk{
+				Type:  provider.ChunkError,
+				Error: fmt.Errorf("ollama: reading stream: %w", scanErr),
+			})
+			return
 		}
 
 		provider.TrySend(ctx, ch, provider.StreamChunk{
@@ -436,7 +457,7 @@ func (e *EmbeddingModel) DoEmbed(ctx context.Context, values []string, _ provide
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxEmbedResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("ollama: read embed response: %w", err)
 	}
@@ -503,9 +524,9 @@ func sendPost(ctx context.Context, baseURL, path string, headers map[string]stri
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("ollama: HTTP %d: %s", resp.StatusCode, string(respBody))
+		return nil, goai.ParseHTTPErrorWithHeaders("ollama", resp.StatusCode, respBody, resp.Header)
 	}
 
 	return resp, nil
