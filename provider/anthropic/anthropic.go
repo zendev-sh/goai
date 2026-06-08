@@ -889,6 +889,21 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 					}) {
 						return
 					}
+				case "redacted_thinking":
+					// Redacted thinking arrives as a complete block in
+					// content_block_start (no deltas). Surface the encrypted
+					// data so it can be replayed on the next turn.
+					if data, _ := cb["data"].(string); data != "" {
+						if !provider.TrySend(ctx, out, provider.StreamChunk{
+							Type: provider.ChunkReasoning,
+							Text: "",
+							Metadata: map[string]any{
+								"redactedData": data,
+							},
+						}) {
+							return
+						}
+					}
 				default:
 					if isServerToolResultBlock(cbType) {
 						isResultBlock = true
