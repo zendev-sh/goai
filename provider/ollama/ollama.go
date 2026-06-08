@@ -30,6 +30,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -60,21 +61,21 @@ const (
 
 // ollamaChatRequest is the wire format for POST /api/chat.
 type ollamaChatRequest struct {
-	Model    string            `json:"model"`
-	Messages []ollamaMessage   `json:"messages"`
-	Stream   bool              `json:"stream"`
-	Think    bool              `json:"think"`
-	Tools    []ollamaTool      `json:"tools,omitempty"`
-	Options  map[string]any    `json:"options,omitempty"`
+	Model    string          `json:"model"`
+	Messages []ollamaMessage `json:"messages"`
+	Stream   bool            `json:"stream"`
+	Think    bool            `json:"think"`
+	Tools    []ollamaTool    `json:"tools,omitempty"`
+	Options  map[string]any  `json:"options,omitempty"`
 }
 
 // ollamaMessage is a single message in the Ollama chat wire format.
 type ollamaMessage struct {
-	Role       string             `json:"role"`
-	Content    string             `json:"content"`
-	Thinking   string             `json:"thinking,omitempty"`
-	ToolCalls  []ollamaToolCall   `json:"tool_calls,omitempty"`
-	ToolCallID string             `json:"tool_call_id,omitempty"`
+	Role       string           `json:"role"`
+	Content    string           `json:"content"`
+	Thinking   string           `json:"thinking,omitempty"`
+	ToolCalls  []ollamaToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
 // ollamaToolCall is a tool call in the Ollama wire format.
@@ -90,8 +91,8 @@ type ollamaToolCallFunction struct {
 
 // ollamaTool is a tool definition in the Ollama wire format.
 type ollamaTool struct {
-	Type     string              `json:"type"`
-	Function ollamaToolFunction  `json:"function"`
+	Type     string             `json:"type"`
+	Function ollamaToolFunction `json:"function"`
 }
 
 // ollamaToolFunction holds the definition of a tool function.
@@ -236,37 +237,42 @@ func (m *Model) DoGenerate(ctx context.Context, params provider.GenerateParams) 
 		toolCalls   []provider.ToolCall
 	)
 
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var chunk ollamaChatResponse
-		if decErr := json.Unmarshal(line, &chunk); decErr != nil {
-			return nil, fmt.Errorf("ollama: decode response: %w", decErr)
-		}
-		lastResp = chunk
-
-		if chunk.Message.Content != "" {
-			textParts = append(textParts, chunk.Message.Content)
-		}
-		if chunk.Message.Thinking != "" {
-			reasonParts = append(reasonParts, chunk.Message.Thinking)
-		}
-		for _, tc := range chunk.Message.ToolCalls {
-			raw := tc.Function.Arguments
-			if raw == nil {
-				raw = json.RawMessage("{}")
+	// Use bufio.Reader rather than bufio.Scanner: NDJSON lines (e.g. large
+	// tool-call arguments) can exceed bufio.MaxScanTokenSize (64 KiB), which
+	// would abort a Scanner with "token too long".
+	reader := bufio.NewReader(resp.Body)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 {
+			var chunk ollamaChatResponse
+			if decErr := json.Unmarshal(trimmed, &chunk); decErr != nil {
+				return nil, fmt.Errorf("ollama: decode response: %w", decErr)
 			}
-			toolCalls = append(toolCalls, provider.ToolCall{
-				Name:  tc.Function.Name,
-				Input: raw,
-			})
+			lastResp = chunk
+
+			if chunk.Message.Content != "" {
+				textParts = append(textParts, chunk.Message.Content)
+			}
+			if chunk.Message.Thinking != "" {
+				reasonParts = append(reasonParts, chunk.Message.Thinking)
+			}
+			for _, tc := range chunk.Message.ToolCalls {
+				raw := tc.Function.Arguments
+				if raw == nil {
+					raw = json.RawMessage("{}")
+				}
+				toolCalls = append(toolCalls, provider.ToolCall{
+					Name:  tc.Function.Name,
+					Input: raw,
+				})
+			}
 		}
-	}
-	if scanErr := scanner.Err(); scanErr != nil {
-		return nil, fmt.Errorf("ollama: reading response: %w", scanErr)
+		if readErr != nil {
+			if !errors.Is(readErr, io.EOF) {
+				return nil, fmt.Errorf("ollama: reading response: %w", readErr)
+			}
+			break
+		}
 	}
 
 	return &provider.GenerateResult{
@@ -313,69 +319,72 @@ func (m *Model) DoStream(ctx context.Context, params provider.GenerateParams) (*
 
 		var lastResp ollamaChatResponse
 
-		scanner := bufio.NewScanner(resp.Body)
-		for scanner.Scan() {
-			line := scanner.Bytes()
-			if len(line) == 0 {
-				continue
-			}
-			var chunk ollamaChatResponse
-			if decErr := json.Unmarshal(line, &chunk); decErr != nil {
-				provider.TrySend(ctx, ch, provider.StreamChunk{
-					Type:  provider.ChunkError,
-					Error: fmt.Errorf("ollama: decode stream chunk: %w", decErr),
-				})
-				return
-			}
-			lastResp = chunk
-
-			if chunk.Message.Content != "" {
-				if !provider.TrySend(ctx, ch, provider.StreamChunk{
-					Type: provider.ChunkText,
-					Text: chunk.Message.Content,
-				}) {
+		// Use bufio.Reader rather than bufio.Scanner so that NDJSON lines larger
+		// than bufio.MaxScanTokenSize (64 KiB) do not abort with "token too long".
+		reader := bufio.NewReader(resp.Body)
+		for {
+			line, readErr := reader.ReadBytes('\n')
+			if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 {
+				var chunk ollamaChatResponse
+				if decErr := json.Unmarshal(trimmed, &chunk); decErr != nil {
+					provider.TrySend(ctx, ch, provider.StreamChunk{
+						Type:  provider.ChunkError,
+						Error: fmt.Errorf("ollama: decode stream chunk: %w", decErr),
+					})
 					return
 				}
-			}
+				lastResp = chunk
 
-			if chunk.Message.Thinking != "" {
-				if !provider.TrySend(ctx, ch, provider.StreamChunk{
-					Type: provider.ChunkReasoning,
-					Text: chunk.Message.Thinking,
-				}) {
+				if chunk.Message.Content != "" {
+					if !provider.TrySend(ctx, ch, provider.StreamChunk{
+						Type: provider.ChunkText,
+						Text: chunk.Message.Content,
+					}) {
+						return
+					}
+				}
+
+				if chunk.Message.Thinking != "" {
+					if !provider.TrySend(ctx, ch, provider.StreamChunk{
+						Type: provider.ChunkReasoning,
+						Text: chunk.Message.Thinking,
+					}) {
+						return
+					}
+				}
+
+				for _, tc := range chunk.Message.ToolCalls {
+					raw := tc.Function.Arguments
+					if raw == nil {
+						raw = json.RawMessage("{}")
+					}
+					// Emit start signal first.
+					if !provider.TrySend(ctx, ch, provider.StreamChunk{
+						Type:     provider.ChunkToolCallStreamStart,
+						ToolName: tc.Function.Name,
+					}) {
+						return
+					}
+					// Ollama delivers complete tool calls in one chunk; emit the full call immediately.
+					if !provider.TrySend(ctx, ch, provider.StreamChunk{
+						Type:      provider.ChunkToolCall,
+						ToolName:  tc.Function.Name,
+						ToolInput: string(raw),
+					}) {
+						return
+					}
+				}
+			}
+			if readErr != nil {
+				if !errors.Is(readErr, io.EOF) {
+					provider.TrySend(ctx, ch, provider.StreamChunk{
+						Type:  provider.ChunkError,
+						Error: fmt.Errorf("ollama: reading stream: %w", readErr),
+					})
 					return
 				}
+				break
 			}
-
-			for _, tc := range chunk.Message.ToolCalls {
-				raw := tc.Function.Arguments
-				if raw == nil {
-					raw = json.RawMessage("{}")
-				}
-				// Emit start signal first.
-				if !provider.TrySend(ctx, ch, provider.StreamChunk{
-					Type:     provider.ChunkToolCallStreamStart,
-					ToolName: tc.Function.Name,
-				}) {
-					return
-				}
-				// Ollama delivers complete tool calls in one chunk — emit the full call immediately.
-				if !provider.TrySend(ctx, ch, provider.StreamChunk{
-					Type:      provider.ChunkToolCall,
-					ToolName:  tc.Function.Name,
-					ToolInput: string(raw),
-				}) {
-					return
-				}
-			}
-		}
-
-		if scanErr := scanner.Err(); scanErr != nil {
-			provider.TrySend(ctx, ch, provider.StreamChunk{
-				Type:  provider.ChunkError,
-				Error: fmt.Errorf("ollama: reading stream: %w", scanErr),
-			})
-			return
 		}
 
 		provider.TrySend(ctx, ch, provider.StreamChunk{
