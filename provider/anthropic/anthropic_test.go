@@ -226,6 +226,56 @@ func TestChat_Stream_Reasoning(t *testing.T) {
 	}
 }
 
+func TestChat_Stream_RedactedThinking(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}`+"\n\n")
+		// Redacted thinking arrives as a complete block in content_block_start (no deltas).
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"encrypted-blob-xyz"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"The answer is 42"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"content_block_stop","index":1}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":20}}`+"\n\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"message_stop"}`+"\n\n")
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "think about this"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var chunks []provider.StreamChunk
+	for chunk := range result.Stream {
+		chunks = append(chunks, chunk)
+	}
+
+	// The redacted_thinking block must surface as a ChunkReasoning carrying the
+	// encrypted data so it can be replayed on a later turn.
+	var redacted *provider.StreamChunk
+	for i := range chunks {
+		if chunks[i].Type == provider.ChunkReasoning {
+			redacted = &chunks[i]
+			break
+		}
+	}
+	if redacted == nil {
+		t.Fatalf("expected a reasoning chunk for redacted thinking, got %+v", chunks)
+	}
+	if redacted.Text != "" {
+		t.Errorf("redacted reasoning chunk text = %q, want empty", redacted.Text)
+	}
+	if data, _ := redacted.Metadata["redactedData"].(string); data != "encrypted-blob-xyz" {
+		t.Errorf("redactedData = %v, want encrypted-blob-xyz", redacted.Metadata["redactedData"])
+	}
+}
+
 func TestChat_Stream_Error(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
