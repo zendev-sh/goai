@@ -1081,6 +1081,10 @@ func StreamText(ctx context.Context, model provider.LanguageModel, opts ...Optio
 
 	toolMap, err := buildToolMap(o.Tools)
 	if err != nil {
+		// Pre-loop validation error must still transition any observer
+		// StepStarting->StepIdle so pollers waiting on it do not deadlock,
+		// consistent with the nil-model and empty-prompt checks above.
+		o.StateRef.set(StepStarting, 0)
 		o.StateRef.set(StepIdle, 0)
 		return nil, err
 	}
@@ -1490,21 +1494,30 @@ func isProviderExecuted(tc provider.ToolCall) bool {
 	return false
 }
 
-// buildToolMap creates a name→Tool lookup from the options.
+// buildToolMap creates a name→Tool lookup of executable tools from the options.
+//
+// Tool names must be unique across all tools, not just executable ones: the
+// Vercel AI SDK (our reference) keys its tool set by name, so a collision there
+// is impossible. We validate every named tool to match that guarantee, while
+// the returned map only contains tools that have an Execute function.
 func buildToolMap(tools []Tool) (map[string]Tool, error) {
 	if len(tools) == 0 {
 		return nil, nil
 	}
 	m := make(map[string]Tool, len(tools))
+	seen := make(map[string]struct{}, len(tools))
 	for _, t := range tools {
-		if t.Execute != nil {
-			if t.Name == "" {
+		if t.Name == "" {
+			if t.Execute != nil {
 				fmt.Fprintf(os.Stderr, "goai: tool with empty name skipped\n")
-				continue
 			}
-			if _, exists := m[t.Name]; exists {
-				return nil, fmt.Errorf("goai: duplicate tool name %q: tool names must be unique", t.Name)
-			}
+			continue
+		}
+		if _, exists := seen[t.Name]; exists {
+			return nil, fmt.Errorf("goai: duplicate tool name %q: tool names must be unique", t.Name)
+		}
+		seen[t.Name] = struct{}{}
+		if t.Execute != nil {
 			m[t.Name] = t
 		}
 	}

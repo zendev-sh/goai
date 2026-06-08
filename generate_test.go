@@ -5985,13 +5985,13 @@ func TestFinalizeStopCause(t *testing.T) {
 	stepWithoutTools := StepResult{}
 
 	cases := []struct {
-		name           string
-		hookStopped    bool
-		current        provider.StopCause
-		steps          []StepResult
-		maxSteps       int
-		wantCause      provider.StopCause
-		wantExhausted  bool
+		name          string
+		hookStopped   bool
+		current       provider.StopCause
+		steps         []StepResult
+		maxSteps      int
+		wantCause     provider.StopCause
+		wantExhausted bool
 	}{
 		{
 			name:          "max-steps guard trips",
@@ -6196,6 +6196,23 @@ func TestStreamText_DuplicateToolName(t *testing.T) {
 	_, err := StreamText(t.Context(), model, WithPrompt("hi"), WithTools(dupe, dupe))
 	if err == nil {
 		t.Fatal("expected error for duplicate tool name, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate tool name") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "duplicate tool name")
+	}
+}
+
+func TestBuildToolMap_DuplicateAcrossExecutable(t *testing.T) {
+	exec := func(_ context.Context, _ json.RawMessage) (string, error) { return "", nil }
+	// Same name on an executable and a non-executable tool must still error:
+	// names are unique across all tools, matching the Vercel AI SDK reference.
+	if _, err := buildToolMap([]Tool{{Name: "dup", Execute: exec}, {Name: "dup"}}); err == nil {
+		t.Fatal("expected error for name shared by executable and non-executable tool")
+	}
+	// Duplicate among purely non-executable tools also errors.
+	_, err := buildToolMap([]Tool{{Name: "x"}, {Name: "x"}})
+	if err == nil {
+		t.Fatal("expected error for duplicate non-executable tool name, got nil")
 	}
 	if !strings.Contains(err.Error(), "duplicate tool name") {
 		t.Errorf("error = %q, want it to contain %q", err.Error(), "duplicate tool name")
