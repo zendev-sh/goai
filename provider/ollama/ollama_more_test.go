@@ -53,8 +53,11 @@ func TestConvertMessage_Roles(t *testing.T) {
 	if len(asst) != 1 {
 		t.Fatalf("assistant produced %d messages, want 1", len(asst))
 	}
-	if asst[0].Content != "answhy" {
-		t.Errorf("assistant content = %q, want %q", asst[0].Content, "answhy")
+	if asst[0].Content != "ans" {
+		t.Errorf("assistant content = %q, want %q", asst[0].Content, "ans")
+	}
+	if asst[0].Thinking != "why" {
+		t.Errorf("assistant thinking = %q, want %q", asst[0].Thinking, "why")
 	}
 	if len(asst[0].ToolCalls) != 2 {
 		t.Fatalf("assistant tool calls = %d, want 2", len(asst[0].ToolCalls))
@@ -452,5 +455,63 @@ func TestWithHeaders_CopiesMap(t *testing.T) {
 func TestWithHeaders_Empty(t *testing.T) {
 	if model := Chat("m", WithHeaders(nil)); model.headers != nil {
 		t.Errorf("nil headers = %v, want nil", model.headers)
+	}
+}
+
+func TestBuildFormat(t *testing.T) {
+	if f := buildFormat(nil); f != nil {
+		t.Errorf("nil response format = %s, want nil", f)
+	}
+	// No schema -> generic JSON mode.
+	if f := buildFormat(&provider.ResponseFormat{}); string(f) != `"json"` {
+		t.Errorf("empty schema = %s, want \"json\"", f)
+	}
+	// Schema -> constrained output carrying the schema verbatim.
+	schema := json.RawMessage(`{"type":"object"}`)
+	if f := buildFormat(&provider.ResponseFormat{Schema: schema}); string(f) != string(schema) {
+		t.Errorf("schema format = %s, want %s", f, schema)
+	}
+}
+
+func TestDoGenerate_ResponseFormatSchema(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body ollamaChatRequest
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if string(body.Format) != `{"type":"object"}` {
+			t.Errorf("format in request = %s, want the schema", body.Format)
+		}
+		chatNDJSON(w, `{"model":"m","message":{"role":"assistant","content":"{}"},"done":true,"done_reason":"stop"}`)
+	}))
+	defer server.Close()
+
+	model := Chat("m", WithBaseURL(server.URL))
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages:       []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+		ResponseFormat: &provider.ResponseFormat{Schema: json.RawMessage(`{"type":"object"}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConvertMessage_AssistantReasoningToThinking(t *testing.T) {
+	msgs, err := convertMessage(provider.Message{
+		Role: provider.RoleAssistant,
+		Content: []provider.Part{
+			{Type: provider.PartText, Text: "answer"},
+			{Type: provider.PartReasoning, Text: "because"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want 1", len(msgs))
+	}
+	if msgs[0].Content != "answer" {
+		t.Errorf("content = %q, want %q", msgs[0].Content, "answer")
+	}
+	if msgs[0].Thinking != "because" {
+		t.Errorf("thinking = %q, want %q (reasoning must not merge into content)", msgs[0].Thinking, "because")
 	}
 }

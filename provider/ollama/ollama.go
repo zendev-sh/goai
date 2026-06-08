@@ -75,6 +75,10 @@ type ollamaChatRequest struct {
 	Think    bool            `json:"think"`
 	Tools    []ollamaTool    `json:"tools,omitempty"`
 	Options  map[string]any  `json:"options,omitempty"`
+	// Format requests structured output. Ollama accepts either the string
+	// "json" for generic JSON mode or a JSON Schema object for constrained
+	// output, so it is carried as a raw JSON value.
+	Format json.RawMessage `json:"format,omitempty"`
 }
 
 // ollamaMessage is a single message in the Ollama chat wire format.
@@ -555,7 +559,21 @@ func buildChatRequest(modelID string, params provider.GenerateParams, streaming 
 		Stream:   streaming,
 		Options:  buildOllamaOptions(params),
 		Think:    thinkVal,
+		Format:   buildFormat(params.ResponseFormat),
 	}, nil
+}
+
+// buildFormat maps a GoAI ResponseFormat to Ollama's chat "format" field.
+// A schema constrains output to that JSON Schema; a format with no schema
+// requests generic JSON mode. Returns nil when no response format is set.
+func buildFormat(rf *provider.ResponseFormat) json.RawMessage {
+	if rf == nil {
+		return nil
+	}
+	if len(rf.Schema) > 0 {
+		return rf.Schema
+	}
+	return json.RawMessage(`"json"`)
 }
 
 // convertMessages prepends an optional system prompt and converts all GoAI
@@ -597,13 +615,17 @@ func convertMessage(msg provider.Message) ([]ollamaMessage, error) {
 		}}, nil
 
 	case provider.RoleAssistant:
-		var text string
+		var text, thinking string
 		var toolCalls []ollamaToolCall
 
 		for _, part := range msg.Content {
 			switch part.Type {
-			case provider.PartText, provider.PartReasoning:
+			case provider.PartText:
 				text += part.Text
+			case provider.PartReasoning:
+				// Carry reasoning in the native thinking field rather than
+				// merging it into content, so it round-trips correctly.
+				thinking += part.Text
 			case provider.PartToolCall:
 				raw := part.ToolInput
 				if raw == nil {
@@ -621,6 +643,7 @@ func convertMessage(msg provider.Message) ([]ollamaMessage, error) {
 		return []ollamaMessage{{
 			Role:      "assistant",
 			Content:   text,
+			Thinking:  thinking,
 			ToolCalls: toolCalls,
 		}}, nil
 
