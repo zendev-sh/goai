@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/internal/httpc"
@@ -273,6 +274,35 @@ func TestChat_Stream_RedactedThinking(t *testing.T) {
 	}
 	if data, _ := redacted.Metadata["redactedData"].(string); data != "encrypted-blob-xyz" {
 		t.Errorf("redactedData = %v, want encrypted-blob-xyz", redacted.Metadata["redactedData"])
+	}
+}
+
+func TestParseSSE_RedactedThinking_ContextCancelled(t *testing.T) {
+	// With a cancelled context and an unbuffered channel that has no reader,
+	// TrySend must take the ctx.Done() branch and parseSSE must return without
+	// blocking. Covers the cancellation path of the redacted_thinking case.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	out := make(chan provider.StreamChunk)
+	body := strings.NewReader(`data: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"encrypted-blob"}}` + "\n\n")
+
+	done := make(chan struct{})
+	go func() {
+		parseSSE(ctx, body, out, false)
+		close(done)
+	}()
+
+	// With no reader, the unbuffered send is never ready, so TrySend must take
+	// the cancelled-ctx branch and parseSSE must return (and close out).
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("parseSSE did not return after context cancellation")
+	}
+
+	// out is closed now; draining must complete without yielding a chunk.
+	for chunk := range out {
+		t.Errorf("expected no chunk after cancellation, got %+v", chunk)
 	}
 }
 
