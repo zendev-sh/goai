@@ -2304,3 +2304,18 @@ func TestGenerateObject_DuplicateToolName(t *testing.T) {
 		t.Errorf("error = %q, want it to contain %q", err.Error(), "duplicate tool name")
 	}
 }
+
+func TestStreamObject_DuplicateToolName(t *testing.T) {
+	dupe := Tool{
+		Name:    "clash",
+		Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "", nil },
+	}
+	model := &mockModel{id: "test"}
+	_, err := StreamObject[simpleObject](t.Context(), model, WithPrompt("hi"), WithTools(dupe, dupe))
+	if err == nil {
+		t.Fatal("expected error for duplicate tool name, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate tool name") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "duplicate tool name")
+	}
+}

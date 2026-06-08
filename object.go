@@ -604,6 +604,12 @@ func StreamObject[T any](ctx context.Context, model provider.LanguageModel, opts
 		return nil, errors.New("goai: prompt or messages must not be empty")
 	}
 
+	// Validate tool name uniqueness like GenerateText/StreamText/GenerateObject.
+	// StreamObject does not run a tool loop, so the map itself is unused.
+	if _, err := buildToolMap(o.Tools); err != nil {
+		return nil, err
+	}
+
 	var timeoutCancel context.CancelFunc
 	if o.Timeout > 0 {
 		ctx, timeoutCancel = context.WithTimeout(ctx, o.Timeout)
