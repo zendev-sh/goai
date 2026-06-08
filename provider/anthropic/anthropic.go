@@ -362,6 +362,9 @@ func (m *chatModel) buildRequest(params provider.GenerateParams, streaming bool)
 	// Thinking / extended thinking.
 	// Read from ProviderOptions["thinking"] -- matches Vercel AI SDK convention.
 	// Accepts: {type: "enabled", budgetTokens: N} or {type: "adaptive"} or {type: "disabled"}.
+	// Adaptive thinking accepts an optional display: "summarized" | "omitted"
+	// (Opus 4.7/4.8 default to "omitted", so thinking text streams empty unless
+	// "summarized" is requested).
 	if thinking, ok := params.ProviderOptions["thinking"]; ok {
 		if tm, ok := thinking.(map[string]any); ok {
 			thinkingReq := map[string]any{}
@@ -370,6 +373,9 @@ func (m *chatModel) buildRequest(params provider.GenerateParams, streaming bool)
 			}
 			if budget, ok := tm["budgetTokens"]; ok {
 				thinkingReq["budget_tokens"] = budget
+			}
+			if display, ok := tm["display"]; ok {
+				thinkingReq["display"] = display
 			}
 			if len(thinkingReq) > 0 {
 				body["thinking"] = thinkingReq

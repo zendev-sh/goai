@@ -1062,6 +1062,27 @@ func TestBuildRequest_ThinkingAdaptive(t *testing.T) {
 	}
 }
 
+func TestBuildRequest_ThinkingAdaptiveDisplay(t *testing.T) {
+	m := &chatModel{id: "claude-opus-4-8", opts: options{baseURL: defaultBaseURL}}
+	body := m.buildRequest(provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+		ProviderOptions: map[string]any{
+			"thinking": map[string]any{"type": "adaptive", "display": "summarized"},
+		},
+	}, true)
+
+	thinking, ok := body["thinking"].(map[string]any)
+	if !ok {
+		t.Fatal("thinking not in request body")
+	}
+	if thinking["type"] != "adaptive" {
+		t.Errorf("thinking.type = %v, want adaptive", thinking["type"])
+	}
+	if thinking["display"] != "summarized" {
+		t.Errorf("thinking.display = %v, want summarized", thinking["display"])
+	}
+}
+
 func TestBuildRequest_ProviderOptionsPassthrough(t *testing.T) {
 	m := &chatModel{id: "claude-sonnet-4-20250514", opts: options{baseURL: defaultBaseURL}}
 	body := m.buildRequest(provider.GenerateParams{
