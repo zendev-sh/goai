@@ -76,7 +76,7 @@ func BuildRequest(params provider.GenerateParams, modelID string, streaming bool
 
 	// Extract structuredOutputs and strictJsonSchema once -- used by both tools and response format.
 	structuredOutputs := true // default true, matching Vercel
-	strictJSON := false      // default false, matching Vercel
+	strictJSON := false       // default false, matching Vercel
 	if v, ok := params.ProviderOptions["structuredOutputs"]; ok {
 		if b, ok := v.(bool); ok {
 			structuredOutputs = b
@@ -359,9 +359,10 @@ func ParseStream(ctx context.Context, scanner *sse.Scanner, out chan<- provider.
 	defer close(out)
 	// Track active tool calls by index, accumulating argument fragments.
 	type activeToolCall struct {
-		id   string
-		name string
-		args strings.Builder
+		id      string
+		name    string
+		args    strings.Builder
+		started bool
 	}
 	activeTools := make(map[int]*activeToolCall)
 	var usage provider.Usage
@@ -478,41 +479,46 @@ func ParseStream(ctx context.Context, scanner *sse.Scanner, out chan<- provider.
 
 		// Tool calls -- item 17: generate fallback ID if provider omits it.
 		for _, tc := range delta.ToolCalls {
-			tcID := tc.ID
-			if tcID == "" && tc.Function.Name != "" {
-				// First chunk for a tool call with no ID -- generate one.
-				if active := activeTools[tc.Index]; active == nil {
-					tcID = generateToolCallID()
-				}
+			active := activeTools[tc.Index]
+			if active == nil {
+				active = &activeToolCall{}
+				activeTools[tc.Index] = active
 			}
 
-			if tcID != "" {
-				activeTools[tc.Index] = &activeToolCall{id: tcID, name: tc.Function.Name}
+			if tc.ID != "" {
+				active.id = tc.ID
+			} else if active.id == "" && tc.Function.Name != "" {
+				// First chunk for a tool call with no ID -- generate one.
+				active.id = generateToolCallID()
+			}
+			if tc.Function.Name != "" {
+				active.name = tc.Function.Name
+			}
+
+			if active.id != "" && active.name != "" && !active.started {
 				if !provider.TrySend(ctx, out, provider.StreamChunk{
 					Type:       provider.ChunkToolCallStreamStart,
-					ToolCallID: tcID,
-					ToolName:   tc.Function.Name,
+					ToolCallID: active.id,
+					ToolName:   active.name,
 				}) {
 					return
 				}
+				active.started = true
 			}
 
 			if tc.Function.Arguments != "" {
-				active := activeTools[tc.Index]
-				if active == nil {
-					active = &activeToolCall{}
-					activeTools[tc.Index] = active
-				}
 				active.args.WriteString(tc.Function.Arguments)
 
 				// Emit delta for UI streaming progress.
-				if !provider.TrySend(ctx, out, provider.StreamChunk{
-					Type:       provider.ChunkToolCallDelta,
-					ToolCallID: active.id,
-					ToolName:   active.name,
-					ToolInput:  tc.Function.Arguments,
-				}) {
-					return
+				if active.started {
+					if !provider.TrySend(ctx, out, provider.StreamChunk{
+						Type:       provider.ChunkToolCallDelta,
+						ToolCallID: active.id,
+						ToolName:   active.name,
+						ToolInput:  tc.Function.Arguments,
+					}) {
+						return
+					}
 				}
 
 				// Emit ChunkToolCall when accumulated args form valid JSON.

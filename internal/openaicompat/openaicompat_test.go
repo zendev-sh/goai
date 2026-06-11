@@ -362,6 +362,51 @@ data: [DONE]
 	}
 }
 
+func TestParseStream_ToolCallNameAfterID(t *testing.T) {
+	input := `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{}}]},"index":0}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"read","arguments":""}}]},"index":0}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":"}}]},"index":0}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"main.go\"}"}}]},"index":0}]}
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}]}
+data: [DONE]
+`
+	scanner := sse.NewScanner(strings.NewReader(input))
+	out := make(chan provider.StreamChunk, 10)
+
+	go ParseStream(t.Context(), scanner, out)
+
+	var startChunk, toolCall provider.StreamChunk
+	var deltas []provider.StreamChunk
+	for chunk := range out {
+		switch chunk.Type {
+		case provider.ChunkToolCallStreamStart:
+			startChunk = chunk
+		case provider.ChunkToolCallDelta:
+			deltas = append(deltas, chunk)
+		case provider.ChunkToolCall:
+			toolCall = chunk
+		}
+	}
+
+	if startChunk.ToolCallID != "call_1" || startChunk.ToolName != "read" {
+		t.Fatalf("start chunk = %+v, want id call_1 name read", startChunk)
+	}
+	if len(deltas) != 2 {
+		t.Fatalf("got %d deltas, want 2", len(deltas))
+	}
+	for i, delta := range deltas {
+		if delta.ToolCallID != "call_1" || delta.ToolName != "read" {
+			t.Errorf("delta[%d] = %+v, want id call_1 name read", i, delta)
+		}
+	}
+	if toolCall.ToolCallID != "call_1" || toolCall.ToolName != "read" {
+		t.Fatalf("tool call = %+v, want id call_1 name read", toolCall)
+	}
+	if toolCall.ToolInput != `{"path":"main.go"}` {
+		t.Errorf("tool input = %q, want %q", toolCall.ToolInput, `{"path":"main.go"}`)
+	}
+}
+
 func TestParseStream_Reasoning(t *testing.T) {
 	input := `data: {"choices":[{"delta":{"reasoning_content":"Let me think..."},"index":0}]}
 data: {"choices":[{"delta":{"content":"The answer is 42."},"index":0}]}
