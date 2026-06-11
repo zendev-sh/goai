@@ -485,7 +485,7 @@ func ParseStream(ctx context.Context, scanner *sse.Scanner, out chan<- provider.
 				activeTools[tc.Index] = active
 			}
 
-			if tc.ID != "" {
+			if tc.ID != "" && !active.started {
 				active.id = tc.ID
 			} else if active.id == "" && tc.Function.Name != "" {
 				// First chunk for a tool call with no ID -- generate one.
@@ -504,6 +504,28 @@ func ParseStream(ctx context.Context, scanner *sse.Scanner, out chan<- provider.
 					return
 				}
 				active.started = true
+
+				if pending := active.args.String(); pending != "" {
+					if !provider.TrySend(ctx, out, provider.StreamChunk{
+						Type:       provider.ChunkToolCallDelta,
+						ToolCallID: active.id,
+						ToolName:   active.name,
+						ToolInput:  pending,
+					}) {
+						return
+					}
+					if json.Valid([]byte(pending)) {
+						if !provider.TrySend(ctx, out, provider.StreamChunk{
+							Type:       provider.ChunkToolCall,
+							ToolCallID: active.id,
+							ToolName:   active.name,
+							ToolInput:  pending,
+						}) {
+							return
+						}
+						active.args.Reset()
+					}
+				}
 			}
 
 			if tc.Function.Arguments != "" {
@@ -519,19 +541,19 @@ func ParseStream(ctx context.Context, scanner *sse.Scanner, out chan<- provider.
 					}) {
 						return
 					}
-				}
 
-				// Emit ChunkToolCall when accumulated args form valid JSON.
-				if accumulated := active.args.String(); json.Valid([]byte(accumulated)) {
-					if !provider.TrySend(ctx, out, provider.StreamChunk{
-						Type:       provider.ChunkToolCall,
-						ToolCallID: active.id,
-						ToolName:   active.name,
-						ToolInput:  accumulated,
-					}) {
-						return
+					// Emit ChunkToolCall when accumulated args form valid JSON.
+					if accumulated := active.args.String(); json.Valid([]byte(accumulated)) {
+						if !provider.TrySend(ctx, out, provider.StreamChunk{
+							Type:       provider.ChunkToolCall,
+							ToolCallID: active.id,
+							ToolName:   active.name,
+							ToolInput:  accumulated,
+						}) {
+							return
+						}
+						active.args.Reset()
 					}
-					active.args.Reset()
 				}
 			}
 		}
@@ -540,7 +562,7 @@ func ParseStream(ctx context.Context, scanner *sse.Scanner, out chan<- provider.
 		if choice.FinishReason != "" {
 			if choice.FinishReason == "tool_calls" {
 				for _, active := range activeTools {
-					if remaining := active.args.String(); remaining != "" {
+					if remaining := active.args.String(); remaining != "" && active.started {
 						if !provider.TrySend(ctx, out, provider.StreamChunk{
 							Type:       provider.ChunkToolCall,
 							ToolCallID: active.id,
