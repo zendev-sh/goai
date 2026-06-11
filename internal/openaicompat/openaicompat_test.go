@@ -456,6 +456,49 @@ data: [DONE]
 	}
 }
 
+func TestParseStream_CompleteArgsBeforeName(t *testing.T) {
+	// Complete, valid-JSON arguments arrive before the function name. The
+	// accumulated pending buffer must be flushed as a ChunkToolCall as soon as
+	// the start fires, not held until the finish reason.
+	input := `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"arguments":"{\"path\":\"main.go\"}"}}]},"index":0}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"read"}}]},"index":0}]}
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}]}
+data: [DONE]
+`
+	scanner := sse.NewScanner(strings.NewReader(input))
+	out := make(chan provider.StreamChunk, 10)
+
+	go ParseStream(t.Context(), scanner, out)
+
+	var startChunk, toolCall provider.StreamChunk
+	var deltas []provider.StreamChunk
+	var toolCalls int
+	for chunk := range out {
+		switch chunk.Type {
+		case provider.ChunkToolCallStreamStart:
+			startChunk = chunk
+		case provider.ChunkToolCallDelta:
+			deltas = append(deltas, chunk)
+		case provider.ChunkToolCall:
+			toolCall = chunk
+			toolCalls++
+		}
+	}
+
+	if startChunk.ToolCallID != "call_1" || startChunk.ToolName != "read" {
+		t.Fatalf("start chunk = %+v, want id call_1 name read", startChunk)
+	}
+	if len(deltas) != 1 || deltas[0].ToolInput != `{"path":"main.go"}` {
+		t.Fatalf("deltas = %+v, want single delta with full args", deltas)
+	}
+	if toolCalls != 1 {
+		t.Fatalf("got %d tool calls, want 1 (pending flushed once)", toolCalls)
+	}
+	if toolCall.ToolCallID != "call_1" || toolCall.ToolName != "read" || toolCall.ToolInput != `{"path":"main.go"}` {
+		t.Fatalf("tool call = %+v, want id call_1 name read input {\"path\":\"main.go\"}", toolCall)
+	}
+}
+
 func TestParseStream_LateProviderIDDoesNotReplaceGeneratedID(t *testing.T) {
 	input := `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"type":"function","function":{"name":"read","arguments":""}}]},"index":0}]}
 data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_late","function":{"arguments":"{\"x\":1}"}}]},"index":0}]}
@@ -2126,6 +2169,104 @@ func TestParseStream_ContextCancel_AllBranches(t *testing.T) {
 		}()
 
 		<-out // consume the text chunk
+		cancel()
+		<-done
+		for range out {
+		}
+	})
+
+	t.Run("args_delta_after_start_cancel", func(t *testing.T) {
+		// Cover the ChunkToolCallDelta TrySend return for args arriving after a
+		// started tool call.  Start fires first; cancel after it, then the args
+		// delta send fails.
+		ctx, cancel := context.WithCancel(t.Context())
+		out := make(chan provider.StreamChunk) // unbuffered
+
+		input := "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"f\"}}]},\"index\":0}]}\n" +
+			"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"x\"}}]},\"index\":0}]}\ndata: [DONE]\n"
+		scanner := sse.NewScanner(strings.NewReader(input))
+
+		done := make(chan struct{})
+		go func() {
+			ParseStream(ctx, scanner, out)
+			close(done)
+		}()
+
+		<-out // tool start
+		cancel()
+		<-done
+		for range out {
+		}
+	})
+
+	t.Run("args_complete_json_after_start_cancel", func(t *testing.T) {
+		// Cover the ChunkToolCall TrySend return when accumulated args form valid
+		// JSON after the tool started.  Receive start and delta, then cancel so
+		// the complete-JSON send fails.
+		ctx, cancel := context.WithCancel(t.Context())
+		out := make(chan provider.StreamChunk) // unbuffered
+
+		input := "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"f\"}}]},\"index\":0}]}\n" +
+			"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{}\"}}]},\"index\":0}]}\ndata: [DONE]\n"
+		scanner := sse.NewScanner(strings.NewReader(input))
+
+		done := make(chan struct{})
+		go func() {
+			ParseStream(ctx, scanner, out)
+			close(done)
+		}()
+
+		<-out // tool start
+		<-out // args delta
+		cancel()
+		<-done
+		for range out {
+		}
+	})
+
+	t.Run("pending_delta_after_start_cancel", func(t *testing.T) {
+		// Cover the pending-args ChunkToolCallDelta TrySend return.  Partial args
+		// arrive before the name (buffered), then the name fires the start; cancel
+		// after start so the pending delta flush fails.
+		ctx, cancel := context.WithCancel(t.Context())
+		out := make(chan provider.StreamChunk) // unbuffered
+
+		input := "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"arguments\":\"partial\"}}]},\"index\":0}]}\n" +
+			"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"f\"}}]},\"index\":0}]}\ndata: [DONE]\n"
+		scanner := sse.NewScanner(strings.NewReader(input))
+
+		done := make(chan struct{})
+		go func() {
+			ParseStream(ctx, scanner, out)
+			close(done)
+		}()
+
+		<-out // tool start
+		cancel()
+		<-done
+		for range out {
+		}
+	})
+
+	t.Run("pending_complete_json_after_start_cancel", func(t *testing.T) {
+		// Cover the pending-args ChunkToolCall TrySend return when the buffered
+		// args are already valid JSON.  Receive start and pending delta, then
+		// cancel so the complete-JSON flush fails.
+		ctx, cancel := context.WithCancel(t.Context())
+		out := make(chan provider.StreamChunk) // unbuffered
+
+		input := "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"arguments\":\"{}\"}}]},\"index\":0}]}\n" +
+			"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"f\"}}]},\"index\":0}]}\ndata: [DONE]\n"
+		scanner := sse.NewScanner(strings.NewReader(input))
+
+		done := make(chan struct{})
+		go func() {
+			ParseStream(ctx, scanner, out)
+			close(done)
+		}()
+
+		<-out // tool start
+		<-out // pending args delta
 		cancel()
 		<-done
 		for range out {
