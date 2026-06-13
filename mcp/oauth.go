@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -46,18 +47,23 @@ type AuthServerMetadata struct {
 // DiscoverAuth resolves the OAuth Authorization Server for an MCP server URL by
 // following the MCP authorization discovery chain:
 //
-//	RFC 9728 (Protected Resource Metadata):
-//	  GET {origin}/.well-known/oauth-protected-resource
-//	  → authorization_servers[0] is the Authorization Server base URL
+//	Protected Resource Metadata (RFC 9728): the document naming the
+//	authorization server is located, in order, by
+//	  1. the resource_metadata pointer in the WWW-Authenticate header of an
+//	     unauthenticated probe (RFC 9728 §5.1), and
+//	  2. the well-known URIs {origin}/.well-known/oauth-protected-resource{/path}
+//	     (path-aware) and {origin}/.well-known/oauth-protected-resource (RFC 9728
+//	     §3.1).
+//	Its authorization_servers[0] is the Authorization Server base URL.
 //
-//	RFC 8414 (Authorization Server Metadata):
-//	  GET {asURL}/.well-known/oauth-authorization-server
-//	  → authorization_endpoint, token_endpoint, registration_endpoint
+//	Authorization Server Metadata: the endpoints are fetched from the
+//	.well-known/oauth-authorization-server (RFC 8414) and
+//	.well-known/openid-configuration (OpenID Connect Discovery) documents, each
+//	tried in host-insert and path-append form.
 //
-// If RFC 9728 yields no authorization server, RFC 8414 is tried directly on the
-// MCP server's origin as a legacy fallback (some servers skip the indirection).
-//
-// hc may be nil, in which case http.DefaultClient is used.
+// If no authorization server is found, the MCP server's own origin is tried as a
+// legacy fallback (some servers skip the indirection). hc may be nil, in which
+// case http.DefaultClient is used.
 func DiscoverAuth(ctx context.Context, serverURL string, hc *http.Client) (*AuthServerMetadata, error) {
 	if hc == nil {
 		hc = http.DefaultClient
@@ -68,23 +74,11 @@ func DiscoverAuth(ctx context.Context, serverURL string, hc *http.Client) (*Auth
 	}
 
 	// RFC 9728 — find the Authorization Server URL (best-effort).
-	asURL := ""
-	if md, err := getJSON(ctx, hc, origin+"/.well-known/oauth-protected-resource"); err == nil {
-		if servers, ok := md["authorization_servers"].([]any); ok && len(servers) > 0 {
-			asURL, _ = servers[0].(string)
-		}
-	}
+	asURL := discoverAuthServerURL(ctx, hc, serverURL, origin)
 
-	// RFC 8414 — fetch AS metadata: discovered AS first, origin as fallback.
-	candidates := make([]string, 0, 2)
-	if asURL != "" {
-		candidates = append(candidates, asURL)
-	}
-	candidates = append(candidates, origin)
-
-	for _, candidate := range candidates {
-		base := strings.TrimRight(candidate, "/")
-		md, err := getJSON(ctx, hc, base+"/.well-known/oauth-authorization-server")
+	// RFC 8414 / OpenID Connect Discovery — fetch AS metadata.
+	for _, candidate := range authServerMetadataURLs(asURL, origin) {
+		md, err := getJSON(ctx, hc, candidate)
 		if err != nil {
 			continue
 		}
@@ -101,6 +95,109 @@ func DiscoverAuth(ctx context.Context, serverURL string, hc *http.Client) (*Auth
 	}
 
 	return nil, fmt.Errorf("mcp: no OAuth authorization server metadata found for %s", serverURL)
+}
+
+// resourceMetadataRe extracts the resource_metadata pointer from a
+// WWW-Authenticate challenge (RFC 9728 §5.1).
+var resourceMetadataRe = regexp.MustCompile(`resource_metadata="([^"]+)"`)
+
+// discoverAuthServerURL resolves authorization_servers[0] from the Protected
+// Resource Metadata (RFC 9728): it tries the WWW-Authenticate pointer first,
+// then the well-known URIs. Returns "" when none is found.
+func discoverAuthServerURL(ctx context.Context, hc *http.Client, serverURL, origin string) string {
+	candidates := make([]string, 0, 3)
+	if ptr := resourceMetadataPointer(ctx, hc, serverURL); ptr != "" {
+		candidates = append(candidates, ptr)
+	}
+	candidates = append(candidates, protectedResourceWellKnown(serverURL, origin)...)
+
+	for _, u := range candidates {
+		md, err := getJSON(ctx, hc, u)
+		if err != nil {
+			continue
+		}
+		servers, ok := md["authorization_servers"].([]any)
+		if !ok || len(servers) == 0 {
+			continue
+		}
+		if as, _ := servers[0].(string); as != "" {
+			return as
+		}
+	}
+	return ""
+}
+
+// resourceMetadataPointer probes the MCP server unauthenticated and returns the
+// resource_metadata URL advertised in the WWW-Authenticate header of its 401
+// challenge, or "" when the server does not advertise one.
+func resourceMetadataPointer(ctx context.Context, hc *http.Client, serverURL string) string {
+	body := strings.NewReader(fmt.Sprintf(
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":%q,"capabilities":{},"clientInfo":{"name":"goai","version":"1.0"}}}`,
+		DefaultProtocolVersion,
+	))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, serverURL, body)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	resp, err := hc.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if m := resourceMetadataRe.FindStringSubmatch(resp.Header.Get("WWW-Authenticate")); len(m) == 2 {
+		return m[1]
+	}
+	return ""
+}
+
+// protectedResourceWellKnown returns the RFC 9728 §3.1 well-known URIs for the
+// Protected Resource Metadata of serverURL: the path-aware form first (the
+// resource path is inserted after the well-known segment, e.g. a server at
+// /mcp/ publishes at /.well-known/oauth-protected-resource/mcp/), then the bare
+// form at the origin.
+func protectedResourceWellKnown(serverURL, origin string) []string {
+	const seg = "/.well-known/oauth-protected-resource"
+	out := make([]string, 0, 2)
+	if path := resourcePath(serverURL); path != "" {
+		out = append(out, origin+seg+path)
+	}
+	return append(out, origin+seg)
+}
+
+// authServerMetadataURLs lists the candidate AS metadata documents for an
+// authorization server (asURL), with the MCP origin appended as a legacy
+// fallback. It covers both RFC 8414 (oauth-authorization-server) and OpenID
+// Connect Discovery (openid-configuration), each in host-insert form (the
+// well-known segment inserted between host and path, RFC 8414 §3.1) and
+// path-append form (appended to the issuer path, OIDC Discovery).
+func authServerMetadataURLs(asURL, origin string) []string {
+	bases := make([]string, 0, 2)
+	if asURL != "" {
+		bases = append(bases, asURL)
+	}
+	bases = append(bases, origin)
+
+	out := make([]string, 0, 8)
+	seen := map[string]bool{}
+	add := func(u string) {
+		if u != "" && !seen[u] {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	for _, base := range bases {
+		b := strings.TrimRight(base, "/")
+		bOrigin, bPath := originAndPath(b)
+		for _, seg := range []string{"/.well-known/oauth-authorization-server", "/.well-known/openid-configuration"} {
+			if bPath != "" {
+				add(bOrigin + seg + bPath)
+			}
+			add(b + seg)
+		}
+	}
+	return out
 }
 
 // ClientRegistration describes a public OAuth client to register dynamically.
@@ -568,6 +665,26 @@ func originOf(raw string) (string, error) {
 		return "", fmt.Errorf("mcp: invalid server URL %q", raw)
 	}
 	return u.Scheme + "://" + u.Host, nil
+}
+
+// resourcePath returns the path component of raw (e.g. "/mcp/"), or "" when it
+// is empty or the bare root.
+func resourcePath(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Path == "" || u.Path == "/" {
+		return ""
+	}
+	return u.Path
+}
+
+// originAndPath splits raw into its origin and trailing-slash-trimmed path. On a
+// parse failure or a URL without scheme/host it returns (raw, "").
+func originAndPath(raw string) (origin, path string) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return raw, ""
+	}
+	return u.Scheme + "://" + u.Host, strings.TrimRight(u.Path, "/")
 }
 
 // getJSON performs a GET and decodes a JSON object body. Non-200 responses and

@@ -190,6 +190,77 @@ func TestDiscoverAuth_InvalidURL(t *testing.T) {
 	}
 }
 
+// TestDiscoverAuth_ChallengePointer reproduces the GitHub Copilot MCP shape:
+// the protected resource metadata is advertised via the WWW-Authenticate
+// resource_metadata pointer (not at the bare origin well-known), lives at a
+// path-based well-known, and the authorization server publishes its metadata at
+// openid-configuration (not oauth-authorization-server).
+func TestDiscoverAuth_ChallengePointer(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/mcp/":
+			w.Header().Set("WWW-Authenticate",
+				`Bearer error="invalid_request", resource_metadata="`+srv.URL+`/.well-known/oauth-protected-resource/mcp/"`)
+			w.WriteHeader(http.StatusUnauthorized)
+		case r.URL.Path == "/.well-known/oauth-protected-resource/mcp/":
+			writeJSON(w, map[string]any{
+				"authorization_servers": []string{srv.URL + "/login/oauth"},
+			})
+		case r.URL.Path == "/login/oauth/.well-known/openid-configuration":
+			writeJSON(w, map[string]any{
+				"issuer":                 srv.URL + "/login/oauth",
+				"authorization_endpoint": srv.URL + "/login/oauth/authorize",
+				"token_endpoint":         srv.URL + "/login/oauth/access_token",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	md, err := DiscoverAuth(context.Background(), srv.URL+"/mcp/", srv.Client())
+	if err != nil {
+		t.Fatalf("DiscoverAuth: %v", err)
+	}
+	if md.AuthorizationEndpoint != srv.URL+"/login/oauth/authorize" {
+		t.Errorf("AuthorizationEndpoint = %q", md.AuthorizationEndpoint)
+	}
+	if md.TokenEndpoint != srv.URL+"/login/oauth/access_token" {
+		t.Errorf("TokenEndpoint = %q", md.TokenEndpoint)
+	}
+}
+
+// TestDiscoverAuth_PathBasedWellKnown covers RFC 9728 §3.1 path-aware discovery
+// when the server does not send a WWW-Authenticate pointer: the protected
+// resource metadata is only at {origin}/.well-known/oauth-protected-resource{/path}.
+func TestDiscoverAuth_PathBasedWellKnown(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource/mcp":
+			writeJSON(w, map[string]any{"authorization_servers": []string{srv.URL}})
+		case "/.well-known/oauth-authorization-server":
+			writeJSON(w, map[string]any{
+				"issuer":                 srv.URL,
+				"authorization_endpoint": srv.URL + "/authorize",
+				"token_endpoint":         srv.URL + "/token",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	md, err := DiscoverAuth(context.Background(), srv.URL+"/mcp", srv.Client())
+	if err != nil {
+		t.Fatalf("DiscoverAuth: %v", err)
+	}
+	if md.AuthorizationEndpoint != srv.URL+"/authorize" {
+		t.Errorf("AuthorizationEndpoint = %q", md.AuthorizationEndpoint)
+	}
+}
+
 // ── RegisterClient ──────────────────────────────────────────────────────────
 
 func TestRegisterClient(t *testing.T) {
@@ -491,11 +562,11 @@ func TestNewOAuthHTTPClient_TokenError(t *testing.T) {
 
 func TestCodeFromRedirect(t *testing.T) {
 	tests := []struct {
-		name     string
-		redirect string
-		want     string
+		name      string
+		redirect  string
+		want      string
 		wantState string
-		wantErr  bool
+		wantErr   bool
 	}{
 		{name: "full url", redirect: "http://cb?code=abc&state=s1", wantState: "s1", want: "abc"},
 		{name: "bare code", redirect: "abc", want: "abc"},
@@ -835,3 +906,76 @@ type failingStore struct{}
 func (failingStore) Get(string) (*oauth2.Token, bool) { return nil, false }
 func (failingStore) Set(string, *oauth2.Token) error  { return errors.New("store failed") }
 func (failingStore) Delete(string) error              { return nil }
+
+// A Protected Resource Metadata document without authorization_servers is not
+// an answer: discovery must move on to the next candidate.
+func TestDiscoverAuth_ProtectedResourceWithoutAuthServers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource/mcp",
+			"/.well-known/oauth-protected-resource":
+			writeJSON(w, map[string]any{"resource": "https://example.test"}) // no authorization_servers
+		case "/.well-known/oauth-authorization-server":
+			writeJSON(w, map[string]any{"authorization_endpoint": "/a", "token_endpoint": "/t"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	if _, err := DiscoverAuth(context.Background(), srv.URL+"/mcp", srv.Client()); err != nil {
+		t.Fatalf("expected fallback to the origin AS metadata, got %v", err)
+	}
+}
+
+// An empty authorization_servers array is the same non-answer as a missing one.
+func TestDiscoverAuth_EmptyAuthServersArray(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource/mcp",
+			"/.well-known/oauth-protected-resource":
+			writeJSON(w, map[string]any{"authorization_servers": []any{}})
+		case "/.well-known/oauth-authorization-server":
+			writeJSON(w, map[string]any{"authorization_endpoint": "/a", "token_endpoint": "/t"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	if _, err := DiscoverAuth(context.Background(), srv.URL+"/mcp", srv.Client()); err != nil {
+		t.Fatalf("expected fallback to the origin AS metadata, got %v", err)
+	}
+}
+
+// The challenge probe cannot build a request for a malformed server URL; it
+// reports "no pointer" rather than failing discovery.
+func TestResourceMetadataPointer_UnbuildableRequest(t *testing.T) {
+	if got := resourceMetadataPointer(context.Background(), http.DefaultClient, "http://\x7f/mcp"); got != "" {
+		t.Errorf("pointer = %q, want empty for a malformed URL", got)
+	}
+}
+
+func TestResourcePath(t *testing.T) {
+	for _, tc := range []struct{ raw, want string }{
+		{"https://example.test/mcp/", "/mcp/"},
+		{"https://example.test", ""},  // no path
+		{"https://example.test/", ""}, // bare root
+		{"://nope", ""},               // parse failure
+	} {
+		if got := resourcePath(tc.raw); got != tc.want {
+			t.Errorf("resourcePath(%q) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}
+
+func TestOriginAndPath(t *testing.T) {
+	origin, path := originAndPath("https://example.test/mcp/")
+	if origin != "https://example.test" || path != "/mcp" {
+		t.Errorf("originAndPath = %q, %q", origin, path)
+	}
+	// Without a scheme and host there is nothing to split: the input is returned.
+	if origin, path := originAndPath("example.test/mcp"); origin != "example.test/mcp" || path != "" {
+		t.Errorf("originAndPath on a schemeless URL = %q, %q", origin, path)
+	}
+}
