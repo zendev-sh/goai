@@ -63,7 +63,7 @@ jobs:
           gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" > .zenflow/diff.patch
           wc -l .zenflow/diff.patch
 
-       - name: Run zenflow review
+      - name: Run zenflow review
          env:
            ZENFLOW_MODEL: fptcloud/Qwen3.6-27B
            FPT_API_KEY: ${{ secrets.FPT_API_KEY }}
