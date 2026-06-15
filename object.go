@@ -504,6 +504,7 @@ func GenerateObject[T any](ctx context.Context, model provider.LanguageModel, op
 			Response:         result.Response,
 			ProviderMetadata: result.ProviderMetadata,
 			Sources:          result.Sources,
+			Reasoning:        result.Reasoning,
 		}
 		steps = append(steps, stepResult)
 		totalUsage = addUsage(totalUsage, result.Usage)
