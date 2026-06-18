@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -45,6 +46,14 @@ type options struct {
 	baseURL     string
 	headers     map[string]string
 	httpClient  *http.Client
+
+	// Vertex AI mode: when isVertex is set, requests route to the
+	// {location}-aiplatform.googleapis.com endpoints and authenticate with a
+	// Bearer OAuth token instead of the x-goog-api-key header. The native wire
+	// format (serialization, SSE, thinking, grounding) is identical.
+	isVertex bool
+	project  string
+	location string
 }
 
 // WithAPIKey sets a static API key for authentication.
@@ -58,6 +67,18 @@ func WithAPIKey(key string) Option {
 func WithTokenSource(ts provider.TokenSource) Option {
 	return func(o *options) {
 		o.tokenSource = ts
+	}
+}
+
+// WithVertex routes requests through Google Cloud Vertex AI (native Gemini
+// REST over the aiplatform endpoints, Bearer OAuth auth) instead of the
+// generativelanguage.googleapis.com API. The token source must yield a GCP
+// OAuth access token (see provider.CachedTokenSource over a service account).
+func WithVertex(project, location string) Option {
+	return func(o *options) {
+		o.isVertex = true
+		o.project = project
+		o.location = location
 	}
 }
 
@@ -143,7 +164,10 @@ func (m *chatModel) DoGenerate(ctx context.Context, params provider.GeneratePara
 	if err != nil {
 		return nil, err
 	}
-	reqURL := fmt.Sprintf("%s/v1beta/models/%s:generateContent", m.opts.baseURL, url.PathEscape(m.id))
+	reqURL, err := m.endpointURL("generateContent", "")
+	if err != nil {
+		return nil, err
+	}
 
 	resp, err := m.doHTTP(ctx, reqURL, body, params.Headers)
 	if err != nil {
@@ -167,7 +191,10 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 	if err != nil {
 		return nil, err
 	}
-	reqURL := fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse", m.opts.baseURL, url.PathEscape(m.id))
+	reqURL, err := m.endpointURL("streamGenerateContent", "?alt=sse")
+	if err != nil {
+		return nil, err
+	}
 
 	resp, err := m.doHTTP(ctx, reqURL, body, params.Headers)
 	if err != nil {
@@ -912,7 +939,11 @@ func (m *chatModel) doHTTP(ctx context.Context, url string, body any, perRequest
 	jsonBody := httpc.MustMarshalJSON(body)
 	req := httpc.MustNewRequest(ctx, "POST", url, jsonBody)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-goog-api-key", token)
+	if m.opts.isVertex {
+		req.Header.Set("Authorization", "Bearer "+token)
+	} else {
+		req.Header.Set("x-goog-api-key", token)
+	}
 
 	for k, v := range m.opts.headers {
 		req.Header.Set(k, v)
@@ -940,6 +971,41 @@ func (m *chatModel) httpClient() *http.Client {
 		return m.opts.httpClient
 	}
 	return http.DefaultClient
+}
+
+// endpointURL builds the request URL for an action (generateContent /
+// streamGenerateContent). In Vertex mode it targets the aiplatform publisher
+// endpoint; otherwise the generativelanguage base URL. A WithBaseURL override
+// wins in Vertex mode too (testing/proxy).
+func (m *chatModel) endpointURL(action, query string) (string, error) {
+	if !m.opts.isVertex {
+		return fmt.Sprintf("%s/v1beta/models/%s:%s%s", m.opts.baseURL, url.PathEscape(m.id), action, query), nil
+	}
+	if !validGCPIdentifier(m.opts.project) {
+		return "", fmt.Errorf("google: invalid vertex project %q", m.opts.project)
+	}
+	if !validGCPIdentifier(m.opts.location) {
+		return "", fmt.Errorf("google: invalid vertex location %q", m.opts.location)
+	}
+	if base := strings.TrimRight(m.opts.baseURL, "/"); base != defaultBaseURL && base != "" {
+		return fmt.Sprintf("%s/%s:%s%s", base, url.PathEscape(m.id), action, query), nil
+	}
+	// The "global" region has no location prefix on the hostname.
+	host := m.opts.location + "-aiplatform.googleapis.com"
+	if m.opts.location == "global" {
+		host = "aiplatform.googleapis.com"
+	}
+	return fmt.Sprintf("https://%s/v1beta1/projects/%s/locations/%s/publishers/google/models/%s:%s%s",
+		host, m.opts.project, m.opts.location, url.PathEscape(m.id), action, query), nil
+}
+
+// validGCPIdentifier guards project/location before hostname interpolation
+// (anti-SSRF). Allows standard projects (my-project-123), domain-scoped
+// (example.com:proj) and regions (us-east5); blocks /, \, @, .., whitespace.
+var validGCPIdentifierRE = regexp.MustCompile(`^[a-z0-9][a-z0-9.:_-]{0,127}$`)
+
+func validGCPIdentifier(s string) bool {
+	return validGCPIdentifierRE.MatchString(s) && !strings.Contains(s, "..")
 }
 
 func (m *chatModel) resolveToken(ctx context.Context) (string, error) {

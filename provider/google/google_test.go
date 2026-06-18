@@ -28,7 +28,6 @@ type failTokenSource struct{}
 func (f failTokenSource) Token(_ context.Context) (string, error) {
 	return "", fmt.Errorf("token error")
 }
-
 type googleRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f googleRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
@@ -3310,5 +3309,76 @@ func TestChat_PromptCachingIgnored(t *testing.T) {
 	}
 	if len(texts) != 1 || texts[0] != "ok" {
 		t.Errorf("DoStream texts = %v, want [ok]", texts)
+	}
+}
+
+// --- Vertex mode ---
+
+// TestVertexEndpointURL checks the aiplatform URL construction, the "global"
+// region special case, and the anti-SSRF guard.
+func TestVertexEndpointURL(t *testing.T) {
+	m := &chatModel{id: "gemini-2.5-pro", opts: options{isVertex: true, project: "my-proj", location: "us-central1"}}
+	got, err := m.endpointURL("generateContent", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/my-proj/locations/us-central1/publishers/google/models/gemini-2.5-pro:generateContent"
+	if got != want {
+		t.Errorf("vertex url:\n got %s\nwant %s", got, want)
+	}
+
+	// global region drops the host prefix.
+	mg := &chatModel{id: "gemini-2.5-pro", opts: options{isVertex: true, project: "p", location: "global"}}
+	got, _ = mg.endpointURL("streamGenerateContent", "?alt=sse")
+	want = "https://aiplatform.googleapis.com/v1beta1/projects/p/locations/global/publishers/google/models/gemini-2.5-pro:streamGenerateContent?alt=sse"
+	if got != want {
+		t.Errorf("global url:\n got %s\nwant %s", got, want)
+	}
+
+	// SSRF: a project with a slash must be rejected.
+	bad := &chatModel{id: "x", opts: options{isVertex: true, project: "evil.com/../../foo", location: "us-central1"}}
+	if _, err := bad.endpointURL("generateContent", ""); err == nil {
+		t.Error("expected error for invalid project identifier")
+	}
+}
+
+// TestChat_Vertex_BearerAuth verifies that Vertex mode authenticates with a
+// Bearer token (not x-goog-api-key) and still parses the native SSE stream.
+func TestChat_Vertex_BearerAuth(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer oauth-token" {
+			t.Errorf("Authorization = %q, want Bearer oauth-token", got)
+		}
+		if r.Header.Get("x-goog-api-key") != "" {
+			t.Error("vertex must not send x-goog-api-key")
+		}
+		if !strings.Contains(r.URL.Path, "gemini-2.5-pro") {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hola\"}]},\"finishReason\":\"STOP\"}]}\n\n")
+	}))
+	defer server.Close()
+
+	// WithBaseURL wins in vertex mode (testing), but auth still goes Bearer.
+	model := Chat("gemini-2.5-pro",
+		WithTokenSource(provider.StaticToken("oauth-token")),
+		WithVertex("my-proj", "us-central1"),
+		WithBaseURL(server.URL))
+
+	res, err := model.DoStream(context.Background(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text string
+	for chunk := range res.Stream {
+		if chunk.Type == provider.ChunkText {
+			text += chunk.Text
+		}
+	}
+	if text != "hola" {
+		t.Errorf("text = %q, want hola", text)
 	}
 }
