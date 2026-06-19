@@ -43,6 +43,7 @@ Most use the shared `internal/openaicompat` codec (some wrappers delegate via `p
 | [Together](together.md)     | `api.together.xyz`  | `TOGETHER_AI_API_KEY` (or `TOGETHER_API_KEY`) |
 | [DeepInfra](deepinfra.md)   | `api.deepinfra.com` | `DEEPINFRA_API_KEY`                           |
 | [OpenRouter](openrouter.md) | `openrouter.ai`     | `OPENROUTER_API_KEY`                          |
+| [Requesty](requesty.md)     | `router.requesty.ai` | `REQUESTY_API_KEY`                           |
 | [Perplexity](perplexity.md) | `api.perplexity.ai` | `PERPLEXITY_API_KEY`                          |
 | [Cerebras](cerebras.md)     | `api.cerebras.ai`   | `CEREBRAS_API_KEY`                            |
 | [RunPod](runpod.md)         | `api.runpod.ai`     | `RUNPOD_API_KEY`                              |

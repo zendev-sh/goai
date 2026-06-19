@@ -41,7 +41,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 ## Features
 
 - **7 core functions**: `GenerateText`, `StreamText`, `GenerateObject[T]`, `StreamObject[T]`, `Embed`, `EmbedMany`, `GenerateImage`
-- **25+ providers**: OpenAI, Anthropic, Google, Bedrock, Azure, Vertex, Mistral, xAI, Groq, Cohere, DeepSeek, MiniMax, Fireworks, Together, DeepInfra, OpenRouter, Perplexity, Cerebras, Ollama, vLLM, RunPod, Cloudflare Workers AI, FPT Smart Cloud, NVIDIA NIM, + generic OpenAI-compatible
+- **25+ providers**: OpenAI, Anthropic, Google, Bedrock, Azure, Vertex, Mistral, xAI, Groq, Cohere, DeepSeek, MiniMax, Fireworks, Together, DeepInfra, OpenRouter, Requesty, Perplexity, Cerebras, Ollama, vLLM, RunPod, Cloudflare Workers AI, FPT Smart Cloud, NVIDIA NIM, + generic OpenAI-compatible
 - **Auto tool loop**: Define tools with `Execute` handlers, set `MaxSteps` for `GenerateText` and `StreamText`
 - **Structured output**: `GenerateObject[T]` auto-generates JSON Schema from Go types via reflection
 - **Streaming**: Real-time text and partial object streaming via channels
