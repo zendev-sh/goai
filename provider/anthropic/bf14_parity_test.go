@@ -321,13 +321,20 @@ func TestDoGenerate_NativeOutputFormat(t *testing.T) {
 		var req map[string]any
 		_ = json.Unmarshal(body, &req)
 
-		// Verify output_format is set and no synthetic tool trick.
-		if _, ok := req["output_format"]; !ok {
-			t.Error("output_format not present in request")
+		// Verify the schema is sent as output_config.format (not the
+		// deprecated top-level output_format).
+		if _, ok := req["output_format"]; ok {
+			t.Error("deprecated top-level output_format present in request")
 		}
-		of := req["output_format"].(map[string]any)
-		if of["type"] != "json_schema" {
-			t.Errorf("output_format.type = %v, want json_schema", of["type"])
+		oc, _ := req["output_config"].(map[string]any)
+		if oc == nil {
+			t.Error("output_config not present in request")
+		}
+		of, _ := oc["format"].(map[string]any)
+		if of == nil {
+			t.Error("output_config.format not present in request")
+		} else if of["type"] != "json_schema" {
+			t.Errorf("output_config.format.type = %v, want json_schema", of["type"])
 		}
 		// Should NOT have the json_response synthetic tool.
 		if tools, ok := req["tools"]; ok {

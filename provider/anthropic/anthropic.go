@@ -44,7 +44,7 @@ const (
 // in buildRequest and must not be passed through verbatim.
 // Allocated once at package init to avoid per-request map allocation.
 var anthropicHandledKeys = map[string]bool{
-	"thinking": true, "_headers": true,
+	"thinking": true, "_headers": true, "output_format": true,
 	"disableParallelToolUse": true, "effort": true, "speed": true,
 	"container": true, "contextManagement": true,
 }
@@ -407,6 +407,22 @@ func (m *chatModel) buildRequest(params provider.GenerateParams, streaming bool)
 		}
 	}
 
+	// output_format -- native structured-output schema set by
+	// injectNativeOutputFormat. Anthropic nests it under output_config.format
+	// (the top-level output_format field is deprecated). Merge into
+	// output_config so it coexists with effort.
+	// https://platform.claude.com/docs/en/build-with-claude/structured-outputs
+	if of, ok := params.ProviderOptions["output_format"]; ok {
+		if ofm, ok := of.(map[string]any); ok {
+			oc, _ := body["output_config"].(map[string]any)
+			if oc == nil {
+				oc = map[string]any{}
+			}
+			oc["format"] = ofm
+			body["output_config"] = oc
+		}
+	}
+
 	// speed -- fast/standard inference speed.
 	if speed, ok := params.ProviderOptions["speed"]; ok {
 		if s, ok := speed.(string); ok && s != "" {
@@ -721,7 +737,9 @@ func (m *chatModel) supportsNativeOutputFormat() bool {
 		strings.Contains(id, "claude-opus-4-1")
 }
 
-// injectNativeOutputFormat adds output_format to ProviderOptions for passthrough to the API body.
+// injectNativeOutputFormat stores the structured-output schema in
+// ProviderOptions["output_format"]; buildRequest nests it under
+// output_config.format on the wire.
 func injectNativeOutputFormat(params provider.GenerateParams) provider.GenerateParams {
 	p := params
 	// Copy the map to avoid mutating the caller's ProviderOptions.

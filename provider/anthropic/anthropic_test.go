@@ -643,6 +643,60 @@ func TestBuildRequest_ToolChoice(t *testing.T) {
 	}
 }
 
+// Native structured output must be sent as output_config.format; the top-level
+// output_format field is deprecated and rejected by the API. This exercises the
+// full native path (injectNativeOutputFormat -> buildRequest).
+func TestBuildRequest_NativeOutputFormat(t *testing.T) {
+	m := &chatModel{id: "claude-sonnet-4-6", opts: options{baseURL: defaultBaseURL}}
+
+	schema := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}`)
+	params := provider.GenerateParams{
+		Messages:       []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+		ResponseFormat: &provider.ResponseFormat{Schema: schema},
+		ProviderOptions: map[string]any{
+			"structuredOutputMode": "outputFormat",
+			"effort":               "high",
+		},
+	}
+
+	if !m.useNativeOutputFormat(params) {
+		t.Fatal("useNativeOutputFormat = false, want true for structuredOutputMode=outputFormat")
+	}
+	params = injectNativeOutputFormat(params)
+	body := m.buildRequest(params, false)
+
+	// The deprecated top-level field must not be present.
+	if _, ok := body["output_format"]; ok {
+		t.Errorf("body has top-level output_format = %v, want it nested under output_config.format", body["output_format"])
+	}
+
+	oc, ok := body["output_config"].(map[string]any)
+	if !ok {
+		t.Fatalf("output_config = %v, want map", body["output_config"])
+	}
+
+	// effort and format coexist in the same output_config object.
+	if oc["effort"] != "high" {
+		t.Errorf("output_config.effort = %v, want high", oc["effort"])
+	}
+
+	format, ok := oc["format"].(map[string]any)
+	if !ok {
+		t.Fatalf("output_config.format = %v, want map", oc["format"])
+	}
+	if format["type"] != "json_schema" {
+		t.Errorf("output_config.format.type = %v, want json_schema", format["type"])
+	}
+	got, _ := json.Marshal(format["schema"])
+	var want, gotNorm any
+	_ = json.Unmarshal(schema, &want)
+	_ = json.Unmarshal(got, &gotNorm)
+	wantJSON, _ := json.Marshal(want)
+	if string(got) != string(wantJSON) {
+		t.Errorf("output_config.format.schema = %s, want %s", got, wantJSON)
+	}
+}
+
 // --- Message conversion tests ---
 
 func TestConvertMessages_Text(t *testing.T) {
@@ -1931,14 +1985,21 @@ func TestDoStream_NativeOutputFormat(t *testing.T) {
 		var req map[string]any
 		_ = json.Unmarshal(body, &req)
 
-		// Verify output_format is passed through (via ProviderOptions injection).
-		if of, ok := req["output_format"]; !ok {
-			t.Errorf("expected output_format in request, got none")
-		} else {
-			ofm := of.(map[string]any)
-			if ofm["type"] != "json_schema" {
-				t.Errorf("output_format.type = %v, want json_schema", ofm["type"])
-			}
+		// Verify the schema is sent as output_config.format, not the deprecated
+		// top-level output_format. Non-fatal assertions only: t.Fatal/panic in
+		// this handler goroutine would reset the connection (client EOF).
+		if _, ok := req["output_format"]; ok {
+			t.Error("deprecated top-level output_format present in request")
+		}
+		oc, _ := req["output_config"].(map[string]any)
+		if oc == nil {
+			t.Error("output_config not present in request")
+		}
+		of, _ := oc["format"].(map[string]any)
+		if of == nil {
+			t.Error("output_config.format not present in request")
+		} else if of["type"] != "json_schema" {
+			t.Errorf("output_config.format.type = %v, want json_schema", of["type"])
 		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
