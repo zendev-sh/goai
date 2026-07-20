@@ -279,6 +279,264 @@ func TestConvertMessages_UserWithImage(t *testing.T) {
 	}
 }
 
+func TestConvertMessages_UserWithFile_InlineURL(t *testing.T) {
+	msgs := []provider.Message{
+		{
+			Role: provider.RoleUser,
+			Content: []provider.Part{
+				{Type: provider.PartText, Text: "read this"},
+				{Type: provider.PartFile, URL: "data:application/pdf;base64,JVBERi0=", Filename: "doc.pdf", MediaType: "application/pdf"},
+			},
+		},
+	}
+	result := ConvertMessages(msgs, "")
+
+	if len(result) != 1 {
+		t.Fatalf("got %d messages, want 1", len(result))
+	}
+	content, ok := result[0]["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected content array, got %T", result[0]["content"])
+	}
+	if len(content) != 2 {
+		t.Fatalf("got %d content parts, want 2", len(content))
+	}
+	if content[0]["type"] != "text" {
+		t.Errorf("first part type = %v", content[0]["type"])
+	}
+	if content[1]["type"] != "text" {
+		t.Errorf("second part type = text, got %v", content[1]["type"])
+	}
+}
+
+func TestConvertMessages_UserWithFile_RemoteRef(t *testing.T) {
+	msgs := []provider.Message{
+		{
+			Role: provider.RoleUser,
+			Content: []provider.Part{
+				{Type: provider.PartText, Text: "read this"},
+				{
+					Type:      provider.PartFile,
+					RemoteRef: &provider.RemoteFileRef{ID: "file-abc", Data: []byte("JVBERi0="), MediaType: "application/pdf"},
+					Filename:  "doc.pdf",
+					MediaType: "application/pdf",
+				},
+			},
+		},
+	}
+	result := ConvertMessages(msgs, "")
+
+	if len(result) != 1 {
+		t.Fatalf("got %d messages, want 1", len(result))
+	}
+	content, ok := result[0]["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected content array, got %T", result[0]["content"])
+	}
+	if len(content) != 2 {
+		t.Fatalf("got %d content parts, want 2", len(content))
+	}
+	if content[0]["type"] != "text" {
+		t.Errorf("first part type = %v", content[0]["type"])
+	}
+	if content[1]["type"] != "text" {
+		t.Errorf("second part type = text, got %v", content[1]["type"])
+	}
+	text, ok := content[1]["text"].(string)
+	if !ok {
+		t.Fatal("expected text string")
+	}
+	if text != "data:application/pdf;base64,JVBERi0=" {
+		t.Errorf("text = %q", text)
+	}
+}
+
+func TestConvertMessages_UserWithFile_RemoteRefNoData(t *testing.T) {
+	msgs := []provider.Message{
+		{
+			Role: provider.RoleUser,
+			Content: []provider.Part{
+				{Type: provider.PartFile, RemoteRef: &provider.RemoteFileRef{ID: "file-abc"}},
+			},
+		},
+	}
+	result := ConvertMessages(msgs, "")
+	if len(result) != 1 {
+		t.Fatalf("got %d messages, want 1", len(result))
+	}
+	content, ok := result[0]["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected content array, got %T", result[0]["content"])
+	}
+	if len(content) != 1 {
+		t.Fatalf("got %d content parts, want 1", len(content))
+	}
+	if content[0]["type"] != "text" {
+		t.Errorf("part type = %v", content[0]["type"])
+	}
+}
+
+func TestConvertMessages_UserWithFile_NonDataURL(t *testing.T) {
+	msgs := []provider.Message{
+		{
+			Role: provider.RoleUser,
+			Content: []provider.Part{
+				{Type: provider.PartFile, URL: "https://example.com/doc.pdf"},
+			},
+		},
+	}
+	result := ConvertMessages(msgs, "")
+	if len(result) != 1 {
+		t.Fatalf("got %d messages, want 1", len(result))
+	}
+	content, ok := result[0]["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected content array, got %T", result[0]["content"])
+	}
+	if len(content) != 1 {
+		t.Fatalf("got %d content parts, want 1", len(content))
+	}
+	if content[0]["type"] != "text" {
+		t.Errorf("part type = %v", content[0]["type"])
+	}
+	text, ok := content[0]["text"].(string)
+	if !ok {
+		t.Fatal("expected text string")
+	}
+	if text != "data:https://example.com/doc.pdf" {
+		t.Errorf("text = %q", text)
+	}
+}
+
+func TestConvertMessages_UserWithFile_EmptyURL(t *testing.T) {
+	msgs := []provider.Message{
+		{
+			Role: provider.RoleUser,
+			Content: []provider.Part{
+				{Type: provider.PartFile, URL: ""},
+			},
+		},
+	}
+	result := ConvertMessages(msgs, "")
+	if len(result) != 1 {
+		t.Fatalf("got %d messages, want 1", len(result))
+	}
+	content, ok := result[0]["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected content array, got %T", result[0]["content"])
+	}
+	if len(content) != 1 {
+		t.Fatalf("got %d content parts, want 1", len(content))
+	}
+	if content[0]["type"] != "text" {
+		t.Errorf("part type = %v", content[0]["type"])
+	}
+}
+
+func TestConvertMessages_UserWithFileAndImage(t *testing.T) {
+	msgs := []provider.Message{
+		{
+			Role: provider.RoleUser,
+			Content: []provider.Part{
+				{Type: provider.PartText, Text: "describe"},
+				{Type: provider.PartImage, URL: "data:image/png;base64,img123"},
+				{Type: provider.PartFile, URL: "data:application/pdf;base64,pdf456"},
+			},
+		},
+	}
+	result := ConvertMessages(msgs, "")
+
+	if len(result) != 1 {
+		t.Fatalf("got %d messages, want 1", len(result))
+	}
+	content, ok := result[0]["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected content array, got %T", result[0]["content"])
+	}
+	if len(content) != 3 {
+		t.Fatalf("got %d content parts, want 3", len(content))
+	}
+	if content[0]["type"] != "text" {
+		t.Errorf("part[0] type = %v", content[0]["type"])
+	}
+	if content[1]["type"] != "image_url" {
+		t.Errorf("part[1] type = %v", content[1]["type"])
+	}
+	if content[2]["type"] != "text" {
+		t.Errorf("part[2] type = text, got %v", content[2]["type"])
+	}
+}
+
+func TestConvertMessages_UserWithFileOnly(t *testing.T) {
+	msgs := []provider.Message{
+		{
+			Role: provider.RoleUser,
+			Content: []provider.Part{
+				{Type: provider.PartFile, URL: "data:application/pdf;base64,abc"},
+			},
+		},
+	}
+	result := ConvertMessages(msgs, "")
+	if len(result) != 1 {
+		t.Fatalf("got %d messages, want 1", len(result))
+	}
+	content, ok := result[0]["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected content array, got %T", result[0]["content"])
+	}
+	if len(content) != 1 {
+		t.Fatalf("got %d content parts, want 1", len(content))
+	}
+	if content[0]["type"] != "text" {
+		t.Errorf("part type = text, got %v", content[0]["type"])
+	}
+}
+
+func TestConvertMessages_FileWithAssistantRole(t *testing.T) {
+	msgs := []provider.Message{
+		{
+			Role: provider.RoleAssistant,
+			Content: []provider.Part{
+				{Type: provider.PartText, Text: "here is the result"},
+			},
+		},
+	}
+	result := ConvertMessages(msgs, "")
+	if len(result) != 1 {
+		t.Fatalf("got %d messages, want 1", len(result))
+	}
+}
+
+func TestConvertMessages_FileWithSystemRole(t *testing.T) {
+	msgs := []provider.Message{
+		{
+			Role: provider.RoleSystem,
+			Content: []provider.Part{
+				{Type: provider.PartText, Text: "system instruction"},
+			},
+		},
+	}
+	result := ConvertMessages(msgs, "")
+	if len(result) != 1 {
+		t.Fatalf("got %d messages, want 1", len(result))
+	}
+}
+
+func TestConvertMessages_FileWithToolRole(t *testing.T) {
+	msgs := []provider.Message{
+		{
+			Role: provider.RoleTool,
+			Content: []provider.Part{
+				{Type: provider.PartToolResult, ToolCallID: "call_1", ToolOutput: "result"},
+			},
+		},
+	}
+	result := ConvertMessages(msgs, "")
+	if len(result) != 1 {
+		t.Fatalf("got %d messages, want 1", len(result))
+	}
+}
+
 func TestParseStream_TextAndFinish(t *testing.T) {
 	input := `data: {"id":"chatcmpl-stream-1","model":"gpt-4o-2024-08-06","choices":[{"delta":{"content":"Hello"},"index":0}]}
 data: {"id":"chatcmpl-stream-1","model":"gpt-4o-2024-08-06","choices":[{"delta":{"content":" world"},"index":0}]}

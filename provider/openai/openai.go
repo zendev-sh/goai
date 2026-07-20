@@ -27,8 +27,9 @@ import (
 
 // Compile-time interface compliance checks.
 var (
-	_ provider.LanguageModel = (*chatModel)(nil)
-	_ provider.CapableModel  = (*chatModel)(nil)
+	_ provider.LanguageModel          = (*chatModel)(nil)
+	_ provider.CapableModel           = (*chatModel)(nil)
+	_ provider.FileUploadCapableModel = (*chatModel)(nil)
 )
 
 const defaultBaseURL = "https://api.openai.com/v1"
@@ -120,6 +121,7 @@ func (m *chatModel) Capabilities() provider.ModelCapabilities {
 		Reasoning:   openaicompat.IsReasoningModel(m.id),
 		ToolCall:    true,
 		Attachment:  true,
+		FileUpload:  true,
 		InputModalities: provider.ModalitySet{
 			Text:  true,
 			Image: true,
@@ -127,6 +129,10 @@ func (m *chatModel) Capabilities() provider.ModelCapabilities {
 		},
 		OutputModalities: provider.ModalitySet{Text: true},
 	}
+}
+
+func (m *chatModel) FileUploader() provider.FileUploader {
+	return &fileUploader{opts: m.opts}
 }
 
 func (m *chatModel) DoGenerate(ctx context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {

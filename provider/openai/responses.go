@@ -393,8 +393,12 @@ func convertToResponsesInput(msgs []provider.Message) []map[string]any {
 					})
 				case provider.PartFile:
 					item := map[string]any{
-						"type":      "input_file",
-						"file_data": part.URL,
+						"type": "input_file",
+					}
+					if part.RemoteRef != nil {
+						item["file_id"] = part.RemoteRef.ID
+					} else {
+						item["file_data"] = part.URL
 					}
 					if part.Filename != "" {
 						item["filename"] = part.Filename

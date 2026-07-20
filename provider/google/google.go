@@ -30,8 +30,9 @@ import (
 
 // Compile-time interface compliance checks.
 var (
-	_ provider.LanguageModel = (*chatModel)(nil)
-	_ provider.CapableModel  = (*chatModel)(nil)
+	_ provider.LanguageModel          = (*chatModel)(nil)
+	_ provider.CapableModel           = (*chatModel)(nil)
+	_ provider.FileUploadCapableModel = (*chatModel)(nil)
 )
 
 const defaultBaseURL = "https://generativelanguage.googleapis.com"
@@ -120,6 +121,7 @@ func (m *chatModel) Capabilities() provider.ModelCapabilities {
 		Reasoning:   modelSupportsThinking(m.id),
 		ToolCall:    true,
 		Attachment:  true,
+		FileUpload:  true,
 		InputModalities: provider.ModalitySet{
 			Text:  true,
 			Image: true,
@@ -127,6 +129,10 @@ func (m *chatModel) Capabilities() provider.ModelCapabilities {
 		},
 		OutputModalities: provider.ModalitySet{Text: true},
 	}
+}
+
+func (m *chatModel) FileUploader() provider.FileUploader {
+	return &fileUploader{opts: m.opts}
 }
 
 func (m *chatModel) DoGenerate(ctx context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
@@ -446,7 +452,7 @@ func convertMessages(msgs []provider.Message) []map[string]any {
 				}
 				parts = append(parts, textPart)
 
-			case provider.PartImage, provider.PartFile:
+			case provider.PartImage:
 				mediaType, data, ok := httpc.ParseDataURL(part.URL)
 				if ok {
 					parts = append(parts, map[string]any{
@@ -455,6 +461,11 @@ func convertMessages(msgs []provider.Message) []map[string]any {
 							"data":     data,
 						},
 					})
+				}
+
+			case provider.PartFile:
+				if p := filePartToContent(part); p != nil {
+					parts = append(parts, p)
 				}
 
 			case provider.PartReasoning:

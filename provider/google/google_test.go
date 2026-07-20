@@ -16,6 +16,17 @@ import (
 	"github.com/zendev-sh/goai/provider"
 )
 
+// failReader is an io.ReadCloser that always fails on Read.
+type failReader struct{}
+
+func (f *failReader) Read(_ []byte) (int, error) { return 0, fmt.Errorf("read error") }
+func (f *failReader) Close() error                { return nil }
+
+// failTokenSource is a provider.TokenSource that always returns an error.
+type failTokenSource struct{}
+
+func (f failTokenSource) Token(_ context.Context) (string, error) { return "", fmt.Errorf("token error") }
+
 // --- Streaming tests ---
 
 func TestChat_Stream_TextResponse(t *testing.T) {
@@ -792,6 +803,482 @@ func TestConvertMessages_Image(t *testing.T) {
 	}
 }
 
+func TestConvertMessages_FileInline(t *testing.T) {
+	msgs := convertMessages([]provider.Message{
+		{Role: provider.RoleUser, Content: []provider.Part{
+			{Type: provider.PartFile, URL: "data:application/pdf;base64,JVBERi0="},
+		}},
+	})
+
+	parts := msgs[0]["parts"].([]map[string]any)
+	inline, ok := parts[0]["inlineData"].(map[string]any)
+	if !ok {
+		t.Fatal("expected inlineData")
+	}
+	if inline["mimeType"] != "application/pdf" {
+		t.Errorf("mimeType = %v, want application/pdf", inline["mimeType"])
+	}
+	if inline["data"] != "JVBERi0=" {
+		t.Errorf("data = %v, want JVBERi0=", inline["data"])
+	}
+}
+
+func TestConvertMessages_FileRemoteRef(t *testing.T) {
+	msgs := convertMessages([]provider.Message{
+		{Role: provider.RoleUser, Content: []provider.Part{
+			{Type: provider.PartFile, RemoteRef: &provider.RemoteFileRef{
+				ID: "files/abc123", URI: "https://generativelanguage.googleapis.com/v1beta/files/abc123",
+				MediaType: "application/pdf",
+			}},
+		}},
+	})
+
+	parts := msgs[0]["parts"].([]map[string]any)
+	fd, ok := parts[0]["fileData"].(map[string]any)
+	if !ok {
+		t.Fatal("expected fileData")
+	}
+	if fd["fileUri"] != "https://generativelanguage.googleapis.com/v1beta/files/abc123" {
+		t.Errorf("fileUri = %v", fd["fileUri"])
+	}
+	if fd["mimeType"] != "application/pdf" {
+		t.Errorf("mimeType = %v", fd["mimeType"])
+	}
+}
+
+func TestConvertMessages_FileAndImage(t *testing.T) {
+	msgs := convertMessages([]provider.Message{
+		{Role: provider.RoleUser, Content: []provider.Part{
+			{Type: provider.PartText, Text: "describe"},
+			{Type: provider.PartImage, URL: "data:image/png;base64,img123"},
+			{Type: provider.PartFile, URL: "data:application/pdf;base64,pdf456"},
+		}},
+	})
+
+	parts := msgs[0]["parts"].([]map[string]any)
+	if len(parts) != 3 {
+		t.Fatalf("got %d parts, want 3", len(parts))
+	}
+	if _, ok := parts[1]["inlineData"]; !ok {
+		t.Error("expected inlineData for image")
+	}
+	if _, ok := parts[2]["inlineData"]; !ok {
+		t.Error("expected inlineData for file")
+	}
+}
+
+func TestFilePartToContent_RemoteRef(t *testing.T) {
+	p := filePartToContent(provider.Part{
+		Type: provider.PartFile,
+		RemoteRef: &provider.RemoteFileRef{
+			URI: "https://example.com/files/abc", MediaType: "application/pdf",
+		},
+	})
+	if p == nil {
+		t.Fatal("expected non-nil result")
+	}
+	fd, ok := p["fileData"].(map[string]any)
+	if !ok {
+		t.Fatal("expected fileData")
+	}
+	if fd["fileUri"] != "https://example.com/files/abc" {
+		t.Errorf("fileUri = %v", fd["fileUri"])
+	}
+	if fd["mimeType"] != "application/pdf" {
+		t.Errorf("mimeType = %v", fd["mimeType"])
+	}
+}
+
+func TestFilePartToContent_InlineURL(t *testing.T) {
+	p := filePartToContent(provider.Part{
+		Type: provider.PartFile,
+		URL:  "data:application/pdf;base64,abc123",
+	})
+	if p == nil {
+		t.Fatal("expected non-nil result")
+	}
+	inline, ok := p["inlineData"].(map[string]any)
+	if !ok {
+		t.Fatal("expected inlineData")
+	}
+	if inline["mimeType"] != "application/pdf" {
+		t.Errorf("mimeType = %v", inline["mimeType"])
+	}
+	if inline["data"] != "abc123" {
+		t.Errorf("data = %v", inline["data"])
+	}
+}
+
+func TestFilePartToContent_EmptyURL(t *testing.T) {
+	p := filePartToContent(provider.Part{
+		Type: provider.PartFile,
+		URL:  "",
+	})
+	if p != nil {
+		t.Error("expected nil for empty URL")
+	}
+}
+
+func TestFilePartToContent_InvalidURL(t *testing.T) {
+	p := filePartToContent(provider.Part{
+		Type: provider.PartFile,
+		URL:  "not-a-data-url",
+	})
+	if p != nil {
+		t.Error("expected nil for invalid URL")
+	}
+}
+
+func TestHasRemoteRef_Google(t *testing.T) {
+	if hasRemoteRef(nil) {
+		t.Error("nil should return false")
+	}
+	if hasRemoteRef([]provider.Message{}) {
+		t.Error("empty should return false")
+	}
+	if hasRemoteRef([]provider.Message{
+		{Role: provider.RoleUser, Content: []provider.Part{
+			{Type: provider.PartText, Text: "hi"},
+		}},
+	}) {
+		t.Error("no RemoteRef should return false")
+	}
+	if !hasRemoteRef([]provider.Message{
+		{Role: provider.RoleUser, Content: []provider.Part{
+			{Type: provider.PartFile, RemoteRef: &provider.RemoteFileRef{ID: "f1"}},
+		}},
+	}) {
+		t.Error("has RemoteRef should return true")
+	}
+}
+
+func TestHttpcParseDataURL(t *testing.T) {
+	mt, data, ok := httpcParseDataURL("data:application/pdf;base64,abc123")
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if mt != "application/pdf" {
+		t.Errorf("mediaType = %q", mt)
+	}
+	if data != "abc123" {
+		t.Errorf("data = %q", data)
+	}
+
+	_, _, ok = httpcParseDataURL("")
+	if ok {
+		t.Error("expected not ok for empty")
+	}
+	_, _, ok = httpcParseDataURL("https://example.com/file.pdf")
+	if ok {
+		t.Error("expected not ok for non-data URL")
+	}
+	_, _, ok = httpcParseDataURL("data:invalid")
+	if ok {
+		t.Error("expected not ok for invalid data URL")
+	}
+}
+
+func TestChat_FileUploader_Google(t *testing.T) {
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"))
+	uploader, ok := model.(provider.FileUploadCapableModel)
+	if !ok {
+		t.Fatal("chatModel should implement FileUploadCapableModel")
+	}
+	if uploader.FileUploader() == nil {
+		t.Error("FileUploader() should return non-nil")
+	}
+}
+
+func TestFileUploader_UploadFile_Google(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/upload/v1beta/files" {
+			t.Errorf("path = %q, want /upload/v1beta/files", r.URL.Path)
+		}
+		if r.Method != "POST" {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.Header.Get("x-goog-api-key") != "test-key" {
+			t.Errorf("x-goog-api-key = %q", r.Header.Get("x-goog-api-key"))
+		}
+		ct := r.Header.Get("Content-Type")
+		if !strings.Contains(ct, "multipart/form-data") {
+			t.Errorf("Content-Type = %q, want multipart/form-data", ct)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"file":{"name":"files/abc123","uri":"https://generativelanguage.googleapis.com/v1beta/files/abc123","mimeType":"application/pdf","sizeBytes":"1234","expirationTime":"2025-01-01T00:00:00Z","displayName":"test.pdf"}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	ref, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("fake-pdf-content"),
+		Filename:  "test.pdf",
+		MediaType: "application/pdf",
+	})
+	if err != nil {
+		t.Fatalf("UploadFile error: %v", err)
+	}
+	if ref.ID != "files/abc123" {
+		t.Errorf("ref.ID = %q, want files/abc123", ref.ID)
+	}
+	if ref.URI != "https://generativelanguage.googleapis.com/v1beta/files/abc123" {
+		t.Errorf("ref.URI = %q", ref.URI)
+	}
+	if ref.Filename != "test.pdf" {
+		t.Errorf("ref.Filename = %q", ref.Filename)
+	}
+	if ref.MediaType != "application/pdf" {
+		t.Errorf("ref.MediaType = %q", ref.MediaType)
+	}
+	if ref.Provider != "google" {
+		t.Errorf("ref.Provider = %q", ref.Provider)
+	}
+	if ref.ExpiresAt.IsZero() {
+		t.Error("expected non-zero ExpiresAt")
+	}
+	if len(ref.Data) == 0 {
+		t.Error("ref.Data should contain file bytes")
+	}
+}
+
+func TestFileUploader_UploadFile_Google_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprint(w, `{"error":{"message":"bad request"}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("data"),
+		Filename:  "test.pdf",
+		MediaType: "application/pdf",
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestFileUploader_DeleteFile_Google(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1beta/files/abc123" {
+			t.Errorf("path = %q, want /v1beta/files/abc123", r.URL.Path)
+		}
+		if r.Method != "DELETE" {
+			t.Errorf("method = %q, want DELETE", r.Method)
+		}
+		if r.Header.Get("x-goog-api-key") != "test-key" {
+			t.Errorf("x-goog-api-key = %q", r.Header.Get("x-goog-api-key"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "files/abc123"})
+	if err != nil {
+		t.Fatalf("DeleteFile error: %v", err)
+	}
+}
+
+func TestFileUploader_DeleteFile_Google_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = fmt.Fprint(w, `{"error":{"message":"file not found"}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "nonexistent"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestFileUploader_UploadFile_EmptyMediaType_Google(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"file":{"name":"files/mediatype","uri":"https://generativelanguage.googleapis.com/v1beta/files/mediatype","mimeType":"application/octet-stream","sizeBytes":"3","displayName":"test.bin"}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	ref, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:   strings.NewReader("abc"),
+		Filename: "test.bin",
+	})
+	if err != nil {
+		t.Fatalf("UploadFile error: %v", err)
+	}
+	if ref.ID != "files/mediatype" {
+		t.Errorf("ref.ID = %q", ref.ID)
+	}
+	if ref.MediaType == "" {
+		t.Error("MediaType should be detected from content")
+	}
+}
+
+func TestFileUploader_UploadFile_InvalidJSON_Google(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `not-json`)
+	}))
+	defer server.Close()
+
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("data"),
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid JSON response")
+	}
+}
+
+func TestFileUploader_UploadFile_ReadError_Google(t *testing.T) {
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    &failReader{},
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err == nil {
+		t.Fatal("expected error for failing reader")
+	}
+}
+
+func TestFileUploader_UploadFile_TokenError_Google(t *testing.T) {
+	model := Chat("gemini-2.5-flash", WithTokenSource(failTokenSource{}))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("data"),
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err == nil {
+		t.Fatal("expected error for token failure")
+	}
+}
+
+func TestFileUploader_UploadFile_Headers_Google(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Custom") != "value" {
+			t.Errorf("X-Custom = %q", r.Header.Get("X-Custom"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"file":{"name":"files/headers","uri":"https://generativelanguage.googleapis.com/v1beta/files/headers","mimeType":"text/plain","sizeBytes":"3","displayName":"test.txt"}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL(server.URL), WithHeaders(map[string]string{"X-Custom": "value"}))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	ref, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("abc"),
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err != nil {
+		t.Fatalf("UploadFile error: %v", err)
+	}
+	if ref.ID != "files/headers" {
+		t.Errorf("ref.ID = %q", ref.ID)
+	}
+}
+
+func TestFileUploader_UploadFile_HTTPClientError_Google(t *testing.T) {
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL("http://127.0.0.1:1"))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("data"),
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err == nil {
+		t.Fatal("expected error for connection refused")
+	}
+}
+
+func TestFileUploader_DeleteFile_TokenError_Google(t *testing.T) {
+	model := Chat("gemini-2.5-flash", WithTokenSource(failTokenSource{}))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "file-xyz"})
+	if err == nil {
+		t.Fatal("expected error for token failure")
+	}
+}
+
+func TestFileUploader_DeleteFile_HTTPClientError_Google(t *testing.T) {
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL("http://127.0.0.1:1"))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "file-xyz"})
+	if err == nil {
+		t.Fatal("expected error for connection refused")
+	}
+}
+
+func TestFileUploader_DeleteFile_Headers_Google(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Custom") != "value" {
+			t.Errorf("X-Custom = %q", r.Header.Get("X-Custom"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL(server.URL), WithHeaders(map[string]string{"X-Custom": "value"}))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "file-xyz"})
+	if err != nil {
+		t.Fatalf("DeleteFile error: %v", err)
+	}
+}
+
+func TestFileUploader_UploadFile_InvalidURL_Google(t *testing.T) {
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL("://"))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("data"),
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid URL")
+	}
+}
+
+func TestFileUploader_DeleteFile_InvalidURL_Google(t *testing.T) {
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL("://"))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "file-xyz"})
+	if err == nil {
+		t.Fatal("expected error for invalid URL")
+	}
+}
+
 func TestConvertMessages_ThoughtSignature(t *testing.T) {
 	msgs := convertMessages([]provider.Message{
 		{Role: provider.RoleAssistant, Content: []provider.Part{
@@ -1005,6 +1492,9 @@ func TestCapabilities(t *testing.T) {
 	caps := provider.ModelCapabilitiesOf(model)
 	if !caps.Temperature || !caps.Reasoning || !caps.ToolCall || !caps.Attachment {
 		t.Error("unexpected capabilities")
+	}
+	if !caps.FileUpload {
+		t.Error("expected FileUpload=true")
 	}
 	if caps.InputModalities.Video {
 		t.Error("expected Video input modality to be false: no PartVideo type exists")

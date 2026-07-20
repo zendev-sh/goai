@@ -29,8 +29,9 @@ import (
 
 // Compile-time interface compliance checks.
 var (
-	_ provider.LanguageModel = (*chatModel)(nil)
-	_ provider.CapableModel  = (*chatModel)(nil)
+	_ provider.LanguageModel          = (*chatModel)(nil)
+	_ provider.CapableModel           = (*chatModel)(nil)
+	_ provider.FileUploadCapableModel = (*chatModel)(nil)
 )
 
 const (
@@ -206,12 +207,25 @@ func supportsThinking(modelID string) bool {
 		strings.Contains(modelID, "claude-opus-4")
 }
 
+// hasRemoteRef returns true if any message part contains a RemoteRef.
+func hasRemoteRef(msgs []provider.Message) bool {
+	for _, msg := range msgs {
+		for _, part := range msg.Content {
+			if part.RemoteRef != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (m *chatModel) Capabilities() provider.ModelCapabilities {
 	return provider.ModelCapabilities{
 		Temperature: true,
 		Reasoning:   supportsThinking(m.id),
 		ToolCall:    true,
 		Attachment:  true,
+		FileUpload:  true,
 		InputModalities: provider.ModalitySet{
 			Text:  true,
 			Image: true,
@@ -219,6 +233,10 @@ func (m *chatModel) Capabilities() provider.ModelCapabilities {
 		},
 		OutputModalities: provider.ModalitySet{Text: true},
 	}
+}
+
+func (m *chatModel) FileUploader() provider.FileUploader {
+	return &fileUploader{opts: m.opts}
 }
 
 func (m *chatModel) DoGenerate(ctx context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
@@ -231,6 +249,9 @@ func (m *chatModel) DoGenerate(ctx context.Context, params provider.GeneratePara
 	}
 	body := m.buildRequest(params, false)
 	toolBetas := collectToolBetas(params.Tools)
+	if hasRemoteRef(params.Messages) {
+		toolBetas = append(toolBetas, filesBetaHeader)
+	}
 
 	resp, err := m.doHTTP(ctx, body, toolBetas...)
 	if err != nil {
@@ -264,6 +285,9 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 	}
 	body := m.buildRequest(params, true)
 	toolBetas := collectToolBetas(params.Tools)
+	if hasRemoteRef(params.Messages) {
+		toolBetas = append(toolBetas, filesBetaHeader)
+	}
 
 	resp, err := m.doHTTP(ctx, body, toolBetas...)
 	if err != nil {
@@ -615,23 +639,32 @@ func convertMessages(msgs []provider.Message) []map[string]any {
 				content = append(content, p)
 
 			case provider.PartFile:
-				if part.URL == "" {
-					continue
+				if part.RemoteRef != nil {
+					p := map[string]any{
+						"type": "document",
+						"source": map[string]any{
+							"type":   "file",
+							"file_id": part.RemoteRef.ID,
+						},
+					}
+					applyCacheControl(p, part.CacheControl, msgCacheControl, isLast)
+					content = append(content, p)
+				} else if part.URL != "" {
+					mediaType, data, ok := httpc.ParseDataURL(part.URL)
+					if !ok {
+						continue
+					}
+					p := map[string]any{
+						"type": "document",
+						"source": map[string]any{
+							"type":       "base64",
+							"media_type": mediaType,
+							"data":       data,
+						},
+					}
+					applyCacheControl(p, part.CacheControl, msgCacheControl, isLast)
+					content = append(content, p)
 				}
-				mediaType, data, ok := httpc.ParseDataURL(part.URL)
-				if !ok {
-					continue
-				}
-				p := map[string]any{
-					"type": "document",
-					"source": map[string]any{
-						"type":       "base64",
-						"media_type": mediaType,
-						"data":       data,
-					},
-				}
-				applyCacheControl(p, part.CacheControl, msgCacheControl, isLast)
-				content = append(content, p)
 
 			case provider.PartToolCall:
 				var input any

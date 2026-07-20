@@ -17,6 +17,17 @@ import (
 	"github.com/zendev-sh/goai/provider"
 )
 
+// failReader is an io.ReadCloser that always fails on Read.
+type failReader struct{}
+
+func (f *failReader) Read(_ []byte) (int, error) { return 0, fmt.Errorf("read error") }
+func (f *failReader) Close() error                { return nil }
+
+// failTokenSource is a provider.TokenSource that always returns an error.
+type failTokenSource struct{}
+
+func (f failTokenSource) Token(_ context.Context) (string, error) { return "", fmt.Errorf("token error") }
+
 // --- Streaming tests ---
 
 func TestChat_Stream_TextResponse(t *testing.T) {
@@ -896,6 +907,372 @@ func TestConvertMessages_File(t *testing.T) {
 	}
 }
 
+func TestConvertMessages_FileRemoteRef(t *testing.T) {
+	msgs := convertMessages([]provider.Message{
+		{Role: provider.RoleUser, Content: []provider.Part{
+			{Type: provider.PartFile, RemoteRef: &provider.RemoteFileRef{ID: "file_abc123"}},
+		}},
+	})
+
+	content := msgs[0]["content"].([]map[string]any)
+	if content[0]["type"] != "document" {
+		t.Errorf("type = %v, want document", content[0]["type"])
+	}
+	source, _ := content[0]["source"].(map[string]any)
+	if source["type"] != "file" {
+		t.Errorf("source.type = %v, want file", source["type"])
+	}
+	if source["file_id"] != "file_abc123" {
+		t.Errorf("source.file_id = %v, want file_abc123", source["file_id"])
+	}
+}
+
+func TestConvertMessages_FileRemoteRefWithCacheControl(t *testing.T) {
+	msgs := convertMessages([]provider.Message{
+		{Role: provider.RoleUser, Content: []provider.Part{
+			{Type: provider.PartFile, RemoteRef: &provider.RemoteFileRef{ID: "file_xyz"}, CacheControl: "ephemeral"},
+		}},
+	})
+
+	content := msgs[0]["content"].([]map[string]any)
+	if content[0]["type"] != "document" {
+		t.Errorf("type = %v, want document", content[0]["type"])
+	}
+	if _, ok := content[0]["cache_control"]; !ok {
+		t.Error("expected cache_control")
+	}
+}
+
+func TestHasRemoteRef(t *testing.T) {
+	if hasRemoteRef(nil) {
+		t.Error("nil messages should return false")
+	}
+	if hasRemoteRef([]provider.Message{}) {
+		t.Error("empty messages should return false")
+	}
+	if hasRemoteRef([]provider.Message{
+		{Role: provider.RoleUser, Content: []provider.Part{
+			{Type: provider.PartText, Text: "hello"},
+		}},
+	}) {
+		t.Error("messages without RemoteRef should return false")
+	}
+	if !hasRemoteRef([]provider.Message{
+		{Role: provider.RoleUser, Content: []provider.Part{
+			{Type: provider.PartFile, RemoteRef: &provider.RemoteFileRef{ID: "file_1"}},
+		}},
+	}) {
+		t.Error("messages with RemoteRef should return true")
+	}
+}
+
+func TestChat_FileUploader(t *testing.T) {
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"))
+	uploader, ok := model.(provider.FileUploadCapableModel)
+	if !ok {
+		t.Fatal("chatModel should implement FileUploadCapableModel")
+	}
+	if uploader.FileUploader() == nil {
+		t.Error("FileUploader() should return non-nil")
+	}
+}
+
+func TestFileUploader_UploadFile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/files" {
+			t.Errorf("path = %q, want /v1/files", r.URL.Path)
+		}
+		if r.Method != "POST" {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.Header.Get("x-api-key") != "test-key" {
+			t.Errorf("x-api-key = %q", r.Header.Get("x-api-key"))
+		}
+		if r.Header.Get("anthropic-version") != apiVersion {
+			t.Errorf("anthropic-version = %q", r.Header.Get("anthropic-version"))
+		}
+		if r.Header.Get("anthropic-beta") != filesBetaHeader {
+			t.Errorf("anthropic-beta = %q, want %q", r.Header.Get("anthropic-beta"), filesBetaHeader)
+		}
+		ct := r.Header.Get("Content-Type")
+		if !strings.Contains(ct, "multipart/form-data") {
+			t.Errorf("Content-Type = %q, want multipart/form-data", ct)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"file_xyz789","type":"file","bytes":123,"created_at":1234567890,"filename":"test.pdf","purpose":"assistants"}`)
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	ref, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("fake-pdf-content"),
+		Filename:  "test.pdf",
+		MediaType: "application/pdf",
+		Purpose:   "assistants",
+	})
+	if err != nil {
+		t.Fatalf("UploadFile error: %v", err)
+	}
+	if ref.ID != "file_xyz789" {
+		t.Errorf("ref.ID = %q, want file_xyz789", ref.ID)
+	}
+	if ref.Filename != "test.pdf" {
+		t.Errorf("ref.Filename = %q", ref.Filename)
+	}
+	if ref.MediaType != "application/pdf" {
+		t.Errorf("ref.MediaType = %q", ref.MediaType)
+	}
+	if ref.Provider != "anthropic" {
+		t.Errorf("ref.Provider = %q", ref.Provider)
+	}
+	if len(ref.Data) == 0 {
+		t.Error("ref.Data should contain file bytes")
+	}
+}
+
+func TestFileUploader_UploadFile_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprint(w, `{"error":{"message":"bad request"}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("data"),
+		Filename:  "test.pdf",
+		MediaType: "application/pdf",
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestFileUploader_DeleteFile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/files/file-to-delete" {
+			t.Errorf("path = %q, want /v1/files/file-to-delete", r.URL.Path)
+		}
+		if r.Method != "DELETE" {
+			t.Errorf("method = %q, want DELETE", r.Method)
+		}
+		if r.Header.Get("x-api-key") != "test-key" {
+			t.Errorf("x-api-key = %q", r.Header.Get("x-api-key"))
+		}
+		if r.Header.Get("anthropic-beta") != filesBetaHeader {
+			t.Errorf("anthropic-beta = %q", r.Header.Get("anthropic-beta"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"file-to-delete","type":"file","deleted":true}`)
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "file-to-delete"})
+	if err != nil {
+		t.Fatalf("DeleteFile error: %v", err)
+	}
+}
+
+func TestFileUploader_DeleteFile_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = fmt.Fprint(w, `{"error":{"message":"file not found"}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "nonexistent"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestFileUploader_UploadFile_EmptyMediaType_Anthropic(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"file_mediatype","type":"file","bytes":3,"created_at":1234567890,"filename":"test.bin","purpose":"assistants"}`)
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	ref, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:   strings.NewReader("abc"),
+		Filename: "test.bin",
+	})
+	if err != nil {
+		t.Fatalf("UploadFile error: %v", err)
+	}
+	if ref.ID != "file_mediatype" {
+		t.Errorf("ref.ID = %q", ref.ID)
+	}
+	if ref.MediaType == "" {
+		t.Error("MediaType should be detected from content")
+	}
+}
+
+func TestFileUploader_UploadFile_InvalidJSON_Anthropic(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `not-json`)
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("data"),
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid JSON response")
+	}
+}
+
+func TestFileUploader_UploadFile_ReadError_Anthropic(t *testing.T) {
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    &failReader{},
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err == nil {
+		t.Fatal("expected error for failing reader")
+	}
+}
+
+func TestFileUploader_UploadFile_TokenError_Anthropic(t *testing.T) {
+	model := Chat("claude-sonnet-4-20250514", WithTokenSource(failTokenSource{}))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("data"),
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err == nil {
+		t.Fatal("expected error for token failure")
+	}
+}
+
+func TestFileUploader_UploadFile_Headers_Anthropic(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Custom") != "value" {
+			t.Errorf("X-Custom = %q", r.Header.Get("X-Custom"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"file_headers","type":"file","bytes":3,"created_at":1234567890,"filename":"test.txt","purpose":"assistants"}`)
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"), WithBaseURL(server.URL), WithHeaders(map[string]string{"X-Custom": "value"}))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	ref, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("abc"),
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err != nil {
+		t.Fatalf("UploadFile error: %v", err)
+	}
+	if ref.ID != "file_headers" {
+		t.Errorf("ref.ID = %q", ref.ID)
+	}
+}
+
+func TestFileUploader_UploadFile_HTTPClientError_Anthropic(t *testing.T) {
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"), WithBaseURL("http://127.0.0.1:1"))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("data"),
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err == nil {
+		t.Fatal("expected error for connection refused")
+	}
+}
+
+func TestFileUploader_DeleteFile_TokenError_Anthropic(t *testing.T) {
+	model := Chat("claude-sonnet-4-20250514", WithTokenSource(failTokenSource{}))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "file-xyz"})
+	if err == nil {
+		t.Fatal("expected error for token failure")
+	}
+}
+
+func TestFileUploader_DeleteFile_HTTPClientError_Anthropic(t *testing.T) {
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"), WithBaseURL("http://127.0.0.1:1"))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "file-xyz"})
+	if err == nil {
+		t.Fatal("expected error for connection refused")
+	}
+}
+
+func TestFileUploader_DeleteFile_Headers_Anthropic(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Custom") != "value" {
+			t.Errorf("X-Custom = %q", r.Header.Get("X-Custom"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"file-to-delete","type":"file","deleted":true}`)
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"), WithBaseURL(server.URL), WithHeaders(map[string]string{"X-Custom": "value"}))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "file-to-delete"})
+	if err != nil {
+		t.Fatalf("DeleteFile error: %v", err)
+	}
+}
+
+func TestFileUploader_UploadFile_InvalidURL_Anthropic(t *testing.T) {
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"), WithBaseURL("://"))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("data"),
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid URL")
+	}
+}
+
+func TestFileUploader_DeleteFile_InvalidURL_Anthropic(t *testing.T) {
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"), WithBaseURL("://"))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "file-xyz"})
+	if err == nil {
+		t.Fatal("expected error for invalid URL")
+	}
+}
+
 // --- parseDataURL tests ---
 
 func TestParseDataURL(t *testing.T) {
@@ -1036,6 +1413,9 @@ func TestCapabilities(t *testing.T) {
 	}
 	if !caps.Attachment {
 		t.Error("expected Attachment=true")
+	}
+	if !caps.FileUpload {
+		t.Error("expected FileUpload=true")
 	}
 	if !caps.InputModalities.PDF {
 		t.Error("expected InputModalities.PDF=true")

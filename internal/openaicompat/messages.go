@@ -1,6 +1,7 @@
 package openaicompat
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/zendev-sh/goai/provider"
@@ -46,6 +47,7 @@ func ConvertMessages(msgs []provider.Message, system string) []map[string]any {
 		var textParts []string
 		var reasoningParts []string
 		var hasImage bool
+		var hasFile bool
 
 		for _, part := range msg.Content {
 			switch part.Type {
@@ -57,6 +59,8 @@ func ConvertMessages(msgs []provider.Message, system string) []map[string]any {
 				}
 			case provider.PartImage:
 				hasImage = true
+			case provider.PartFile:
+				hasFile = true
 			case provider.PartToolCall:
 				// Use raw ToolInput bytes directly -- they are already JSON.
 				args := string(part.ToolInput)
@@ -71,8 +75,8 @@ func ConvertMessages(msgs []provider.Message, system string) []map[string]any {
 			}
 		}
 
-		// If message has images, use content array format.
-		if hasImage && msg.Role == provider.RoleUser {
+		// If message has images or files, use content array format.
+		if (hasImage || hasFile) && msg.Role == provider.RoleUser {
 			var contentArr []map[string]any
 			for _, part := range msg.Content {
 				switch part.Type {
@@ -95,6 +99,8 @@ func ConvertMessages(msgs []provider.Message, system string) []map[string]any {
 						"type":      "image_url",
 						"image_url": imgURL,
 					})
+				case provider.PartFile:
+					contentArr = append(contentArr, filePartToContent(part))
 				}
 			}
 			m["content"] = contentArr
@@ -132,4 +138,27 @@ func partsToText(parts []provider.Part) string {
 
 func joinText(parts []string) string {
 	return strings.Join(parts, "\n")
+}
+
+// filePartToContent converts a PartFile to an OpenAI content item.
+// For compat providers without native file APIs, the file bytes are inlined as base64 text.
+func filePartToContent(part provider.Part) map[string]any {
+	var data string
+	if part.RemoteRef != nil && len(part.RemoteRef.Data) > 0 {
+		data = part.RemoteRef.MediaType + ";base64," + string(part.RemoteRef.Data)
+	} else if part.URL != "" {
+		// Strip the "data:" prefix if present.
+		if strings.HasPrefix(part.URL, "data:") {
+			data = part.URL[5:]
+		} else {
+			data = part.URL
+		}
+	}
+	if data == "" {
+		return map[string]any{"type": "text", "text": ""}
+	}
+	return map[string]any{
+		"type": "text",
+		"text": fmt.Sprintf("data:%s", data),
+	}
 }

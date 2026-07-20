@@ -4,7 +4,56 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"time"
 )
+
+// ErrFileUploadUnsupported is returned when a provider does not support file upload.
+var ErrFileUploadUnsupported = errors.New("goai: file upload not supported by this provider")
+
+// FileUpload describes a file to upload to a provider's remote storage.
+type FileUpload struct {
+	// Reader is the file content to upload.
+	Reader io.Reader
+	// Filename is the name of the file.
+	Filename string
+	// MediaType is the MIME type of the file (e.g. "application/pdf").
+	MediaType string
+	// Purpose describes the intended use (e.g. "assistants", "vision").
+	Purpose string
+}
+
+// RemoteFileRef is a reference to an uploaded remote file.
+type RemoteFileRef struct {
+	// Provider identifies which provider owns this file.
+	Provider string
+	// ID is the provider-specific file identifier.
+	ID string
+	// URI is the provider-specific file URI (e.g. for Gemini).
+	URI string
+	// Filename is the original file name.
+	Filename string
+	// MediaType is the MIME type of the file.
+	MediaType string
+	// ExpiresAt is when the remote file expires (zero if unknown).
+	ExpiresAt time.Time
+	// Data holds the raw file bytes for fallback on providers without native file APIs.
+	Data []byte
+}
+
+// FileUploader uploads files to a provider's remote storage and manages their lifecycle.
+type FileUploader interface {
+	// UploadFile uploads a file and returns a reference to the remote file.
+	UploadFile(ctx context.Context, upload FileUpload) (*RemoteFileRef, error)
+	// DeleteFile deletes a previously uploaded remote file.
+	DeleteFile(ctx context.Context, ref RemoteFileRef) error
+}
+
+// FileUploadCapableModel is an optional interface that LanguageModel implementations
+// can satisfy to indicate they support remote file upload.
+type FileUploadCapableModel interface {
+	FileUploader() FileUploader
+}
 
 // TrySend sends a chunk to the output channel, returning false if the context
 // is cancelled. This prevents goroutine leaks when the consumer stops reading
@@ -364,6 +413,10 @@ type Part struct {
 	// Filename of the content (for PartFile).
 	Filename string
 
+	// RemoteRef is a reference to an uploaded remote file (for PartFile, PartImage).
+	// When set, the provider uses the remote reference instead of inline data.
+	RemoteRef *RemoteFileRef
+
 	// ProviderOptions are provider-specific part parameters.
 	ProviderOptions map[string]any
 }
@@ -565,6 +618,9 @@ type ModelCapabilities struct {
 
 	// ToolCall indicates the model supports tool/function calling.
 	ToolCall bool
+
+	// FileUpload indicates the model supports remote file upload.
+	FileUpload bool
 
 	// InputModalities lists supported input types.
 	InputModalities ModalitySet

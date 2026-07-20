@@ -23,6 +23,11 @@ type errorReader struct{}
 func (e *errorReader) Read(_ []byte) (int, error) { return 0, fmt.Errorf("read error") }
 func (e *errorReader) Close() error                { return nil }
 
+// failTokenSource is a provider.TokenSource that always returns an error.
+type failTokenSource struct{}
+
+func (f failTokenSource) Token(_ context.Context) (string, error) { return "", fmt.Errorf("token error") }
+
 // chatCompletionsOpts forces the Chat Completions API path (not Responses API).
 var chatCompletionsOpts = map[string]any{"useResponsesAPI": false}
 
@@ -721,6 +726,9 @@ func TestChat_Capabilities(t *testing.T) {
 	if caps.Reasoning {
 		t.Error("gpt-4o should not be reasoning")
 	}
+	if !caps.FileUpload {
+		t.Error("gpt-4o should support file upload")
+	}
 
 	// Reasoning model
 	model = Chat("o3", WithAPIKey("key"))
@@ -730,6 +738,9 @@ func TestChat_Capabilities(t *testing.T) {
 	}
 	if !caps.Reasoning {
 		t.Error("o3 should be reasoning")
+	}
+	if !caps.FileUpload {
+		t.Error("o3 should support file upload")
 	}
 }
 
@@ -1213,6 +1224,352 @@ func TestConvertToResponsesInput_FileAttachment(t *testing.T) {
 	}
 	if content[1]["filename"] != "doc.pdf" {
 		t.Errorf("content[1].filename = %v, want doc.pdf", content[1]["filename"])
+	}
+}
+
+func TestConvertToResponsesInput_FileRemoteRef(t *testing.T) {
+	msgs := []provider.Message{
+		{Role: provider.RoleUser, Content: []provider.Part{
+			{Type: provider.PartText, Text: "read this PDF"},
+			{Type: provider.PartFile, RemoteRef: &provider.RemoteFileRef{ID: "file-abc123"}, MediaType: "application/pdf", Filename: "doc.pdf"},
+		}},
+	}
+
+	result := convertToResponsesInput(msgs)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(result))
+	}
+
+	content, ok := result[0]["content"].([]map[string]any)
+	if !ok || len(content) != 2 {
+		t.Fatalf("content = %v", result[0]["content"])
+	}
+	if content[1]["type"] != "input_file" {
+		t.Errorf("content[1].type = %v, want input_file", content[1]["type"])
+	}
+	if content[1]["file_id"] != "file-abc123" {
+		t.Errorf("content[1].file_id = %v, want file-abc123", content[1]["file_id"])
+	}
+	if content[1]["filename"] != "doc.pdf" {
+		t.Errorf("content[1].filename = %v, want doc.pdf", content[1]["filename"])
+	}
+	if _, hasFileData := content[1]["file_data"]; hasFileData {
+		t.Error("should not have file_data when RemoteRef is set")
+	}
+}
+
+func TestChat_FileUploader(t *testing.T) {
+	model := Chat("gpt-4o", WithAPIKey("test-key"))
+	uploader, ok := model.(provider.FileUploadCapableModel)
+	if !ok {
+		t.Fatal("chatModel should implement FileUploadCapableModel")
+	}
+	if uploader.FileUploader() == nil {
+		t.Error("FileUploader() should return non-nil")
+	}
+}
+
+func TestFileUploader_UploadFile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/files" {
+			t.Errorf("path = %q, want /files", r.URL.Path)
+		}
+		if r.Method != "POST" {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		ct := r.Header.Get("Content-Type")
+		if !strings.Contains(ct, "multipart/form-data") {
+			t.Errorf("Content-Type = %q, want multipart/form-data", ct)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"file-xyz789","bytes":123,"created_at":1234567890,"filename":"test.pdf","purpose":"assistants"}`)
+	}))
+	defer server.Close()
+
+	model := Chat("gpt-4o", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	ref, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("fake-pdf-content"),
+		Filename:  "test.pdf",
+		MediaType: "application/pdf",
+		Purpose:   "assistants",
+	})
+	if err != nil {
+		t.Fatalf("UploadFile error: %v", err)
+	}
+	if ref.ID != "file-xyz789" {
+		t.Errorf("ref.ID = %q, want file-xyz789", ref.ID)
+	}
+	if ref.Filename != "test.pdf" {
+		t.Errorf("ref.Filename = %q", ref.Filename)
+	}
+	if ref.MediaType != "application/pdf" {
+		t.Errorf("ref.MediaType = %q", ref.MediaType)
+	}
+	if ref.Provider != "openai" {
+		t.Errorf("ref.Provider = %q", ref.Provider)
+	}
+	if len(ref.Data) == 0 {
+		t.Error("ref.Data should contain file bytes")
+	}
+}
+
+func TestFileUploader_UploadFile_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprint(w, `{"error":{"message":"bad request"}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("gpt-4o", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("data"),
+		Filename:  "test.pdf",
+		MediaType: "application/pdf",
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestFileUploader_DeleteFile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/files/file-to-delete" {
+			t.Errorf("path = %q, want /files/file-to-delete", r.URL.Path)
+		}
+		if r.Method != "DELETE" {
+			t.Errorf("method = %q, want DELETE", r.Method)
+		}
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"file-to-delete","object":"file","deleted":true}`)
+	}))
+	defer server.Close()
+
+	model := Chat("gpt-4o", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "file-to-delete"})
+	if err != nil {
+		t.Fatalf("DeleteFile error: %v", err)
+	}
+}
+
+func TestFileUploader_DeleteFile_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = fmt.Fprint(w, `{"error":{"message":"file not found"}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("gpt-4o", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "nonexistent"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestFileUploader_UploadFile_EmptyMediaType(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"file-mediatype","bytes":3,"created_at":1234567890,"filename":"test.bin","purpose":"assistants"}`)
+	}))
+	defer server.Close()
+
+	model := Chat("gpt-4o", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	ref, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:   strings.NewReader("abc"),
+		Filename: "test.bin",
+	})
+	if err != nil {
+		t.Fatalf("UploadFile error: %v", err)
+	}
+	if ref.ID != "file-mediatype" {
+		t.Errorf("ref.ID = %q", ref.ID)
+	}
+	if ref.MediaType == "" {
+		t.Error("MediaType should be detected from content")
+	}
+}
+
+func TestFileUploader_UploadFile_InvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `not-json`)
+	}))
+	defer server.Close()
+
+	model := Chat("gpt-4o", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("data"),
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid JSON response")
+	}
+}
+
+func TestFileUploader_DeleteFile_InvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, `not-json`)
+	}))
+	defer server.Close()
+
+	model := Chat("gpt-4o", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "file-xyz"})
+	if err != nil {
+		t.Fatalf("DeleteFile should not error on invalid JSON response body: %v", err)
+	}
+}
+
+func TestFileUploader_UploadFile_ReadError(t *testing.T) {
+	model := Chat("gpt-4o", WithAPIKey("test-key"))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    &errorReader{},
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err == nil {
+		t.Fatal("expected error for failing reader")
+	}
+}
+
+func TestFileUploader_UploadFile_TokenError(t *testing.T) {
+	model := Chat("gpt-4o", WithTokenSource(failTokenSource{}))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("data"),
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err == nil {
+		t.Fatal("expected error for token failure")
+	}
+}
+
+func TestFileUploader_UploadFile_Headers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Custom") != "value" {
+			t.Errorf("X-Custom = %q", r.Header.Get("X-Custom"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"file-headers","bytes":3,"created_at":1234567890,"filename":"test.txt","purpose":"assistants"}`)
+	}))
+	defer server.Close()
+
+	model := Chat("gpt-4o", WithAPIKey("test-key"), WithBaseURL(server.URL), WithHeaders(map[string]string{"X-Custom": "value"}))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	ref, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("abc"),
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err != nil {
+		t.Fatalf("UploadFile error: %v", err)
+	}
+	if ref.ID != "file-headers" {
+		t.Errorf("ref.ID = %q", ref.ID)
+	}
+}
+
+func TestFileUploader_UploadFile_HTTPClientError(t *testing.T) {
+	model := Chat("gpt-4o", WithAPIKey("test-key"), WithBaseURL("http://127.0.0.1:1"))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("data"),
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err == nil {
+		t.Fatal("expected error for connection refused")
+	}
+}
+
+func TestFileUploader_DeleteFile_TokenError(t *testing.T) {
+	model := Chat("gpt-4o", WithTokenSource(failTokenSource{}))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "file-xyz"})
+	if err == nil {
+		t.Fatal("expected error for token failure")
+	}
+}
+
+func TestFileUploader_DeleteFile_HTTPClientError(t *testing.T) {
+	model := Chat("gpt-4o", WithAPIKey("test-key"), WithBaseURL("http://127.0.0.1:1"))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "file-xyz"})
+	if err == nil {
+		t.Fatal("expected error for connection refused")
+	}
+}
+
+func TestFileUploader_DeleteFile_Headers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Custom") != "value" {
+			t.Errorf("X-Custom = %q", r.Header.Get("X-Custom"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"file-to-delete","object":"file","deleted":true}`)
+	}))
+	defer server.Close()
+
+	model := Chat("gpt-4o", WithAPIKey("test-key"), WithBaseURL(server.URL), WithHeaders(map[string]string{"X-Custom": "value"}))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "file-to-delete"})
+	if err != nil {
+		t.Fatalf("DeleteFile error: %v", err)
+	}
+}
+
+func TestFileUploader_UploadFile_InvalidURL(t *testing.T) {
+	model := Chat("gpt-4o", WithAPIKey("test-key"), WithBaseURL("://"))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	_, err := uploader.UploadFile(t.Context(), provider.FileUpload{
+		Reader:    strings.NewReader("data"),
+		Filename:  "test.txt",
+		MediaType: "text/plain",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid URL")
+	}
+}
+
+func TestFileUploader_DeleteFile_InvalidURL(t *testing.T) {
+	model := Chat("gpt-4o", WithAPIKey("test-key"), WithBaseURL("://"))
+	uploader := model.(provider.FileUploadCapableModel).FileUploader()
+
+	err := uploader.DeleteFile(t.Context(), provider.RemoteFileRef{ID: "file-xyz"})
+	if err == nil {
+		t.Fatal("expected error for invalid URL")
 	}
 }
 
