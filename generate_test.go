@@ -6343,3 +6343,41 @@ func TestBuildToolMap_DuplicateAcrossExecutable(t *testing.T) {
 		t.Errorf("error = %q, want it to contain %q", err.Error(), "duplicate tool name")
 	}
 }
+
+// WithCacheTTL must reach GenerateParams and every ephemeral breakpoint the
+// request emits, and must stay inert when prompt caching is off.
+func TestBuildParams_CacheTTL(t *testing.T) {
+	opts := applyOptions(
+		WithMessages(SystemMessage("You are helpful."), UserMessage("hi")),
+		WithPromptCaching(true),
+		WithCacheTTL("1h"),
+	)
+	params := buildParams(opts)
+
+	if params.CacheTTL != "1h" {
+		t.Errorf("CacheTTL = %q, want 1h", params.CacheTTL)
+	}
+
+	var marked int
+	for _, msg := range params.Messages {
+		for _, part := range msg.Content {
+			if part.CacheControl == "" {
+				continue
+			}
+			marked++
+			if part.CacheControlTTL != "1h" {
+				t.Errorf("breakpoint TTL = %q, want 1h", part.CacheControlTTL)
+			}
+		}
+	}
+	if marked == 0 {
+		t.Fatal("no cache breakpoint was marked")
+	}
+}
+
+func TestBuildParams_CacheTTLDefaultsEmpty(t *testing.T) {
+	params := buildParams(applyOptions(WithPrompt("hi"), WithPromptCaching(true)))
+	if params.CacheTTL != "" {
+		t.Errorf("CacheTTL = %q, want empty (provider default)", params.CacheTTL)
+	}
+}

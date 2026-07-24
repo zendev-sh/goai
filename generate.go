@@ -620,7 +620,7 @@ func buildParams(opts options) provider.GenerateParams {
 	}
 
 	if opts.PromptCaching {
-		msgs = applyCaching(msgs)
+		msgs = applyCaching(msgs, opts.CacheTTL)
 	}
 
 	return provider.GenerateParams{
@@ -638,6 +638,7 @@ func buildParams(opts options) provider.GenerateParams {
 		Headers:          maps.Clone(opts.Headers),
 		ProviderOptions:  maps.Clone(opts.ProviderOptions),
 		PromptCaching:    opts.PromptCaching,
+		CacheTTL:         opts.CacheTTL,
 		ToolChoice:       opts.ToolChoice,
 	}
 }

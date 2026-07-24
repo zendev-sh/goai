@@ -164,6 +164,11 @@ type GenerateParams struct {
 	// PromptCaching enables provider-specific prompt caching.
 	PromptCaching bool
 
+	// CacheTTL sets the ephemeral cache lifetime for Anthropic prompt caching:
+	// "5m" or "1h". Empty preserves the provider default (5m). Applies to every
+	// ephemeral cache_control marker the request emits (system and breakpoints).
+	CacheTTL string
+
 	// ToolChoice controls tool selection: "auto", "none", "required", or a specific tool name.
 	ToolChoice string
 
@@ -403,6 +408,10 @@ type Part struct {
 
 	// CacheControl directive (e.g. "ephemeral") for prompt caching.
 	CacheControl string
+
+	// CacheControlTTL is the ephemeral cache lifetime ("5m"/"1h") attached to
+	// CacheControl. Empty preserves the provider default (5m). Anthropic only.
+	CacheControlTTL string
 
 	// Detail level for image parts ("low", "high", "auto").
 	Detail string
