@@ -84,6 +84,9 @@ type options struct {
 	// PromptCaching enables provider-specific prompt caching.
 	PromptCaching bool
 
+	// CacheTTL sets the ephemeral cache lifetime ("5m" or "1h"); empty = default 5m.
+	CacheTTL string
+
 	// ToolChoice controls tool selection: "auto", "none", "required", or a specific tool name.
 	ToolChoice string
 
@@ -284,6 +287,13 @@ func WithProviderOptions(opts map[string]any) Option {
 // this option is set.
 func WithPromptCaching(b bool) Option {
 	return func(o *options) { o.PromptCaching = b }
+}
+
+// WithCacheTTL sets the ephemeral prompt-cache lifetime for Anthropic: "5m" or
+// "1h". Empty preserves the provider default (5m). Only Anthropic-family models
+// honor it; other providers ignore it. The 1h TTL needs no beta header (GA).
+func WithCacheTTL(ttl string) Option {
+	return func(o *options) { o.CacheTTL = ttl }
 }
 
 // Tool choice constants for use with WithToolChoice.

@@ -563,6 +563,115 @@ func TestBuildRequest_SystemCacheControl(t *testing.T) {
 	if cc["type"] != "ephemeral" {
 		t.Errorf("cache_control = %v, want ephemeral", cc)
 	}
+	if _, hasTTL := cc["ttl"]; hasTTL {
+		t.Errorf("cache_control should omit ttl by default, got %v", cc)
+	}
+}
+
+func TestBuildRequest_SystemCacheControlTTL(t *testing.T) {
+	m := &chatModel{id: "claude-sonnet-4-20250514", opts: options{baseURL: defaultBaseURL}}
+	body := m.buildRequest(provider.GenerateParams{
+		System: "You are helpful.",
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		PromptCaching: true,
+		CacheTTL:      "1h",
+	}, true)
+
+	system := body["system"].([]map[string]any)
+	cc, _ := system[0]["cache_control"].(map[string]any)
+	if cc["type"] != "ephemeral" {
+		t.Errorf("cache_control.type = %v, want ephemeral", cc["type"])
+	}
+	if cc["ttl"] != "1h" {
+		t.Errorf("cache_control.ttl = %v, want 1h", cc["ttl"])
+	}
+}
+
+// CacheTTL must not leak into the request when caching is off.
+func TestBuildRequest_CacheTTLWithoutPromptCaching(t *testing.T) {
+	m := &chatModel{id: "claude-sonnet-4-20250514", opts: options{baseURL: defaultBaseURL}}
+	body := m.buildRequest(provider.GenerateParams{
+		System: "You are helpful.",
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		CacheTTL: "1h",
+	}, true)
+
+	system := body["system"].([]map[string]any)
+	if _, has := system[0]["cache_control"]; has {
+		t.Errorf("cache_control set without PromptCaching: %v", system[0])
+	}
+}
+
+func TestConvertMessages_PartLevelCacheTTL(t *testing.T) {
+	msgs := convertMessages([]provider.Message{
+		{
+			Role:    provider.RoleUser,
+			Content: []provider.Part{{Type: provider.PartText, Text: "hi", CacheControl: "ephemeral", CacheControlTTL: "1h"}},
+		},
+	})
+
+	content := msgs[0]["content"].([]map[string]any)
+	cc := content[0]["cache_control"].(map[string]any)
+	if cc["type"] != "ephemeral" {
+		t.Errorf("cache_control.type = %v, want ephemeral", cc["type"])
+	}
+	if cc["ttl"] != "1h" {
+		t.Errorf("cache_control.ttl = %v, want 1h", cc["ttl"])
+	}
+
+	// Empty TTL must omit the ttl key (default 5m behavior preserved).
+	msgs = convertMessages([]provider.Message{
+		{
+			Role:    provider.RoleUser,
+			Content: []provider.Part{{Type: provider.PartText, Text: "hi", CacheControl: "ephemeral"}},
+		},
+	})
+	cc = msgs[0]["content"].([]map[string]any)[0]["cache_control"].(map[string]any)
+	if _, hasTTL := cc["ttl"]; hasTTL {
+		t.Errorf("empty TTL should omit ttl key, got %v", cc)
+	}
+}
+
+// A message-level breakpoint carries its own marker, so a part-level TTL on a
+// part that has no part-level CacheControl must not alter it.
+func TestConvertMessages_MessageLevelCacheControlIgnoresPartTTL(t *testing.T) {
+	msgs := convertMessages([]provider.Message{
+		{
+			Role: provider.RoleUser,
+			Content: []provider.Part{
+				{Type: provider.PartText, Text: "hi", CacheControlTTL: "1h"},
+			},
+			ProviderOptions: map[string]any{
+				"anthropic": map[string]any{
+					"cacheControl": map[string]any{"type": "ephemeral"},
+				},
+			},
+		},
+	})
+
+	cc := msgs[0]["content"].([]map[string]any)[0]["cache_control"].(map[string]any)
+	if cc["type"] != "ephemeral" {
+		t.Errorf("cache_control.type = %v, want ephemeral", cc["type"])
+	}
+	if _, hasTTL := cc["ttl"]; hasTTL {
+		t.Errorf("message-level marker must not gain a part TTL, got %v", cc)
+	}
+}
+
+func TestEphemeralCacheControl(t *testing.T) {
+	if cc := ephemeralCacheControl(""); cc["type"] != "ephemeral" || len(cc) != 1 {
+		t.Errorf("ephemeralCacheControl(\"\") = %v, want {type:ephemeral} only", cc)
+	}
+	for _, ttl := range []string{"5m", "1h"} {
+		cc := ephemeralCacheControl(ttl)
+		if cc["type"] != "ephemeral" || cc["ttl"] != ttl {
+			t.Errorf("ephemeralCacheControl(%q) = %v", ttl, cc)
+		}
+	}
 }
 
 func TestBuildRequest_Tools(t *testing.T) {
@@ -3629,5 +3738,51 @@ func TestConvertMessages_ServerToolResultBlock(t *testing.T) {
 				t.Errorf("orphan tool_result injected for server tool srvtoolu_abc in msg[%d]: %+v", i, p)
 			}
 		}
+	}
+}
+
+// End-to-end: the configured TTL must reach the wire on both the system block
+// and the message breakpoint, and the 1h TTL must not require a beta header.
+func TestDoGenerate_CacheTTLOnWire(t *testing.T) {
+	var req map[string]any
+	var betaHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		betaHeader = r.Header.Get("anthropic-beta")
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &req)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"msg_1","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("k"), WithBaseURL(server.URL))
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		System: "You are helpful.",
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{
+				{Type: provider.PartText, Text: "hi", CacheControl: "ephemeral", CacheControlTTL: "1h"},
+			}},
+		},
+		PromptCaching: true,
+		CacheTTL:      "1h",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	system := req["system"].([]any)[0].(map[string]any)
+	if cc := system["cache_control"].(map[string]any); cc["ttl"] != "1h" {
+		t.Errorf("system cache_control = %v, want ttl 1h", cc)
+	}
+
+	msg := req["messages"].([]any)[0].(map[string]any)
+	part := msg["content"].([]any)[0].(map[string]any)
+	if cc := part["cache_control"].(map[string]any); cc["ttl"] != "1h" {
+		t.Errorf("part cache_control = %v, want ttl 1h", cc)
+	}
+
+	// 1h is GA -- it must not add a beta opt-in.
+	if betaHeader != betaFeatures {
+		t.Errorf("anthropic-beta = %q, want %q (1h TTL is GA)", betaHeader, betaFeatures)
 	}
 }
