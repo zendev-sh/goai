@@ -436,14 +436,9 @@ func ParseStream(ctx context.Context, scanner *sse.Scanner, out chan<- provider.
 		choice := resp.Choices[0]
 		delta := choice.Delta
 
-		// Text content -- handle both string and array [{type:"text",text:"..."}] formats.
-		if text := extractTextContent(delta.Content); text != "" {
-			if !provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkText, Text: text}) {
-				return
-			}
-		}
-
-		// Reasoning content -- prefer reasoning_content (DeepSeek native),
+		// Reasoning content -- emitted before text: a delta can carry both
+		// fields at the reasoning→answer transition, and reasoning always
+		// precedes the answer. Prefer reasoning_content (DeepSeek native),
 		// fall back to reasoning (OpenRouter).
 		if delta.ReasoningContent != "" {
 			if !provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkReasoning, Text: delta.ReasoningContent}) {
@@ -451,6 +446,13 @@ func ParseStream(ctx context.Context, scanner *sse.Scanner, out chan<- provider.
 			}
 		} else if delta.Reasoning != "" {
 			if !provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkReasoning, Text: delta.Reasoning}) {
+				return
+			}
+		}
+
+		// Text content -- handle both string and array [{type:"text",text:"..."}] formats.
+		if text := extractTextContent(delta.Content); text != "" {
+			if !provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkText, Text: text}) {
 				return
 			}
 		}
