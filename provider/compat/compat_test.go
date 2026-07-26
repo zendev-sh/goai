@@ -732,3 +732,48 @@ func TestChat_PromptCachingIgnored(t *testing.T) {
 		t.Errorf("DoStream texts = %v, want [ok]", texts)
 	}
 }
+
+// TestChat_WithCompletionTokens: the option decides the output-token key
+// instead of the model id. Azure OpenAI needs it -- its wire id is the
+// deployment name the user picked, which says nothing about the model.
+func TestChat_WithCompletionTokens(t *testing.T) {
+	tests := []struct {
+		name    string
+		opts    []Option
+		want    string
+		notWant string
+	}{
+		{"default keeps the model-id heuristic", nil, "max_tokens", "max_completion_tokens"},
+		{"forced on an opaque id", []Option{WithCompletionTokens(true)}, "max_completion_tokens", "max_tokens"},
+		{"suppressed", []Option{WithCompletionTokens(false)}, "max_tokens", "max_completion_tokens"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var body map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Errorf("decoding request: %v", err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprint(w, `{"id":"1","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+			}))
+			defer server.Close()
+
+			opts := append([]Option{WithBaseURL(server.URL)}, tt.opts...)
+			model := Chat("my-deployment", opts...)
+			if _, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+				Messages:        []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+				MaxOutputTokens: 1500,
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			if body[tt.want] != float64(1500) {
+				t.Errorf("%s = %v, want 1500", tt.want, body[tt.want])
+			}
+			if _, ok := body[tt.notWant]; ok {
+				t.Errorf("%s must not be sent alongside %s", tt.notWant, tt.want)
+			}
+		})
+	}
+}
