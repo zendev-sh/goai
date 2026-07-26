@@ -1379,6 +1379,45 @@ func TestBuildRequest_MaxCompletionTokens_NoReasoningEffort(t *testing.T) {
 	}
 }
 
+// TestBuildRequest_UsesCompletionTokensOverridesModelID: the model id does not
+// always identify the model. On Azure OpenAI the wire id is the deployment name
+// the user picked, so the id heuristic misfires in both directions and the
+// caller must be able to state the answer.
+func TestBuildRequest_UsesCompletionTokensOverridesModelID(t *testing.T) {
+	yes, no := true, false
+	cases := []struct {
+		name    string
+		modelID string
+		flag    *bool
+		want    string
+	}{
+		{"nil keeps the heuristic (reasoning id)", "gpt-5", nil, "max_completion_tokens"},
+		{"nil keeps the heuristic (plain id)", "my-deployment", nil, "max_tokens"},
+		{"true forces the rename on an opaque id", "my-deployment", &yes, "max_completion_tokens"},
+		{"false suppresses it on a reasoning-looking id", "gpt-5-alias", &no, "max_tokens"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			params := provider.GenerateParams{
+				Messages:        []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+				MaxOutputTokens: 1500,
+			}
+			body := BuildRequest(params, tc.modelID, false, RequestConfig{UsesCompletionTokens: tc.flag})
+
+			if body[tc.want] != 1500 {
+				t.Errorf("%s = %v, want 1500", tc.want, body[tc.want])
+			}
+			other := "max_tokens"
+			if tc.want == "max_tokens" {
+				other = "max_completion_tokens"
+			}
+			if _, ok := body[other]; ok {
+				t.Errorf("%s must not be sent alongside %s", other, tc.want)
+			}
+		})
+	}
+}
+
 // TestBuildRequest_MaxTokensKeptForNonReasoning: a non-reasoning model
 // keeps the plain max_tokens parameter.
 func TestBuildRequest_MaxTokensKeptForNonReasoning(t *testing.T) {

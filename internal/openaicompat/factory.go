@@ -70,6 +70,12 @@ type ChatModelConfig struct {
 	// WarnPromptCaching emits a one-line stderr warning when the caller sets
 	// GenerateParams.PromptCaching and the provider does not support it.
 	WarnPromptCaching bool
+
+	// UsesCompletionTokens forces the max_tokens / max_completion_tokens choice
+	// instead of deriving it from ModelID. Nil keeps the ModelID heuristic.
+	// Azure OpenAI needs it: its wire model id is the user-chosen deployment
+	// name, which says nothing about the model behind it.
+	UsesCompletionTokens *bool
 }
 
 // NewChatModel returns a provider.LanguageModel backed by the shared
@@ -152,7 +158,8 @@ func (m *chatModel) DoGenerate(ctx context.Context, params provider.GeneratePara
 		return nil, err
 	}
 	body := BuildRequest(params, m.cfg.ModelID, false, RequestConfig{
-		ExtraBody: m.cfg.ExtraBody,
+		ExtraBody:            m.cfg.ExtraBody,
+		UsesCompletionTokens: m.cfg.UsesCompletionTokens,
 	})
 
 	resp, err := m.doHTTP(ctx, m.cfg.BaseURL+"/chat/completions", body)
@@ -176,6 +183,7 @@ func (m *chatModel) DoStream(ctx context.Context, params provider.GenerateParams
 	body := BuildRequest(params, m.cfg.ModelID, true, RequestConfig{
 		IncludeStreamOptions: m.cfg.IncludeStreamOptions,
 		ExtraBody:            m.cfg.ExtraBody,
+		UsesCompletionTokens: m.cfg.UsesCompletionTokens,
 	})
 
 	resp, err := m.doHTTP(ctx, m.cfg.BaseURL+"/chat/completions", body)

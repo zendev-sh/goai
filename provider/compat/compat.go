@@ -20,11 +20,23 @@ import (
 type Option func(*options)
 
 type options struct {
-	providerID  string
-	tokenSource provider.TokenSource
-	baseURL     string
-	headers     map[string]string
-	httpClient  *http.Client
+	providerID           string
+	tokenSource          provider.TokenSource
+	baseURL              string
+	headers              map[string]string
+	httpClient           *http.Client
+	usesCompletionTokens *bool
+}
+
+// WithCompletionTokens forces the max_tokens / max_completion_tokens choice
+// instead of deriving it from the model id. Use it when the id does not
+// identify the model: on Azure OpenAI the wire id is the deployment name the
+// user picked, so a GPT-5 deployment called "prod" would be sent max_tokens
+// and rejected with "Unsupported parameter: 'max_tokens'".
+func WithCompletionTokens(uses bool) Option {
+	return func(o *options) {
+		o.usesCompletionTokens = &uses
+	}
 }
 
 // WithProviderID overrides the provider name used in error messages.
@@ -83,6 +95,7 @@ func Chat(modelID string, opts ...Option) provider.LanguageModel {
 		Capabilities:         chatCaps,
 		IncludeStreamOptions: true,
 		WarnPromptCaching:    true,
+		UsesCompletionTokens: o.usesCompletionTokens,
 	})
 }
 
