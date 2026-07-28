@@ -11,10 +11,11 @@ import (
 const maxRefInlineDepth = 10
 
 // SanitizeSchema sanitizes a JSON Schema for Gemini compatibility.
-// It converts enum integer/number types to string, filters invalid required fields,
-// ensures array items have a type, inlines $ref/$defs (which Gemini rejects),
-// and strips JSON Schema conditionals (if/then/else) which Gemini's OpenAPI
-// validator does not understand.
+// It converts enum integer/number types to string, rewrites "const" to a
+// single-value "enum", filters invalid required fields, ensures array items
+// have a type, inlines $ref/$defs (which Gemini rejects), and strips JSON
+// Schema conditionals (if/then/else) which Gemini's OpenAPI validator does
+// not understand.
 func SanitizeSchema(schema map[string]any) map[string]any {
 	// Step 1: resolve $ref → $defs and strip unsupported keywords.
 	// Gemini's function_declarations validator cannot resolve
@@ -232,7 +233,17 @@ func sanitizeImpl(obj any) any {
 	delete(result, "format")
 	delete(result, "propertyNames")
 	delete(result, "patternProperties")
-	delete(result, "const")
+	// Gemini has no "const", but a single-value "enum" says the same thing and
+	// is supported, so the constraint survives instead of being dropped.
+	if v, ok := result["const"]; ok {
+		delete(result, "const")
+		if _, hasEnum := result["enum"]; !hasEnum {
+			result["enum"] = []any{fmt.Sprint(v)}
+			if _, hasType := result["type"]; !hasType {
+				result["type"] = "string"
+			}
+		}
+	}
 	delete(result, "exclusiveMinimum")
 	delete(result, "exclusiveMaximum")
 	delete(result, "default")

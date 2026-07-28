@@ -371,7 +371,8 @@ func TestSanitizeSchema_PointerToStructNullableType(t *testing.T) {
 
 func TestSanitizeSchema_StripsUnsupportedKeywords(t *testing.T) {
 	// Gemini's function_declarations rejects propertyNames, patternProperties,
-	// const, exclusiveMinimum, exclusiveMaximum, and default.
+	// const, exclusiveMinimum, exclusiveMaximum, and default. const is rewritten
+	// rather than dropped (see TestSanitizeSchema_ConstBecomesEnum).
 	schema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -815,5 +816,49 @@ func TestSanitizeSchema_NoInputMutation_AnySlice(t *testing.T) {
 	}
 	if result["nullable"] != true {
 		t.Error("result should have nullable: true")
+	}
+}
+
+func TestSanitizeSchema_ConstBecomesEnum(t *testing.T) {
+	// A typed const keeps its type; an untyped one gets a string type, since
+	// Gemini requires a type alongside the enum.
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"kind":    map[string]any{"type": "string", "const": "create"},
+			"untyped": map[string]any{"const": "x"},
+			"withEnum": map[string]any{
+				"type": "string", "const": "a", "enum": []any{"a", "b"},
+			},
+		},
+	}
+	props, ok := SanitizeSchema(schema)["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("properties missing")
+	}
+
+	kind := props["kind"].(map[string]any)
+	if _, has := kind["const"]; has {
+		t.Error("const should be removed")
+	}
+	if !reflect.DeepEqual(kind["enum"], []any{"create"}) {
+		t.Errorf("kind enum = %v, want [create]", kind["enum"])
+	}
+	if kind["type"] != "string" {
+		t.Errorf("kind type = %v, want string", kind["type"])
+	}
+
+	untyped := props["untyped"].(map[string]any)
+	if !reflect.DeepEqual(untyped["enum"], []any{"x"}) {
+		t.Errorf("untyped enum = %v, want [x]", untyped["enum"])
+	}
+	if untyped["type"] != "string" {
+		t.Errorf("untyped type = %v, want synthesized string", untyped["type"])
+	}
+
+	// An existing enum wins: const must not narrow it.
+	withEnum := props["withEnum"].(map[string]any)
+	if !reflect.DeepEqual(withEnum["enum"], []any{"a", "b"}) {
+		t.Errorf("withEnum enum = %v, want [a b]", withEnum["enum"])
 	}
 }
