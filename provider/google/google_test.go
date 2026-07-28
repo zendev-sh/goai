@@ -161,12 +161,12 @@ func TestChat_Stream_Reasoning(t *testing.T) {
 			gotText = true
 		}
 		if chunk.Type == provider.ChunkFinish {
-			// Thoughts should be separated from output.
+			// Thoughts are reported separately, so output keeps candidatesTokenCount.
 			if chunk.Usage.ReasoningTokens != 3 {
 				t.Errorf("ReasoningTokens = %d, want 3", chunk.Usage.ReasoningTokens)
 			}
-			if chunk.Usage.OutputTokens != 5 {
-				t.Errorf("OutputTokens = %d, want 5 (8-3)", chunk.Usage.OutputTokens)
+			if chunk.Usage.OutputTokens != 8 {
+				t.Errorf("OutputTokens = %d, want 8 (candidatesTokenCount)", chunk.Usage.OutputTokens)
 			}
 		}
 	}
@@ -1653,10 +1653,10 @@ func TestDoHTTP_ConnectionError(t *testing.T) {
 	}
 }
 
-func TestChat_Generate_NegativeOutputTokens(t *testing.T) {
+func TestChat_Generate_OutputExcludesThoughts(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		// ThoughtsTokenCount > CandidatesTokenCount would give negative output.
+		// thoughtsTokenCount outgrows candidatesTokenCount: subtracting zeroed the output.
 		_, _ = fmt.Fprint(w, `{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":3,"thoughtsTokenCount":5}}`)
 	}))
 	defer server.Close()
@@ -1670,8 +1670,11 @@ func TestChat_Generate_NegativeOutputTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Usage.OutputTokens != 0 {
-		t.Errorf("OutputTokens = %d, want 0 (clamped)", result.Usage.OutputTokens)
+	if result.Usage.OutputTokens != 3 {
+		t.Errorf("OutputTokens = %d, want 3 (candidatesTokenCount)", result.Usage.OutputTokens)
+	}
+	if result.Usage.ReasoningTokens != 5 {
+		t.Errorf("ReasoningTokens = %d, want 5 (thoughtsTokenCount)", result.Usage.ReasoningTokens)
 	}
 }
 
@@ -1737,11 +1740,12 @@ func TestChat_Stream_NegativeTokens(t *testing.T) {
 
 	for chunk := range result.Stream {
 		if chunk.Type == provider.ChunkFinish {
+			// Input still clamps (prompt 5 - cache 10); output keeps candidatesTokenCount.
 			if chunk.Usage.InputTokens != 0 {
 				t.Errorf("InputTokens = %d, want 0", chunk.Usage.InputTokens)
 			}
-			if chunk.Usage.OutputTokens != 0 {
-				t.Errorf("OutputTokens = %d, want 0", chunk.Usage.OutputTokens)
+			if chunk.Usage.OutputTokens != 2 {
+				t.Errorf("OutputTokens = %d, want 2 (candidatesTokenCount)", chunk.Usage.OutputTokens)
 			}
 		}
 	}
