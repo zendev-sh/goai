@@ -21,12 +21,14 @@ import (
 type errorReader struct{}
 
 func (e *errorReader) Read(_ []byte) (int, error) { return 0, fmt.Errorf("read error") }
-func (e *errorReader) Close() error                { return nil }
+func (e *errorReader) Close() error               { return nil }
 
 // failTokenSource is a provider.TokenSource that always returns an error.
 type failTokenSource struct{}
 
-func (f failTokenSource) Token(_ context.Context) (string, error) { return "", fmt.Errorf("token error") }
+func (f failTokenSource) Token(_ context.Context) (string, error) {
+	return "", fmt.Errorf("token error")
+}
 
 // chatCompletionsOpts forces the Chat Completions API path (not Responses API).
 var chatCompletionsOpts = map[string]any{"useResponsesAPI": false}
@@ -672,8 +674,8 @@ func TestIsReasoningModel(t *testing.T) {
 		{"gpt-5.2", true},
 		{"codex-mini-latest", true},
 		{"codex-mini", true},
-		{"O3", true},        // case insensitive
-		{"GPT-5.1", true},   // case insensitive
+		{"O3", true},      // case insensitive
+		{"GPT-5.1", true}, // case insensitive
 	}
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
@@ -1101,7 +1103,7 @@ func TestChat_Responses_ProviderOptions(t *testing.T) {
 			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
 		},
 		ProviderOptions: map[string]any{
-			"serviceTier":     "default",
+			"serviceTier":      "default",
 			"reasoning_effort": "medium",
 		},
 	})
@@ -1139,7 +1141,7 @@ func TestChat_Responses_ProviderOptions_All(t *testing.T) {
 			"parallelToolCalls": true,
 			"truncation":        "auto",
 			"include":           []string{"reasoning.encrypted_content"},
-			"reasoning_summary":  "auto",
+			"reasoning_summary": "auto",
 		},
 	})
 
@@ -4431,3 +4433,82 @@ func TestConvertToResponsesInput_ServerToolItem(t *testing.T) {
 	}
 }
 
+func TestStreamResponses_ToolCallEmittedOnceAfterTrailingDelta(t *testing.T) {
+	// A delta arriving after the arguments already parse must not become a
+	// second call: the buffer is resolved on function_call_arguments.done.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: response.output_item.added\n")
+		_, _ = fmt.Fprint(w, `data: {"output_index":0,"item":{"type":"function_call","call_id":"tc1","name":"read"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, "event: response.function_call_arguments.delta\n")
+		_, _ = fmt.Fprint(w, `data: {"output_index":0,"delta":"{\"path\":\"a.go\"}"}`+"\n\n")
+		_, _ = fmt.Fprint(w, "event: response.function_call_arguments.delta\n")
+		_, _ = fmt.Fprint(w, `data: {"output_index":0,"delta":"\n"}`+"\n\n")
+		_, _ = fmt.Fprint(w, "event: response.function_call_arguments.done\n")
+		_, _ = fmt.Fprint(w, `data: {"output_index":0}`+"\n\n")
+		_, _ = fmt.Fprint(w, "event: response.completed\n")
+		_, _ = fmt.Fprint(w, `data: {"response":{"usage":{"input_tokens":1,"output_tokens":1}}}`+"\n\n")
+	}))
+	defer server.Close()
+
+	model := Chat("o3", WithAPIKey("key"), WithBaseURL(server.URL))
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var calls []provider.StreamChunk
+	for chunk := range result.Stream {
+		if chunk.Type == provider.ChunkToolCall {
+			calls = append(calls, chunk)
+		}
+	}
+	if len(calls) != 1 {
+		t.Fatalf("emitted %d tool calls, want 1", len(calls))
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(calls[0].ToolInput), &args); err != nil {
+		t.Fatalf("ToolInput = %q, does not parse: %v", calls[0].ToolInput, err)
+	}
+	if args["path"] != "a.go" {
+		t.Errorf("args = %v, want path a.go", args)
+	}
+	if calls[0].ToolCallID != "tc1" || calls[0].ToolName != "read" {
+		t.Errorf("call = %q/%q, want tc1/read", calls[0].ToolCallID, calls[0].ToolName)
+	}
+}
+
+// The flush in output_item.done is the one TrySend path that cannot be reached
+// with an already-cancelled context: the events leading up to it send first and
+// bail out earlier. Cancel once the arguments are buffered instead.
+func TestStreamResponses_ContextCancel_OutputItemDoneFlush(t *testing.T) {
+	line := func(event, data string) string {
+		return "event: " + event + "\ndata: " + data + "\n\n"
+	}
+	input := line("response.output_item.added",
+		`{"output_index":0,"item":{"type":"function_call","id":"fc1","call_id":"c1","name":"fn"}}`) +
+		line("response.function_call_arguments.delta", `{"output_index":0,"delta":"{\"a\":1}"}`) +
+		// No arguments.done: the item is closed directly, so the flush runs.
+		line("response.output_item.done", `{"output_index":0,"item":{"type":"function_call"}}`)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	out := make(chan provider.StreamChunk) // unbuffered: the flush blocks on send
+	done := make(chan struct{})
+	go func() {
+		streamResponses(ctx, io.NopCloser(strings.NewReader(input)), out)
+		close(done)
+	}()
+
+	for chunk := range out {
+		if chunk.Type == provider.ChunkToolCallDelta {
+			break // stop consuming: the flush is now the pending send
+		}
+	}
+	cancel()
+
+	<-done
+	for range out { //nolint:revive // drain whatever was buffered
+	}
+}

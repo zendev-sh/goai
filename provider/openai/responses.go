@@ -593,17 +593,9 @@ func streamResponses(ctx context.Context, body io.ReadCloser, out chan<- provide
 					return
 				}
 
-				if accumulated := active.args.String(); json.Valid([]byte(accumulated)) {
-					if !provider.TrySend(ctx, out, provider.StreamChunk{
-						Type:       provider.ChunkToolCall,
-						ToolCallID: active.id,
-						ToolName:   active.name,
-						ToolInput:  accumulated,
-					}) {
-						return
-					}
-					active.args.Reset()
-				}
+				// The call is resolved on function_call_arguments.done. Finalizing
+				// as soon as the buffer parses assumes no further delta arrives,
+				// and any that does becomes a second, bogus call.
 			}
 
 		case "response.function_call_arguments.done":
@@ -665,6 +657,20 @@ func streamResponses(ctx context.Context, body io.ReadCloser, out chan<- provide
 							}) {
 								return
 							}
+						}
+					} else if active := activeTools[ev.OutputIndex]; active != nil {
+						// Safety net for an item closed without its arguments.done.
+						// The normal path resets the buffer, so this stays empty.
+						if remaining := active.args.String(); remaining != "" {
+							if !provider.TrySend(ctx, out, provider.StreamChunk{
+								Type:       provider.ChunkToolCall,
+								ToolCallID: active.id,
+								ToolName:   active.name,
+								ToolInput:  remaining,
+							}) {
+								return
+							}
+							active.args.Reset()
 						}
 					}
 					delete(activeTools, ev.OutputIndex)
