@@ -305,6 +305,20 @@ func (m *chatModel) buildRequest(params provider.GenerateParams) (geminiRequestB
 			toolConfig["retrievalConfig"] = rc
 		}
 	}
+	// toolConfig from ProviderOptions, merged last: Gemini 3.x needs
+	// include_server_side_tool_invocations there, alongside the fields above.
+	if tc, ok := params.ProviderOptions["toolConfig"].(map[string]any); ok {
+		for k, v := range tc {
+			toolConfig[k] = v
+		}
+	}
+	if gopts != nil {
+		if tc, ok := gopts["toolConfig"].(map[string]any); ok {
+			for k, v := range tc {
+				toolConfig[k] = v
+			}
+		}
+	}
 
 	if len(toolConfig) > 0 {
 		body.ToolConfig = toolConfig

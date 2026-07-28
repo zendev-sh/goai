@@ -3312,3 +3312,64 @@ func TestChat_PromptCachingIgnored(t *testing.T) {
 		t.Errorf("DoStream texts = %v, want [ok]", texts)
 	}
 }
+func TestBuildRequest_ToolConfigFromProviderOptions(t *testing.T) {
+	// Gemini 3.x requires toolConfig.include_server_side_tool_invocations when
+	// using built-in tools. Test that toolConfig passed as a flat key in
+	// ProviderOptions is merged with the toolConfig being built.
+	m := &chatModel{id: "gemini-3.5-flash", opts: options{baseURL: defaultBaseURL}}
+	body, err := m.buildRequest(provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "search for Go tutorials"}}}},
+		ProviderOptions: map[string]any{
+			"toolConfig": map[string]any{
+				"include_server_side_tool_invocations": true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if body.ToolConfig == nil {
+		t.Fatal("ToolConfig should be set")
+	}
+	tc, ok := body.ToolConfig.(map[string]any)
+	if !ok {
+		t.Fatalf("ToolConfig should be map[string]any, got %T", body.ToolConfig)
+	}
+	if val, ok := tc["include_server_side_tool_invocations"].(bool); !ok || !val {
+		t.Errorf("include_server_side_tool_invocations = %v, want true", tc["include_server_side_tool_invocations"])
+	}
+}
+
+func TestBuildRequest_ToolConfigMergeWithFunctionCallingConfig(t *testing.T) {
+	// Test that toolConfig from ProviderOptions is merged with functionCallingConfig.
+	m := &chatModel{id: "gemini-3.5-flash", opts: options{baseURL: defaultBaseURL}}
+	body, err := m.buildRequest(provider.GenerateParams{
+		Messages:   []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+		ToolChoice: "auto",
+		ProviderOptions: map[string]any{
+			"toolConfig": map[string]any{
+				"include_server_side_tool_invocations": true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if body.ToolConfig == nil {
+		t.Fatal("ToolConfig should be set")
+	}
+	tc, ok := body.ToolConfig.(map[string]any)
+	if !ok {
+		t.Fatalf("ToolConfig should be map[string]any, got %T", body.ToolConfig)
+	}
+
+	// Check that both functionCallingConfig and include_server_side_tool_invocations are present.
+	if _, ok := tc["functionCallingConfig"]; !ok {
+		t.Error("functionCallingConfig should be set")
+	}
+	if val, ok := tc["include_server_side_tool_invocations"].(bool); !ok || !val {
+		t.Errorf("include_server_side_tool_invocations = %v, want true", tc["include_server_side_tool_invocations"])
+	}
+}
