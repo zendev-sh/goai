@@ -446,7 +446,15 @@ type responsesToolCall struct {
 // and use the canonical ID from output_item.added.
 type responsesReasoning struct {
 	canonicalID string
+	// lastSummary is the summary_index of the previous delta, or -1 before the
+	// first one. Segments are only delimited by that index, never by the text.
+	lastSummary int
 }
+
+// summarySeparator delimits consecutive reasoning summaries. Their boundary
+// exists only in summary_index, so concatenating the deltas runs two summaries
+// together and merges the markdown at the seam.
+const summarySeparator = "\n\n"
 
 // streamResponses parses SSE from the OpenAI Responses API.
 // Uses sse.Scanner.NextLine because the Responses API has event-typed SSE
@@ -517,15 +525,21 @@ func streamResponses(ctx context.Context, body io.ReadCloser, out chan<- provide
 			}
 			if json.Unmarshal([]byte(data), &ev) == nil && ev.Delta != "" {
 				// Use canonical ID from activeReasoning if available.
-				id := ev.ItemID
+				id, text := ev.ItemID, ev.Delta
 				if currentReasoningIdx >= 0 {
 					if ar := activeReasoning[currentReasoningIdx]; ar != nil {
 						id = ar.canonicalID
+						// A new summary_index opens a separate summary: carry the
+						// boundary in the text, since the deltas never bring it.
+						if ar.lastSummary >= 0 && ev.SummaryIndex != ar.lastSummary {
+							text = summarySeparator + text
+						}
+						ar.lastSummary = ev.SummaryIndex
 					}
 				}
 				if !provider.TrySend(ctx, out, provider.StreamChunk{
 					Type: provider.ChunkReasoning,
-					Text: ev.Delta,
+					Text: text,
 					Metadata: map[string]any{
 						"reasoningId": fmt.Sprintf("%s:%d", id, ev.SummaryIndex),
 					},
@@ -566,6 +580,7 @@ func streamResponses(ctx context.Context, body io.ReadCloser, out chan<- provide
 				case "reasoning":
 					activeReasoning[ev.OutputIndex] = &responsesReasoning{
 						canonicalID: ev.Item.ID,
+						lastSummary: -1,
 					}
 					currentReasoningIdx = ev.OutputIndex
 				}
@@ -1002,7 +1017,9 @@ func parseResponsesResult(body []byte) (*provider.GenerateResult, error) {
 	}
 
 	result.Text = strings.Join(textParts, "")
-	result.Reasoning = strings.Join(reasoningParts, "")
+	// Each entry is a distinct summary; joining them bare merges the markdown
+	// at the seam, same as in the streaming path.
+	result.Reasoning = strings.Join(reasoningParts, summarySeparator)
 
 	if len(allLogprobs) > 0 {
 		providerMeta["logprobs"] = allLogprobs

@@ -2161,7 +2161,7 @@ func TestParseResponsesResult_ReasoningSummary(t *testing.T) {
 		"status": "completed",
 		"output": [
 			{"type": "reasoning", "summary": [
-				{"type": "summary_text", "text": "Step one. "},
+				{"type": "summary_text", "text": "Step one."},
 				{"type": "summary_text", "text": "Step two."}
 			]},
 			{"type": "message", "content": [{"type": "output_text", "text": "answer"}]}
@@ -2176,8 +2176,10 @@ func TestParseResponsesResult_ReasoningSummary(t *testing.T) {
 	if result.Text != "answer" {
 		t.Errorf("Text = %q, want %q", result.Text, "answer")
 	}
-	if result.Reasoning != "Step one. Step two." {
-		t.Errorf("Reasoning = %q, want %q", result.Reasoning, "Step one. Step two.")
+	// Each summary is a separate entry, so the parser supplies the boundary
+	// instead of relying on the text to carry its own trailing whitespace.
+	if result.Reasoning != "Step one.\n\nStep two." {
+		t.Errorf("Reasoning = %q, want %q", result.Reasoning, "Step one.\n\nStep two.")
 	}
 }
 
@@ -4510,5 +4512,159 @@ func TestStreamResponses_ContextCancel_OutputItemDoneFlush(t *testing.T) {
 
 	<-done
 	for range out { //nolint:revive // drain whatever was buffered
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Reasoning summary boundaries
+// ---------------------------------------------------------------------------
+
+// collectReasoning streams an SSE body and returns the reasoning text as a
+// consumer that concatenates deltas would see it, plus the reasoningId metadata
+// of every chunk.
+func collectReasoning(t *testing.T, sse string) (string, []string) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, sse)
+	}))
+	defer server.Close()
+
+	model := Chat("o3", WithAPIKey("key"), WithBaseURL(server.URL))
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text string
+	var ids []string
+	for chunk := range result.Stream {
+		if chunk.Type != provider.ChunkReasoning {
+			continue
+		}
+		text += chunk.Text
+		if id, ok := chunk.Metadata["reasoningId"].(string); ok {
+			ids = append(ids, id)
+		}
+	}
+	return text, ids
+}
+
+func sseLine(event, data string) string {
+	return "event: " + event + "\ndata: " + data + "\n\n"
+}
+
+func reasoningItem(outputIndex int, id string) string {
+	return sseLine("response.output_item.added",
+		fmt.Sprintf(`{"output_index":%d,"item":{"type":"reasoning","id":%q}}`, outputIndex, id))
+}
+
+func summaryDelta(itemID string, summaryIndex int, delta string) string {
+	return sseLine("response.reasoning_summary_text.delta",
+		fmt.Sprintf(`{"item_id":%q,"summary_index":%d,"delta":%q}`, itemID, summaryIndex, delta))
+}
+
+func TestStreamResponses_ReasoningSummaryBoundaries(t *testing.T) {
+	t.Run("distinct summaries keep their boundary", func(t *testing.T) {
+		got, _ := collectReasoning(t, reasoningItem(0, "rs_1")+
+			summaryDelta("rs_1", 0, "**Planning multi-step code review**")+
+			summaryDelta("rs_1", 1, "**Verifying read-only diff retrieval**"))
+
+		want := "**Planning multi-step code review**\n\n**Verifying read-only diff retrieval**"
+		if got != want {
+			t.Errorf("reasoning = %q, want %q", got, want)
+		}
+		if strings.Contains(got, "****") {
+			t.Error("the summaries were merged into a single bold span")
+		}
+	})
+
+	// The common case by far: one summary arrives as many deltas. Separating
+	// those would shred every reasoning block.
+	t.Run("deltas within one summary are concatenated bare", func(t *testing.T) {
+		got, _ := collectReasoning(t, reasoningItem(0, "rs_1")+
+			summaryDelta("rs_1", 0, "**Plan")+
+			summaryDelta("rs_1", 0, "ning**")+
+			summaryDelta("rs_1", 0, " the ")+
+			summaryDelta("rs_1", 0, "review"))
+
+		if want := "**Planning** the review"; got != want {
+			t.Errorf("reasoning = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a single summary gets no separator", func(t *testing.T) {
+		got, _ := collectReasoning(t, reasoningItem(0, "rs_1")+
+			summaryDelta("rs_1", 0, "**Only one**"))
+
+		if want := "**Only one**"; got != want {
+			t.Errorf("reasoning = %q, want %q", got, want)
+		}
+	})
+
+	// Each reasoning item tracks its own index, so a new item starts clean
+	// rather than inheriting the previous item's last summary.
+	t.Run("a second reasoning item starts without a separator", func(t *testing.T) {
+		got, _ := collectReasoning(t, reasoningItem(0, "rs_1")+
+			summaryDelta("rs_1", 0, "first")+
+			sseLine("response.output_item.done", `{"output_index":0,"item":{"type":"reasoning"}}`)+
+			reasoningItem(1, "rs_2")+
+			summaryDelta("rs_2", 0, "second"))
+
+		if want := "firstsecond"; got != want {
+			t.Errorf("reasoning = %q, want %q", got, want)
+		}
+	})
+
+	// A stream whose first summary is not index 0 must not open with a separator.
+	t.Run("a non-zero first index gets no leading separator", func(t *testing.T) {
+		got, _ := collectReasoning(t, reasoningItem(0, "rs_1")+
+			summaryDelta("rs_1", 3, "**Late start**"))
+
+		if want := "**Late start**"; got != want {
+			t.Errorf("reasoning = %q, want %q", got, want)
+		}
+	})
+
+	// Without the item event there is nothing to track: behave as before rather
+	// than guessing a boundary.
+	t.Run("summaries without a reasoning item are untouched", func(t *testing.T) {
+		got, _ := collectReasoning(t,
+			summaryDelta("rs_x", 0, "a")+summaryDelta("rs_x", 1, "b"))
+
+		if want := "ab"; got != want {
+			t.Errorf("reasoning = %q, want %q", got, want)
+		}
+	})
+
+	// The separator is a presentation concern: the index still travels in the
+	// metadata for consumers that split on it.
+	t.Run("reasoningId still carries the summary index", func(t *testing.T) {
+		_, ids := collectReasoning(t, reasoningItem(0, "rs_1")+
+			summaryDelta("rs_1", 0, "a")+
+			summaryDelta("rs_1", 1, "b"))
+
+		if len(ids) != 2 || ids[0] != "rs_1:0" || ids[1] != "rs_1:1" {
+			t.Errorf("reasoningIds = %v, want [rs_1:0 rs_1:1]", ids)
+		}
+	})
+}
+
+func TestParseResponsesResult_SingleSummaryHasNoSeparator(t *testing.T) {
+	body := `{
+		"id": "resp-1", "model": "o3", "status": "completed",
+		"output": [
+			{"type": "reasoning", "summary": [{"type": "summary_text", "text": "Only one."}]},
+			{"type": "message", "content": [{"type": "output_text", "text": "answer"}]}
+		],
+		"usage": {"input_tokens": 1, "output_tokens": 1}
+	}`
+	result, err := parseResponsesResult([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Reasoning != "Only one." {
+		t.Errorf("Reasoning = %q, want %q", result.Reasoning, "Only one.")
 	}
 }
