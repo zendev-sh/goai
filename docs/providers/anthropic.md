@@ -279,4 +279,4 @@ result, err := goai.GenerateText(ctx, model,
 - **Default max tokens**: 16384 when not explicitly set via `goai.WithMaxOutputTokens()`.
 - **Auth header**: Uses `x-api-key` (not `Authorization: Bearer`), matching Anthropic's API convention.
 - **Input modalities**: Supports text, images (base64), and PDF documents (base64).
-- **File upload**: Anthropic supports remote file upload via the Files API. Use `model.FileUploader()` to get a `provider.FileUploader` for uploading and deleting files. Uploaded files are referenced via `Part.RemoteRef` in messages. Compat providers fall back to inline base64 automatically.
+- **File upload**: Anthropic supports remote file upload via the Files API. Use `model.FileUploader()` to get a `provider.FileUploader` for uploading and deleting files. Uploaded files are referenced via `Part.RemoteRef` in messages. Compat providers map file parts to native OpenAI shapes (`file` for PDFs, `input_audio` for audio).

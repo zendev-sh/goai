@@ -9,7 +9,7 @@ description: "Open-source Go SDK for AI applications. One unified API for OpenAI
 
 ## What's New
 
-> **v0.9.0** — Provider-neutral file upload and remote file references. `FileUploader` interface + `RemoteFileRef` for OpenAI, Anthropic, and Google Gemini. Compat providers fall back to inline base64. [Changelog →](https://github.com/zendev-sh/goai/releases)
+> **v0.9.0** — Provider-neutral file upload and remote file references. `FileUploader` interface + `RemoteFileRef` for OpenAI, Anthropic, and Google Gemini. Compat providers map file parts to native OpenAI shapes. [Changelog →](https://github.com/zendev-sh/goai/releases)
 >
 > **v0.8.5** — New provider: [Requesty](/providers/requesty) (OpenAI-compatible LLM gateway). Anthropic native structured output, per-step `Reasoning`, Gemini schema sanitization. [Changelog →](https://github.com/zendev-sh/goai/releases)
 >

@@ -146,7 +146,7 @@
 
 | Feature                                  | Description                                                                                                                                                                                                                     |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **File upload & remote file references** | New `FileUploader` interface with `UploadFile`/`DeleteFile` for OpenAI (Files API), Anthropic (Files API), and Google Gemini (Files API). New `RemoteFileRef` type with `Part.RemoteRef` field. Compat providers fall back to inline base64 via `RemoteFileRef.Data`. `ModelCapabilities.FileUpload` capability flag. |
+| **File upload & remote file references** | New `FileUploader` interface with `UploadFile`/`DeleteFile` for OpenAI (Files API), Anthropic (Files API), and Google Gemini (Files API). New `RemoteFileRef` type with `Part.RemoteRef` field. Compat providers map file parts to native OpenAI shapes (`file` for PDFs, `input_audio` for audio). `ModelCapabilities.FileUpload` capability flag. |
 
 ## v0.8.5
 

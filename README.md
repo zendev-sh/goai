@@ -30,7 +30,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 
 ## What's New
 
-> **v0.9.0** - Provider-neutral file upload and remote file references. `FileUploader` interface + `RemoteFileRef` for OpenAI (Files API), Anthropic (Files API), and Google Gemini (Files API). Compat providers fall back to inline base64 automatically. [Changelog →](https://github.com/zendev-sh/goai/releases)
+> **v0.9.0** - Provider-neutral file upload and remote file references. `FileUploader` interface + `RemoteFileRef` for OpenAI (Files API), Anthropic (Files API), and Google Gemini (Files API). Compat providers map file parts to native OpenAI shapes. [Changelog →](https://github.com/zendev-sh/goai/releases)
 >
 > **v0.8.5** - New provider: [Requesty](https://goai.sh/providers/requesty) (OpenAI-compatible LLM gateway). Plus Anthropic native structured output, per-step `Reasoning`, and Gemini schema sanitization fixes. [Changelog →](https://github.com/zendev-sh/goai/releases)
 >
