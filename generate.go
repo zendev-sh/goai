@@ -951,7 +951,9 @@ func streamWithToolLoop(ctx context.Context, model provider.LanguageModel, o opt
 				// a minimal assistant message from accumulated text. Intermediate tool round-trip
 				// messages are lost. Callers should check Err() and not rely on ResponseMessages
 				// when the stream has errors.
-				provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: ds.err})
+				if !ds.errForwarded {
+					provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkError, Error: ds.err})
+				}
 				provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkFinish, Usage: totalUsage, StoppedBy: provider.StopCauseAbort})
 				// Fire OnFinish so observability hooks can close spans/flush traces.
 				// Without this, OTel root spans leak and Langfuse traces are lost.
@@ -2171,7 +2173,8 @@ type drainResult struct {
 	sources          []provider.Source
 	response         provider.ResponseMetadata
 	providerMetadata map[string]map[string]any
-	err              error // non-nil if context cancelled during drain
+	err              error // non-nil if context cancelled during drain or a ChunkError chunk was received
+	errForwarded     bool  // true when err came from a ChunkError that was already forwarded to out
 }
 
 func drainStep(
@@ -2277,11 +2280,15 @@ func drainStep(
 		case provider.ChunkError:
 			// Forward error chunks to consumer. Mid-stream errors flow through
 			// ChunkError chunks to the consumer; OnResponse does not report them.
+			// Record the error so the tool loop treats this step as failed
+			// (abort) instead of emitting a phantom step.
 			if !provider.TrySend(ctx, out, chunk) {
 				drainRemaining(source)
 				dr.err = ctx.Err()
 				return dr
 			}
+			dr.err = chunk.Error
+			dr.errForwarded = true
 		}
 	}
 

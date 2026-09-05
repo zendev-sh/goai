@@ -119,14 +119,29 @@ func (d *eventStreamDecoder) Next() (*eventStreamFrame, error) {
 		case 0, 1: // bool true/false: no value bytes
 			// skip
 		case 2: // byte
+			if off+1 > len(headers) {
+				return nil, fmt.Errorf("eventstream: byte header value overflows header block")
+			}
 			off += 1
 		case 3: // short
+			if off+2 > len(headers) {
+				return nil, fmt.Errorf("eventstream: short header value overflows header block")
+			}
 			off += 2
 		case 4: // int
+			if off+4 > len(headers) {
+				return nil, fmt.Errorf("eventstream: int header value overflows header block")
+			}
 			off += 4
 		case 5, 8: // long, timestamp
+			if off+8 > len(headers) {
+				return nil, fmt.Errorf("eventstream: long header value overflows header block")
+			}
 			off += 8
 		case 9: // uuid
+			if off+16 > len(headers) {
+				return nil, fmt.Errorf("eventstream: uuid header value overflows header block")
+			}
 			off += 16
 		case 6: // bytes: 2B length prefix + data
 			if off+2 > len(headers) {

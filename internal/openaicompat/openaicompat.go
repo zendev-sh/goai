@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/zendev-sh/goai"
@@ -525,6 +526,11 @@ func ParseStream(ctx context.Context, scanner *sse.Scanner, out chan<- provider.
 			usage.InputTokens = resp.Usage.PromptTokens
 			usage.OutputTokens = resp.Usage.CompletionTokens
 			usage.TotalTokens = resp.Usage.TotalTokens
+			// Item 1: when a provider omits total_tokens, fall back to the
+			// input+output sum instead of leaving TotalTokens at 0.
+			if usage.TotalTokens <= 0 && usage.InputTokens+usage.OutputTokens > 0 {
+				usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+			}
 			usage.CacheReadTokens = cacheReadTokens(resp.Usage.PromptTokensDetails, resp.Usage.PromptCacheHitTokens, resp.Usage.CachedTokens)
 			usage.InputTokens -= usage.CacheReadTokens
 			if usage.InputTokens < 0 {
@@ -685,18 +691,29 @@ func ParseStream(ctx context.Context, scanner *sse.Scanner, out chan<- provider.
 		// Finish reason -- flush remaining accumulated args.
 		if choice.FinishReason != "" {
 			if choice.FinishReason == "tool_calls" {
-				for _, active := range activeTools {
-					if remaining := active.args.String(); remaining != "" && active.started {
-						if !provider.TrySend(ctx, out, provider.StreamChunk{
-							Type:       provider.ChunkToolCall,
-							ToolCallID: active.id,
-							ToolName:   active.name,
-							ToolInput:  remaining,
-						}) {
-							return
-						}
-						active.args.Reset()
+				// Iterate in ascending index order so ChunkToolCall events for
+				// parallel tool calls are deterministic and in index order.
+				indices := make([]int, 0, len(activeTools))
+				for idx := range activeTools {
+					indices = append(indices, idx)
+				}
+				sort.Ints(indices)
+				for _, idx := range indices {
+					active := activeTools[idx]
+					if !active.started {
+						continue
 					}
+					if !provider.TrySend(ctx, out, provider.StreamChunk{
+						Type:       provider.ChunkToolCall,
+						ToolCallID: active.id,
+						ToolName:   active.name,
+						ToolInput:  active.args.String(),
+					}) {
+						return
+					}
+					// Finalized at the finish reason; the EOF finalize pass
+					// must not re-emit it.
+					delete(activeTools, idx)
 				}
 			}
 			if !provider.TrySend(ctx, out, provider.StreamChunk{
@@ -718,28 +735,45 @@ func ParseStream(ctx context.Context, scanner *sse.Scanner, out chan<- provider.
 
 	// Finalize any tool call that never saw a finish_reason (item 4): the
 	// accumulated arguments are emitted once as a complete ChunkToolCall.
-	for _, active := range activeTools {
-		if remaining := active.args.String(); remaining != "" {
-			// A tool call with buffered arguments whose name/id never resolved
-			// is malformed: surface an error instead of silently dropping it
-			// (matches Vercel AI SDK, which throws in this case).
-			if !active.started {
-				provider.TrySend(ctx, out, provider.StreamChunk{
-					Type:  provider.ChunkError,
-					Error: fmt.Errorf("tool call arguments received but tool name/id never resolved"),
-				})
-				return
-			}
-			if !provider.TrySend(ctx, out, provider.StreamChunk{
-				Type:       provider.ChunkToolCall,
-				ToolCallID: active.id,
-				ToolName:   active.name,
-				ToolInput:  remaining,
-			}) {
-				return
-			}
-			active.args.Reset()
+	// All started (name/id resolved) calls are flushed first, in ascending
+	// index order, before a single ChunkError is surfaced for any tool whose
+	// name/id never resolved -- emitting the error must not drop the fully
+	// resolved sibling calls. A started call with no remaining arguments is a
+	// valid zero-argument tool call, not an error.
+	indices := make([]int, 0, len(activeTools))
+	for idx := range activeTools {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+	unresolved := false
+	for _, idx := range indices {
+		active := activeTools[idx]
+		if !active.started {
+			// A tool call that received at least one delta fragment but whose
+			// name/id never resolved is malformed: surface a single error
+			// instead of silently dropping it (matches Vercel AI SDK, which
+			// throws in this case).
+			unresolved = true
+			continue
 		}
+		if !provider.TrySend(ctx, out, provider.StreamChunk{
+			Type:       provider.ChunkToolCall,
+			ToolCallID: active.id,
+			ToolName:   active.name,
+			ToolInput:  active.args.String(),
+		}) {
+			return
+		}
+		active.args.Reset()
+	}
+	if unresolved {
+		if !provider.TrySend(ctx, out, provider.StreamChunk{
+			Type:  provider.ChunkError,
+			Error: fmt.Errorf("tool call arguments received but tool name/id never resolved"),
+		}) {
+			return
+		}
+		return
 	}
 
 	chunk := provider.StreamChunk{
@@ -889,6 +923,11 @@ func ParseResponse(body []byte) (*provider.GenerateResult, error) {
 		result.Usage.InputTokens = resp.Usage.PromptTokens
 		result.Usage.OutputTokens = resp.Usage.CompletionTokens
 		result.Usage.TotalTokens = resp.Usage.TotalTokens
+		// Item 1: when a provider omits total_tokens, fall back to the
+		// input+output sum instead of leaving TotalTokens at 0.
+		if result.Usage.TotalTokens <= 0 && result.Usage.InputTokens+result.Usage.OutputTokens > 0 {
+			result.Usage.TotalTokens = result.Usage.InputTokens + result.Usage.OutputTokens
+		}
 		result.Usage.CacheReadTokens = cacheReadTokens(resp.Usage.PromptTokensDetails, resp.Usage.PromptCacheHitTokens, resp.Usage.CachedTokens)
 		result.Usage.InputTokens -= result.Usage.CacheReadTokens
 		if result.Usage.InputTokens < 0 {

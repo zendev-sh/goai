@@ -201,7 +201,7 @@ func ClassifyStreamError(body []byte) error {
 	if parsed.Type == StreamErrorContextOverflow {
 		return &ContextOverflowError{Message: parsed.Message, ResponseBody: parsed.ResponseBody}
 	}
-	return &APIError{Message: parsed.Message, IsRetryable: parsed.IsRetryable}
+	return &APIError{Message: parsed.Message, IsRetryable: parsed.IsRetryable, ResponseBody: parsed.ResponseBody}
 }
 
 // ParseHTTPError classifies an HTTP error response.

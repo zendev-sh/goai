@@ -266,11 +266,15 @@ type StreamChunk struct {
 	// Usage (for ChunkFinish, may also appear on ChunkStepFinish).
 	Usage Usage
 
-	// Error carries the provider/goai error when Type == ChunkError.
+	// Error carries the provider error when Type == ChunkError.
 	//   - Nil for all non-ChunkError chunk types.
-	//   - May wrap APIError, NetworkError, or plain errors produced by the
-	//     provider or goai's tool loop (e.g. tool execution failures that are
-	//     surfaced as chunks rather than returned via Err()).
+	//   - May be a goai.APIError (classified API failure), a net.Error
+	//     (transport-level failure such as a read error), or a plain error from
+	//     the provider or stream parsing (e.g. an unresolved streaming tool
+	//     call whose arguments arrived but whose name/id never resolved, a
+	//     protocol or decode failure). Tool execution failures are NOT surfaced
+	//     here: they are converted to tool-result messages fed back to the
+	//     model and never materialize as ChunkError chunks.
 	//   - Providers set this field directly; consumers should use
 	//     errors.Is / errors.As to branch on specific error categories rather
 	//     than comparing error values.

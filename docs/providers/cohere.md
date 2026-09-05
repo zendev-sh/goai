@@ -55,7 +55,7 @@ result, err := goai.GenerateText(ctx, model,
     goai.WithProviderOptions(map[string]any{
         "thinking": map[string]any{
             "type":        "enabled",
-            "tokenBudget": 4096,
+            "budgetTokens": 4096,
         },
     }),
 )

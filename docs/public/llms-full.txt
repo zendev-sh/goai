@@ -225,7 +225,7 @@ All options use the functional options pattern: `goai.With*(...)`.
 - `WithAspectRatio(ratio string)` — aspect ratio (e.g., "16:9")
 - `WithImageProviderOptions(opts map[string]any)` — provider-specific image params
 - `WithImageMaxRetries(n int)` - max retries for image generation (default: 2)
-- `WithImageTimeout(d time.Duration)` - per-attempt timeout for image generation
+- `WithImageTimeout(d time.Duration)`: timeout for the image generation call (overall deadline, not per attempt)
 
 ---
 

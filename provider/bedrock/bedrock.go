@@ -586,6 +586,19 @@ func (m *chatModel) tryBareUSFallback(err error) bool {
 	return true
 }
 
+// isCrossRegionModelError detects Bedrock errors that indicate a cross-region
+// inference profile may be required: the model identifier is unknown, or the
+// model only supports provisioned throughput (not on-demand) outside its geo.
+func isCrossRegionModelError(err error) bool {
+	var apiErr *goai.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return strings.Contains(apiErr.Message, "model identifier is invalid") ||
+		strings.Contains(apiErr.Message, "on-demand throughput isn\u2019t supported") ||
+		strings.Contains(apiErr.Message, "on-demand throughput isn't supported")
+}
+
 // tryCrossRegionFallback attempts a cross-region inference profile when a bare
 // model ID fails with "invalid model identifier" or "on-demand throughput isn't
 // supported". Many models are only available in US regions; prepending "us."
@@ -598,26 +611,21 @@ func (m *chatModel) tryCrossRegionFallback(err error) bool {
 
 	// If fallback was already applied by a parallel request, return true
 	// so the caller retries with the updated model ID. The caller's HTTP
-	// request used the pre-fallback ID, so it needs a retry.
+	// request used the pre-fallback ID, so it needs a retry. Only retry when
+	// the error is actually a cross-region model error; unrelated failures
+	// (throttling, validation, etc.) must not trigger a redundant retry.
 	m.mu.RLock()
 	alreadyDone := m.fallbackDone
 	m.mu.RUnlock()
 	if alreadyDone {
-		return true
+		return isCrossRegionModelError(err)
 	}
 
 	currentID := m.ModelID()
 	if inferRegionFromModel(currentID) != "" {
 		return false // already has geo prefix at construction time
 	}
-	var apiErr *goai.APIError
-	if !errors.As(err, &apiErr) {
-		return false
-	}
-	isInvalidModel := strings.Contains(apiErr.Message, "model identifier is invalid") ||
-		strings.Contains(apiErr.Message, "on-demand throughput isn\u2019t supported") ||
-		strings.Contains(apiErr.Message, "on-demand throughput isn't supported")
-	if !isInvalidModel {
+	if !isCrossRegionModelError(err) {
 		return false
 	}
 	// Only attempt mutation once. sync.Once.Do blocks concurrent callers
@@ -868,9 +876,13 @@ func signAWSSigV4(req *http.Request, body []byte, accessKey, secretKey, sessionT
 		canonicalHeaders.WriteString(h + ":" + strings.TrimSpace(val) + "\n")
 	}
 
+	// Sign the exact path bytes transmitted on the wire. Go's HTTP transport
+	// sends url.URL.EscapedPath(), so re-encoding req.URL.Path (which is the
+	// DECODED path) would produce a canonical URI that differs from the wire
+	// for model IDs containing reserved chars (e.g. "model:v1:0" → ":0").
 	canonicalRequest := strings.Join([]string{
 		"POST",
-		uriEncodePath(req.URL.Path),
+		req.URL.EscapedPath(),
 		req.URL.RawQuery,
 		canonicalHeaders.String(),
 		strings.Join(signedHeaders, ";"),
@@ -891,22 +903,6 @@ func signAWSSigV4(req *http.Request, body []byte, accessKey, secretKey, sessionT
 	auth := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
 		accessKey, credentialScope, strings.Join(signedHeaders, ";"), signature)
 	req.Header.Set("Authorization", auth)
-}
-
-// uriEncodePath URI-encodes each path segment per AWS SigV4 rules (RFC 3986).
-// Only unreserved characters (A-Z, a-z, 0-9, -, _, ., ~) remain unencoded.
-// Slashes between segments are preserved.
-func uriEncodePath(path string) string {
-	var buf strings.Builder
-	for i := range len(path) {
-		c := path[i]
-		if c == '/' || isUnreserved(c) {
-			buf.WriteByte(c)
-		} else {
-			fmt.Fprintf(&buf, "%%%02X", c)
-		}
-	}
-	return buf.String()
 }
 
 // geoRegions maps cross-region inference profile prefixes to default regions.
@@ -977,11 +973,6 @@ var validRegionRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
 func validRegion(region string) bool {
 	return validRegionRE.MatchString(region)
-}
-
-func isUnreserved(c byte) bool {
-	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-		(c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~'
 }
 
 func sha256Hex(data []byte) string {

@@ -16,8 +16,8 @@ Dedicated implementations with extended API support.
 | Provider                  | Chat                       | Embed                                | Image            | Provider Tools | Auth Env Var                                                                          |
 | ------------------------- | -------------------------- | ------------------------------------ | ---------------- | -------------- | ------------------------------------------------------------------------------------- |
 | [OpenAI](openai.md)       | ✅ `gpt-4o`, `o3`          | ✅ `text-embedding-3-*`              | ✅ `gpt-image-1` | 4 tools        | `OPENAI_API_KEY`                                                                      |
-| [Anthropic](anthropic.md) | ✅ `claude-*`              | —                                    | —                | 12 tools       | `ANTHROPIC_API_KEY`                                                                   |
-| [Google](google.md)       | ✅ `gemini-*`              | ✅ `text-embedding-004`              | ✅ `imagen-*`    | 4 tools        | `GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY`                                    |
+| [Anthropic](anthropic.md) | ✅ Anthropic models       | -                                    | -                | 14 tools       | `ANTHROPIC_API_KEY`                                                                   |
+| [Google](google.md)       | ✅ `gemini-*`              | ✅ `text-embedding-004`              | ✅ `imagen-*`    | 5 tools        | `GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY`                                    |
 | [Bedrock](bedrock.md)     | ✅ `anthropic.*`, `meta.*` | ✅ `titan-embed-*`, `cohere.embed-*` | —                | —              | `AWS_ACCESS_KEY_ID`                                                                   |
 | [Azure](azure.md)         | ✅ `gpt-4o`, `claude-*`    | —                                    | ✅               | —              | `AZURE_OPENAI_API_KEY`                                                                |
 | [Vertex AI](vertex.md)    | ✅ `gemini-*`, `claude-*`  | ✅                                   | ✅               | —              | ADC/OAuth; API-key fallback applies only outside native Gemini mode                    |
@@ -40,7 +40,7 @@ Most use the shared `internal/openaicompat` codec (some wrappers delegate via `p
 | Provider                    | Endpoint            | Auth Env Var                                  |
 | --------------------------- | ------------------- | --------------------------------------------- |
 | [Fireworks](fireworks.md)   | `api.fireworks.ai`  | `FIREWORKS_API_KEY`                           |
-| [Together](together.md)     | `api.together.xyz`  | `TOGETHER_AI_API_KEY` (or `TOGETHER_API_KEY`) |
+| [Together](together.md)     | `api.together.ai`   | `TOGETHER_AI_API_KEY` (or `TOGETHER_API_KEY`) |
 | [DeepInfra](deepinfra.md)   | `api.deepinfra.com` | `DEEPINFRA_API_KEY`                           |
 | [OpenRouter](openrouter.md) | `openrouter.ai`     | `OPENROUTER_API_KEY`                          |
 | [Requesty](requesty.md)     | `router.requesty.ai` | `REQUESTY_API_KEY`                           |

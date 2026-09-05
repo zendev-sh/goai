@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 )
 
@@ -83,9 +85,9 @@ func TestParseDataURL(t *testing.T) {
 	}{
 		{
 			name:      "valid data URL",
-			url:       "data:image/png;base64,abc123",
+			url:       "data:image/png;base64,aGVsbG8=",
 			wantMedia: "image/png",
-			wantData:  "abc123",
+			wantData:  "aGVsbG8=",
 			wantOK:    true,
 		},
 		{
@@ -101,6 +103,31 @@ func TestParseDataURL(t *testing.T) {
 		{
 			name:   "empty string",
 			url:    "",
+			wantOK: false,
+		},
+		{
+			name:   "empty data",
+			url:    "data:image/png;base64,",
+			wantOK: false,
+		},
+		{
+			name:   "empty media type",
+			url:    "data:;base64,abc",
+			wantOK: false,
+		},
+		{
+			name:   "invalid base64",
+			url:    "data:image/png;base64,@@@invalid@@@",
+			wantOK: false,
+		},
+		{
+			name:   "data URL without comma",
+			url:    "data:image/png;base64",
+			wantOK: false,
+		},
+		{
+			name:   "media type is file extension",
+			url:    "https://example.com/f.png",
 			wantOK: false,
 		},
 	}
@@ -292,6 +319,35 @@ func TestDoJSONRequest_NoToken(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	resp.Body.Close()
+}
+
+func TestDoJSONRequest_DoesNotMutateBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	body := map[string]any{
+		"model":    "gpt-4o",
+		"_headers": map[string]string{"X-From-Body": "yes"},
+	}
+	orig := maps.Clone(body)
+
+	resp, err := DoJSONRequest(t.Context(), RequestConfig{
+		URL:        srv.URL,
+		Token:      "tok",
+		Body:       body,
+		ProviderID: "test",
+	}, stubErrorParser)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	resp.Body.Close()
+
+	if !reflect.DeepEqual(body, orig) {
+		t.Errorf("caller's body map was mutated: got %v, want %v", body, orig)
+	}
 }
 
 func TestDoJSONRequest_CustomHTTPClient(t *testing.T) {

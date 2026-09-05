@@ -4,9 +4,11 @@ package httpc
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 )
@@ -33,9 +35,11 @@ type ErrorParser func(providerID string, statusCode int, body []byte, headers ht
 func DoJSONRequest(ctx context.Context, cfg RequestConfig, parseError ErrorParser) (*http.Response, error) {
 	// Extract per-request headers before marshaling (they must not appear in the JSON body).
 	reqHeaders, _ := cfg.Body["_headers"].(map[string]string)
-	delete(cfg.Body, "_headers")
+	// Clone before deleting so the caller's map is not mutated.
+	body := maps.Clone(cfg.Body)
+	delete(body, "_headers")
 
-	jsonBody := MustMarshalJSON(cfg.Body)
+	jsonBody := MustMarshalJSON(body)
 	req := MustNewRequest(ctx, "POST", cfg.URL, jsonBody)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -100,7 +104,8 @@ func MustNewRequest(ctx context.Context, method, url string, body []byte) *http.
 }
 
 // ParseDataURL extracts media type and base64 data from a data URL.
-// Format: data:<mediaType>;base64,<data>
+// Format: data:<mediaType>;base64,<data>. Returns ok=false unless both the
+// media type and data are non-empty and the data is valid standard base64.
 func ParseDataURL(url string) (mediaType, data string, ok bool) {
 	if !strings.HasPrefix(url, "data:") {
 		return "", "", false
@@ -110,5 +115,15 @@ func ParseDataURL(url string) (mediaType, data string, ok bool) {
 	if semicolon < 0 {
 		return "", "", false
 	}
-	return rest[:semicolon], rest[semicolon+8:], true
+	mediaType = rest[:semicolon]
+	data = rest[semicolon+8:]
+	if mediaType == "" || data == "" {
+		return "", "", false
+	}
+	// Callers forward the raw string to the API, so decoding here is a
+	// validation only; it rejects malformed base64 payloads.
+	if _, err := base64.StdEncoding.DecodeString(data); err != nil {
+		return "", "", false
+	}
+	return mediaType, data, true
 }

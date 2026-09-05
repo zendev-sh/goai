@@ -28,6 +28,11 @@ testdata/
 .zenflow/diff.patch
 .zenflow/events.ndjson
 .zenflow/review.md
+.zenflow/settings.json
+.zenflow/settings.github.json
+review.yaml
+review-github.yaml
+run-github-review.sh
 
 .vibeflow
 *.out

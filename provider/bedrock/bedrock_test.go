@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -325,6 +326,124 @@ func TestSHA256Hex(t *testing.T) {
 	if got != want {
 		t.Errorf("sha256Hex = %q, want %q", got, want)
 	}
+}
+
+// sigV4CapturingTransport captures the outgoing request so the test can
+// recompute the SigV4 signature from it.
+type sigV4CapturingTransport struct {
+	req *http.Request
+}
+
+func (t *sigV4CapturingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.req = req
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(converseResponse("ok", "end_turn", 1, 1))),
+		Header:     make(http.Header),
+	}, nil
+}
+
+// TestSigV4_SignsWirePath verifies the SigV4 canonical URI is byte-identical to
+// the path Go transmits on the wire (req.URL.EscapedPath()), not a re-encoded
+// form. Model IDs like "anthropic.claude-sonnet-4-20250514-v1:0" keep the raw
+// ':' on the wire; signing a re-encoded path produced a wrong signature.
+func TestSigV4_SignsWirePath(t *testing.T) {
+	const (
+		modelID   = "anthropic.claude-sonnet-4-20250514-v1:0"
+		secretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+	)
+	transport := &sigV4CapturingTransport{}
+	model := Chat(modelID,
+		WithAccessKey("AKIAIOSFODNN7EXAMPLE"),
+		WithSecretKey(secretKey),
+		WithRegion("us-west-2"),
+		WithHTTPClient(&http.Client{Transport: transport}),
+	)
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transport.req == nil {
+		t.Fatal("request was not captured")
+	}
+	// Go transmits url.URL.EscapedPath(); ':' stays raw on the wire.
+	if got := transport.req.URL.EscapedPath(); !strings.Contains(got, "20250514-v1:0") {
+		t.Fatalf("wire path = %q, want raw colon", got)
+	}
+
+	auth := transport.req.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "AWS4-HMAC-SHA256 ") {
+		t.Fatalf("Authorization = %q", auth)
+	}
+	// Recompute the signature from the request using req.URL.EscapedPath() and
+	// require it to match the shipped Authorization header: canonical == wire.
+	if got, want := recomputeSigV4Signature(t, transport.req, secretKey), parseSigV4Signature(t, auth); got != want {
+		t.Errorf("signature mismatch: recomputed-from-EscapedPath = %s, shipped = %s (canonical URI must match wire path)", got, want)
+	}
+}
+
+// parseSigV4Signature extracts the Signature=<hex> field from an Authorization
+// header produced by signAWSSigV4.
+func parseSigV4Signature(t *testing.T, auth string) string {
+	t.Helper()
+	const prefix = "Signature="
+	i := strings.Index(auth, prefix)
+	if i < 0 {
+		t.Fatalf("no %q in %q", prefix, auth)
+	}
+	return auth[i+len(prefix):]
+}
+
+// recomputeSigV4Signature independently recomputes the SigV4 signature for a
+// signed request using the same algorithm as signAWSSigV4, with the canonical
+// URI taken from req.URL.EscapedPath() (the wire path).
+func recomputeSigV4Signature(t *testing.T, req *http.Request, secretKey string) string {
+	t.Helper()
+	auth := req.Header.Get("Authorization")
+
+	// Credential=<accessKey>/<scope>, SignedHeaders=<...>, Signature=<...>
+	cred := auth[strings.Index(auth, "Credential=")+len("Credential="):]
+	cred = cred[:strings.Index(cred, ",")]
+	scope := cred[strings.Index(cred, "/")+1:]
+
+	sh := auth[strings.Index(auth, "SignedHeaders=")+len("SignedHeaders="):]
+	signedHeaders := strings.Split(sh[:strings.Index(sh, ",")], ";")
+
+	amzDate := req.Header.Get("x-amz-date")
+	payloadHash := req.Header.Get("x-amz-content-sha256")
+
+	var canonicalHeaders strings.Builder
+	for _, h := range signedHeaders {
+		val := req.Header.Get(h)
+		if h == "host" {
+			val = req.URL.Host
+		}
+		canonicalHeaders.WriteString(h + ":" + strings.TrimSpace(val) + "\n")
+	}
+	canonicalRequest := strings.Join([]string{
+		"POST",
+		req.URL.EscapedPath(),
+		req.URL.RawQuery,
+		canonicalHeaders.String(),
+		strings.Join(signedHeaders, ";"),
+		payloadHash,
+	}, "\n")
+
+	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + sha256Hex([]byte(canonicalRequest))
+
+	parts := strings.Split(scope, "/")
+	if len(parts) != 4 {
+		t.Fatalf("invalid credential scope %q", scope)
+	}
+	key := hmacSHA256([]byte("AWS4"+secretKey), []byte(parts[0]))
+	key = hmacSHA256(key, []byte(parts[1]))
+	key = hmacSHA256(key, []byte(parts[2]))
+	key = hmacSHA256(key, []byte(parts[3]))
+	return hex.EncodeToString(hmacSHA256(key, []byte(stringToSign)))
 }
 
 func TestToolCallStreaming(t *testing.T) {
@@ -1464,7 +1583,7 @@ func TestMapStopReason_AllCases(t *testing.T) {
 
 func TestConvertParts_ImageDataURL(t *testing.T) {
 	parts := []provider.Part{
-		{Type: provider.PartImage, URL: "data:image/jpeg;base64,/9j/abc123"},
+		{Type: provider.PartImage, URL: "data:image/jpeg;base64,/9j/4AAQSkZJRg=="},
 	}
 	blocks := convertParts(parts, make(map[string]int))
 	if len(blocks) != 1 {
@@ -1478,14 +1597,14 @@ func TestConvertParts_ImageDataURL(t *testing.T) {
 		t.Errorf("format = %v, want jpeg", img["format"])
 	}
 	src, _ := img["source"].(map[string]any)
-	if src["bytes"] != "/9j/abc123" {
-		t.Errorf("bytes = %v, want /9j/abc123 (prefix should be stripped)", src["bytes"])
+	if src["bytes"] != "/9j/4AAQSkZJRg==" {
+		t.Errorf("bytes = %v, want /9j/4AAQSkZJRg== (prefix should be stripped)", src["bytes"])
 	}
 }
 
 func TestConvertParts_ImageWithMediaType(t *testing.T) {
 	parts := []provider.Part{
-		{Type: provider.PartImage, URL: "data:image/png;base64,iVBOR", MediaType: "image/webp"},
+		{Type: provider.PartImage, URL: "data:image/png;base64,iVBORw0KGgo=", MediaType: "image/webp"},
 	}
 	blocks := convertParts(parts, make(map[string]int))
 	img, _ := blocks[0]["image"].(map[string]any)
@@ -1494,8 +1613,8 @@ func TestConvertParts_ImageWithMediaType(t *testing.T) {
 		t.Errorf("format = %v, want webp (from MediaType)", img["format"])
 	}
 	src, _ := img["source"].(map[string]any)
-	if src["bytes"] != "iVBOR" {
-		t.Errorf("bytes = %v, want iVBOR", src["bytes"])
+	if src["bytes"] != "iVBORw0KGgo=" {
+		t.Errorf("bytes = %v, want iVBORw0KGgo=", src["bytes"])
 	}
 }
 
@@ -2136,6 +2255,37 @@ func TestTryCrossRegionFallback_ParallelRequests(t *testing.T) {
 	// Call with nil error - should return false.
 	if m.tryCrossRegionFallback(nil) {
 		t.Error("nil error should return false even after fallback")
+	}
+}
+
+func TestTryCrossRegionFallback_AlreadyDone_NonModelError(t *testing.T) {
+	// Regression: once fallbackDone is set (e.g. by a parallel request), an
+	// unrelated error (throttling, validation) must NOT trigger a redundant
+	// retry round-trip with the us.-prefixed ID.
+	m := &chatModel{id: "us.m", originalID: "m", fallbackDone: true, opts: options{region: "us-east-1"}}
+	if m.tryCrossRegionFallback(&goai.APIError{Message: "rate limit exceeded"}) {
+		t.Error("unrelated APIError after fallback should return false")
+	}
+	if m.tryCrossRegionFallback(&goai.APIError{Message: "some validation failure"}) {
+		t.Error("validation APIError after fallback should return false")
+	}
+	if m.tryCrossRegionFallback(fmt.Errorf("non api error")) {
+		t.Error("non-APIError after fallback should return false")
+	}
+	if m.id != "us.m" {
+		t.Errorf("id = %q, want us.m (fallback must not remutate)", m.id)
+	}
+}
+
+func TestTryCrossRegionFallback_AlreadyDone_ModelError(t *testing.T) {
+	// During the parallel-race window the error IS a cross-region model error,
+	// so the alreadyDone case must still return true so the caller retries.
+	m := &chatModel{id: "us.m", originalID: "m", fallbackDone: true, opts: options{region: "us-east-1"}}
+	if !m.tryCrossRegionFallback(&goai.APIError{Message: "model identifier is invalid"}) {
+		t.Error("model error after fallback should return true (parallel race retry)")
+	}
+	if !m.tryCrossRegionFallback(&goai.APIError{Message: "on-demand throughput isn't supported"}) {
+		t.Error("on-demand throughput error after fallback should return true")
 	}
 }
 
@@ -3262,6 +3412,34 @@ func TestEventStreamDecoder_BytesHeaderOverflow(t *testing.T) {
 	_, err := decoder.Next()
 	if err == nil || !strings.Contains(err.Error(), "bytes header length overflow") {
 		t.Errorf("expected bytes header length overflow error, got %v", err)
+	}
+}
+
+func TestEventStreamDecoder_FixedSizeHeaderOverflow(t *testing.T) {
+	// Fix: fixed-size header values (byte/short/int/long/timestamp/uuid) must
+	// bounds-check before advancing off; previously a truncated value drifted
+	// silently instead of erroring.
+	tests := []struct {
+		name   string
+		header []byte
+		want   string
+	}{
+		{"byte", []byte{1, 'a', 2}, "byte header value overflows"},
+		{"short", []byte{1, 'a', 3, 0}, "short header value overflows"},
+		{"int", []byte{1, 'a', 4, 0, 0, 0}, "int header value overflows"},
+		{"long", []byte{1, 'a', 5, 0, 0, 0, 0, 0, 0, 0}, "long header value overflows"},
+		{"timestamp", []byte{1, 'a', 8, 0, 0, 0, 0, 0, 0}, "long header value overflows"},
+		{"uuid", []byte{1, 'a', 9, 0, 0, 0, 0, 0, 0, 0}, "uuid header value overflows"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			frame := buildFrameWithRawHeaders(tt.header)
+			decoder := newEventStreamDecoder(bytes.NewReader(frame))
+			_, err := decoder.Next()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("expected error containing %q, got %v", tt.want, err)
+			}
+		})
 	}
 }
 

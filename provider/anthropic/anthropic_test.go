@@ -1422,8 +1422,8 @@ func TestParseDataURL(t *testing.T) {
 		data      string
 		ok        bool
 	}{
-		{"data:image/png;base64,abc123", "image/png", "abc123", true},
-		{"data:application/pdf;base64,xyz", "application/pdf", "xyz", true},
+		{"data:image/png;base64,iVBORw0KGgo=", "image/png", "iVBORw0KGgo=", true},
+		{"data:application/pdf;base64,JVBERi0=", "application/pdf", "JVBERi0=", true},
 		{"https://example.com/img.png", "", "", false},
 		{"data:image/png;abc123", "", "", false},
 	}

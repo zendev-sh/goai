@@ -32,7 +32,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai), GoAI is designed idiomat
 - **Embed / EmbedMany** — text embeddings with auto-chunking
 - **GenerateImage** — image generation (OpenAI, Google, Azure, Vertex AI)
 - **Tool Calling** — custom tools with auto tool loops (`MaxSteps`)
-- **23 Provider-Defined Tools** — web search, code execution, computer use, file search
+- **26 Provider-Defined Tools**: web search, code execution, computer use, file search
 - **[MCP Client](/concepts/mcp)** — connect to any MCP server (stdio, HTTP, SSE), auto-convert tools for GoAI
 - **Prompt Caching** — automatic cache control for Anthropic, Bedrock, and MiniMax
 - **[Observability](/concepts/observability)** — built-in Langfuse and OpenTelemetry integrations for tracing generations, tools, and multi-step loops
