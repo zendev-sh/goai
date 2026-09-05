@@ -372,7 +372,7 @@ func WithOnRequest(fn func(RequestInfo)) Option
 
 **Default:** `nil`.
 
-> **Panic behavior:** In `GenerateText`, `GenerateObject`, and `StreamText`'s first step, panics propagate to the caller. In `StreamText` step 2+ (goroutine), each callback is individually panic-recovered.
+> **Panic behavior:** In `GenerateText`, `GenerateObject`, and `StreamText`'s first step, panics propagate to the caller. In `StreamText` step 2+ (goroutine), a panic is surfaced through `stream.Err()` as `*PanicError` and processing stops; subsequent callbacks on that path do not run.
 
 ### WithOnResponse
 

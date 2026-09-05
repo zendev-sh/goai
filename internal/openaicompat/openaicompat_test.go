@@ -1,7 +1,9 @@
 package openaicompat
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -320,6 +322,9 @@ func TestConvertMessages_UserWithFile_InlineURL(t *testing.T) {
 }
 
 func TestConvertMessages_UserWithFile_RemoteRef(t *testing.T) {
+	// RemoteRef.Data is raw file bytes; the emitted data URL must carry their
+	// base64 encoding, not the raw bytes verbatim.
+	raw := []byte{0x00, 0x01, 0x02, 0xFF, 'J', 'V', 'B'}
 	msgs := []provider.Message{
 		{
 			Role: provider.RoleUser,
@@ -327,7 +332,7 @@ func TestConvertMessages_UserWithFile_RemoteRef(t *testing.T) {
 				{Type: provider.PartText, Text: "read this"},
 				{
 					Type:      provider.PartFile,
-					RemoteRef: &provider.RemoteFileRef{ID: "file-abc", Data: []byte("JVBERi0="), MediaType: "application/pdf"},
+					RemoteRef: &provider.RemoteFileRef{ID: "file-abc", Data: raw, MediaType: "application/pdf"},
 					Filename:  "doc.pdf",
 					MediaType: "application/pdf",
 				},
@@ -356,8 +361,22 @@ func TestConvertMessages_UserWithFile_RemoteRef(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected file object, got %T", content[1]["file"])
 	}
-	if file["file_data"] != "data:application/pdf;base64,JVBERi0=" {
-		t.Errorf("file_data = %v", file["file_data"])
+	if file["filename"] != "doc.pdf" {
+		t.Errorf("filename = %v", file["filename"])
+	}
+	want := "data:application/pdf;base64," + base64.StdEncoding.EncodeToString(raw)
+	if file["file_data"] != want {
+		t.Errorf("file_data = %v, want %v", file["file_data"], want)
+	}
+	// Decode the payload back and confirm it round-trips to the raw bytes.
+	fd := file["file_data"].(string)
+	enc := strings.TrimPrefix(fd, "data:application/pdf;base64,")
+	decoded, err := base64.StdEncoding.DecodeString(enc)
+	if err != nil {
+		t.Fatalf("file_data payload is not valid base64: %v", err)
+	}
+	if !bytes.Equal(decoded, raw) {
+		t.Errorf("decoded payload = %v, want raw bytes %v", decoded, raw)
 	}
 }
 
@@ -498,7 +517,7 @@ func TestConvertMessages_UserWithFileAndImage(t *testing.T) {
 			Content: []provider.Part{
 				{Type: provider.PartText, Text: "describe"},
 				{Type: provider.PartImage, URL: "data:image/png;base64,img123"},
-				{Type: provider.PartFile, URL: "data:application/pdf;base64,pdf456"},
+				{Type: provider.PartFile, URL: "data:application/pdf;base64,cGRmNDU2"},
 			},
 		},
 	}
@@ -531,7 +550,7 @@ func TestConvertMessages_UserWithFileAndImage(t *testing.T) {
 	if file["filename"] != "document.pdf" {
 		t.Errorf("filename = %v", file["filename"])
 	}
-	if file["file_data"] != "data:application/pdf;base64,pdf456" {
+	if file["file_data"] != "data:application/pdf;base64,cGRmNDU2" {
 		t.Errorf("file_data = %v", file["file_data"])
 	}
 }
@@ -541,7 +560,7 @@ func TestConvertMessages_UserWithFileOnly(t *testing.T) {
 		{
 			Role: provider.RoleUser,
 			Content: []provider.Part{
-				{Type: provider.PartFile, URL: "data:application/pdf;base64,abc"},
+				{Type: provider.PartFile, URL: "data:application/pdf;base64,YWJj"},
 			},
 		},
 	}
@@ -1114,7 +1133,9 @@ func TestParseStream_ScannerError(t *testing.T) {
 }
 
 func TestParseStream_ToolCallArgsWithoutID(t *testing.T) {
-	// Tool call arguments arrive without a preceding ID chunk (edge case)
+	// Tool call arguments arrive without a preceding ID/name chunk (edge case).
+	// PR #167: arguments with no name/id now surface a ChunkError instead of
+	// being silently dropped.
 	input := `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"x\":1}"}}]},"index":0}]}
 data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}]}
 data: [DONE]
@@ -1128,15 +1149,27 @@ data: [DONE]
 		chunks = append(chunks, chunk)
 	}
 
-	// Should not panic or emit an unnamed tool call.
-	var foundToolCall bool
+	// Should not panic, should surface the unresolved-tool error, and must not
+	// emit an unnamed tool call.
+	var foundToolCall, foundErr bool
+	var errMsg string
 	for _, c := range chunks {
-		if c.Type == provider.ChunkToolCall {
+		switch c.Type {
+		case provider.ChunkToolCall:
 			foundToolCall = true
+		case provider.ChunkError:
+			foundErr = true
+			errMsg = c.Error.Error()
 		}
 	}
 	if foundToolCall {
 		t.Error("unexpected tool call chunk from args without ID or name")
+	}
+	if !foundErr {
+		t.Fatal("expected a ChunkError for arguments with no ID or name")
+	}
+	if !strings.Contains(errMsg, "never resolved") {
+		t.Errorf("error = %q, want it to mention the unresolved name/id", errMsg)
 	}
 }
 
@@ -3342,5 +3375,278 @@ data: [DONE]
 	}
 	if toolCalls[0].ToolInput != `{"path":"main.go"}` {
 		t.Errorf("final tool input = %q, want {\"path\":\"main.go\"}", toolCalls[0].ToolInput)
+	}
+}
+
+// BUG 3: a resolved tool call coexisting with an unresolved one must not lose
+// the resolved call. The EOF finalize flushes every started/resolved tool
+// first (ascending index order), THEN surfaces a single error for the
+// unresolved one. The old code returned on the first unresolved tool in
+// random map order and probabilistically dropped the buffered ChunkToolCall.
+func TestParseStream_ResolvedAndUnresolvedToolCalls(t *testing.T) {
+	input := `data: {"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"b\":"}}]},"index":0}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_0","type":"function","function":{"name":"read","arguments":"{\"a\":"}}]},"index":0}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"2}"}}]},"index":0}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]},"index":0}]}
+data: [DONE]
+`
+	for i := 0; i < 20; i++ {
+		scanner := sse.NewScanner(strings.NewReader(input))
+		out := make(chan provider.StreamChunk, 10)
+		go ParseStream(t.Context(), scanner, out)
+
+		var toolCalls, errChunks []provider.StreamChunk
+		var all []provider.StreamChunk
+		var finished bool
+		for chunk := range out {
+			all = append(all, chunk)
+			switch chunk.Type {
+			case provider.ChunkToolCall:
+				toolCalls = append(toolCalls, chunk)
+			case provider.ChunkError:
+				errChunks = append(errChunks, chunk)
+			case provider.ChunkFinish:
+				finished = true
+			}
+		}
+
+		if len(toolCalls) != 1 {
+			t.Fatalf("iter %d: got %d ChunkToolCall chunks, want 1 (resolved call must survive)", i, len(toolCalls))
+		}
+		call := toolCalls[0]
+		if call.ToolCallID != "call_0" || call.ToolName != "read" || call.ToolInput != `{"a":1}` {
+			t.Fatalf("iter %d: resolved tool call = %+v, want call_0/read with {\"a\":1}", i, call)
+		}
+		if len(errChunks) != 1 {
+			t.Fatalf("iter %d: got %d ChunkError chunks, want 1 (unresolved index 1)", i, len(errChunks))
+		}
+		if !strings.Contains(errChunks[0].Error.Error(), "never resolved") {
+			t.Errorf("iter %d: error = %v", i, errChunks[0].Error)
+		}
+		if finished {
+			t.Errorf("iter %d: stream should terminate with an error, not a clean finish", i)
+		}
+		// The resolved ChunkToolCall must be emitted BEFORE the ChunkError.
+		var callPos, errPos = -1, -1
+		for j, c := range all {
+			switch c.Type {
+			case provider.ChunkToolCall:
+				if callPos == -1 {
+					callPos = j
+				}
+			case provider.ChunkError:
+				if errPos == -1 {
+					errPos = j
+				}
+			}
+		}
+		if callPos == -1 || errPos == -1 {
+			t.Fatalf("iter %d: missing call or error in chunk sequence %+v", i, all)
+		}
+		if callPos > errPos {
+			t.Errorf("iter %d: ChunkToolCall (pos %d) must precede ChunkError (pos %d)", i, callPos, errPos)
+		}
+	}
+}
+
+// BUG 3c: a tool call that streamed only empty/missing arguments and never
+// resolved name/id still surfaces a ChunkError instead of being silently
+// dropped.
+func TestParseStream_EmptyArgsUnresolvedToolCallEmitsError(t *testing.T) {
+	input := `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":""}}]},"index":0}]}
+data: [DONE]
+`
+	scanner := sse.NewScanner(strings.NewReader(input))
+	out := make(chan provider.StreamChunk, 10)
+	go ParseStream(t.Context(), scanner, out)
+
+	var gotErr error
+	var toolCalls int
+	for chunk := range out {
+		switch chunk.Type {
+		case provider.ChunkError:
+			gotErr = chunk.Error
+		case provider.ChunkToolCall:
+			toolCalls++
+		}
+	}
+	if gotErr == nil {
+		t.Fatal("expected a ChunkError for a tool call whose name/id never resolved (even with empty args)")
+	}
+	if !strings.Contains(gotErr.Error(), "never resolved") {
+		t.Errorf("error = %v", gotErr)
+	}
+	if toolCalls != 0 {
+		t.Errorf("got %d ChunkToolCall chunks, want 0", toolCalls)
+	}
+}
+
+// BUG 3c: an active tool call that IS started (name/id resolved) but never
+// received arguments is a valid zero-argument call: it finalizes as a
+// ChunkToolCall with empty input, not an error.
+func TestParseStream_StartedZeroArgToolCallFinalizesEmpty(t *testing.T) {
+	input := `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_0","type":"function","function":{"name":"read","arguments":""}}]},"index":0}]}
+data: [DONE]
+`
+	scanner := sse.NewScanner(strings.NewReader(input))
+	out := make(chan provider.StreamChunk, 10)
+	go ParseStream(t.Context(), scanner, out)
+
+	var toolCalls []provider.StreamChunk
+	var gotErr bool
+	for chunk := range out {
+		switch chunk.Type {
+		case provider.ChunkToolCall:
+			toolCalls = append(toolCalls, chunk)
+		case provider.ChunkError:
+			gotErr = true
+		}
+	}
+	if gotErr {
+		t.Error("a started zero-argument tool call must not produce a ChunkError")
+	}
+	if len(toolCalls) != 1 {
+		t.Fatalf("got %d ChunkToolCall chunks, want 1 (valid zero-arg call)", len(toolCalls))
+	}
+	if toolCalls[0].ToolCallID != "call_0" || toolCalls[0].ToolName != "read" || toolCalls[0].ToolInput != "" {
+		t.Errorf("tool call = %+v, want call_0/read with empty input", toolCalls[0])
+	}
+}
+
+// BUG 3a: parallel streaming tool calls are finalized in ascending index order
+// at the finish_reason flush, regardless of arrival order. The old code
+// iterated the active-tools map in random order.
+func TestParseStream_ParallelToolCallsAscendingOrder(t *testing.T) {
+	input := `data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_1","type":"function","function":{"name":"read_two","arguments":"{\"b\":2}"}}]},"index":0}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_0","type":"function","function":{"name":"read","arguments":"{\"a\":1}"}}]},"index":0}]}
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}]}
+data: [DONE]
+`
+	for i := 0; i < 10; i++ {
+		scanner := sse.NewScanner(strings.NewReader(input))
+		out := make(chan provider.StreamChunk, 10)
+		go ParseStream(t.Context(), scanner, out)
+
+		var toolCalls []provider.StreamChunk
+		for chunk := range out {
+			if chunk.Type == provider.ChunkToolCall {
+				toolCalls = append(toolCalls, chunk)
+			}
+		}
+
+		if len(toolCalls) != 2 {
+			t.Fatalf("iter %d: got %d ChunkToolCall chunks, want 2", i, len(toolCalls))
+		}
+		want := []struct{ id, name, input string }{
+			{"call_0", "read", `{"a":1}`},
+			{"call_1", "read_two", `{"b":2}`},
+		}
+		for j, w := range want {
+			c := toolCalls[j]
+			if c.ToolCallID != w.id || c.ToolName != w.name || c.ToolInput != w.input {
+				t.Errorf("iter %d: toolCall[%d] = %+v, want id=%s name=%s input=%s", i, j, c, w.id, w.name, w.input)
+			}
+		}
+	}
+}
+
+// BUG 4: streaming -- when a provider omits total_tokens, TotalTokens falls
+// back to input+output instead of staying 0.
+func TestParseStream_TotalTokensFallback(t *testing.T) {
+	input := `data: {"choices":[{"delta":{"content":"hi"},"index":0}]}
+data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}],"usage":{"prompt_tokens":50,"completion_tokens":10}}
+data: [DONE]
+`
+	scanner := sse.NewScanner(strings.NewReader(input))
+	out := make(chan provider.StreamChunk, 10)
+	go ParseStream(t.Context(), scanner, out)
+
+	var usage provider.Usage
+	for chunk := range out {
+		if chunk.Type == provider.ChunkFinish {
+			usage = chunk.Usage
+		}
+	}
+	if usage.TotalTokens != 60 {
+		t.Errorf("TotalTokens = %d, want 60 (fallback to input+output)", usage.TotalTokens)
+	}
+}
+
+// BUG 4: non-streaming -- same fallback in ParseResponse.
+func TestParseResponse_TotalTokensFallback(t *testing.T) {
+	body := []byte(`{
+		"id":"x","model":"m",
+		"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],
+		"usage":{"prompt_tokens":50,"completion_tokens":10}
+	}`)
+	result, err := ParseResponse(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Usage.TotalTokens != 60 {
+		t.Errorf("TotalTokens = %d, want 60 (fallback to input+output)", result.Usage.TotalTokens)
+	}
+}
+
+// BUG 2: a data URL without a ";base64," segment must not be emitted as a
+// file part with an empty base64 payload; it falls through and is dropped.
+// A normal remote URL still yields fileData = URL.
+func TestConvertMessages_UserWithFile_InvalidDataURL(t *testing.T) {
+	params := provider.GenerateParams{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{
+			{Type: provider.PartFile, URL: "data:application/pdf,rawnotbase64", MediaType: "application/pdf"},
+			{Type: provider.PartFile, URL: "https://example.com/remote.pdf", MediaType: "application/pdf", Filename: "remote.pdf"},
+		}}},
+	}
+	body := BuildRequest(params, "gpt-4o", false, RequestConfig{})
+	msgs, ok := body["messages"].([]map[string]any)
+	if !ok || len(msgs) != 1 {
+		t.Fatalf("messages = %v", body["messages"])
+	}
+	content, ok := msgs[0]["content"].([]map[string]any)
+	if !ok || len(content) != 1 {
+		t.Fatalf("content = %v, want exactly the remote-URL file item (invalid data URL dropped)", msgs[0]["content"])
+	}
+	if content[0]["type"] != "file" {
+		t.Fatalf("part type = %v, want file", content[0]["type"])
+	}
+	file, ok := content[0]["file"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected file object, got %T", content[0]["file"])
+	}
+	if file["file_data"] != "https://example.com/remote.pdf" {
+		t.Errorf("file_data = %v, want the plain remote URL", file["file_data"])
+	}
+	if fd := file["file_data"].(string); strings.Contains(fd, ";base64,") && strings.HasSuffix(fd, ";base64,") {
+		t.Errorf("file_data %q must not carry an empty base64 payload", fd)
+	}
+}
+
+// maxToolCallArgsBytes cumulative overflow: two fragments each under the cap
+// but whose running sum exceeds it must trip the limit check.
+func TestParseStream_ToolCallArgsOverCap_Accumulated(t *testing.T) {
+	orig := maxToolCallArgsBytes
+	maxToolCallArgsBytes = 8
+	defer func() { maxToolCallArgsBytes = orig }()
+
+	input := `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read","arguments":"01234"}}]},"index":0}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"56789"}}]},"index":0}]}
+data: [DONE]
+`
+	scanner := sse.NewScanner(strings.NewReader(input))
+	out := make(chan provider.StreamChunk, 10)
+	go ParseStream(t.Context(), scanner, out)
+
+	var gotErr error
+	for chunk := range out {
+		if chunk.Type == provider.ChunkError {
+			gotErr = chunk.Error
+		}
+	}
+	if gotErr == nil {
+		t.Fatal("expected ChunkError when accumulated tool-call args exceed the cap")
+	}
+	if !strings.Contains(gotErr.Error(), "tool call arguments exceed") {
+		t.Errorf("error = %v", gotErr)
 	}
 }

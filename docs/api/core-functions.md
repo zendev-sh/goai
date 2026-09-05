@@ -226,7 +226,7 @@ Returns a channel that emits progressively populated partial objects as JSON tok
 func (os *ObjectStream[T]) PartialObjectStream() <-chan *T
 ```
 
-Each emitted value has more fields populated than the previous one. Fields not yet received have their zero values.
+Each emitted value is progressively populated as fields become available; fields not yet received have their zero values.
 
 ### ObjectStream.Result
 

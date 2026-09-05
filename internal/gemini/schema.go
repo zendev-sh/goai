@@ -118,29 +118,46 @@ func sanitizeImpl(obj any) any {
 
 	// Normalize nullable type arrays: ["object","null"] → "object" + nullable: true.
 	// SchemaFrom produces []string, JSON unmarshal produces []any.
+	// Only exactly one non-null type is normalized; genuine unions (two or more
+	// non-null types) and bare single types are left untouched so the trailing
+	// copy loop keeps the original array.
 	if rawType, ok := m["type"]; ok {
 		switch tt := rawType.(type) {
 		case []string:
-			var nonNull string
+			nonNull := make([]string, 0, 1)
+			hasNull := false
 			for _, s := range tt {
-				if s != "null" {
-					nonNull = s
+				if s == "null" {
+					hasNull = true
+				} else {
+					nonNull = append(nonNull, s)
 				}
 			}
-			if nonNull != "" {
-				result["type"] = nonNull
-				result["nullable"] = true
+			if len(nonNull) == 1 {
+				result["type"] = nonNull[0]
+				if hasNull {
+					result["nullable"] = true
+				}
 			}
 		case []any:
-			var nonNull string
+			nonNull := make([]string, 0, 1)
+			hasNull := false
 			for _, v := range tt {
-				if s, ok := v.(string); ok && s != "null" {
-					nonNull = s
+				s, isStr := v.(string)
+				if !isStr {
+					continue
+				}
+				if s == "null" {
+					hasNull = true
+				} else {
+					nonNull = append(nonNull, s)
 				}
 			}
-			if nonNull != "" {
-				result["type"] = nonNull
-				result["nullable"] = true
+			if len(nonNull) == 1 {
+				result["type"] = nonNull[0]
+				if hasNull {
+					result["nullable"] = true
+				}
 			}
 		}
 	}

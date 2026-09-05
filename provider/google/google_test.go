@@ -833,7 +833,7 @@ func TestConvertMessages_ToolResultInvalidJSON(t *testing.T) {
 func TestConvertMessages_Image(t *testing.T) {
 	msgs := convertMessages([]provider.Message{
 		{Role: provider.RoleUser, Content: []provider.Part{
-			{Type: provider.PartImage, URL: "data:image/png;base64,abc123"},
+			{Type: provider.PartImage, URL: "data:image/png;base64,iVBORw0KGgo="},
 		}},
 	})
 
@@ -998,8 +998,8 @@ func TestConvertMessages_FileAndImage(t *testing.T) {
 	msgs := convertMessages([]provider.Message{
 		{Role: provider.RoleUser, Content: []provider.Part{
 			{Type: provider.PartText, Text: "describe"},
-			{Type: provider.PartImage, URL: "data:image/png;base64,img123"},
-			{Type: provider.PartFile, URL: "data:application/pdf;base64,pdf456"},
+			{Type: provider.PartImage, URL: "data:image/png;base64,iVBORw0KGgo="},
+			{Type: provider.PartFile, URL: "data:application/pdf;base64,JVBERi0="},
 		}},
 	})
 
@@ -1040,7 +1040,7 @@ func TestFilePartToContent_RemoteRef(t *testing.T) {
 func TestFilePartToContent_InlineURL(t *testing.T) {
 	p := filePartToContent(provider.Part{
 		Type: provider.PartFile,
-		URL:  "data:application/pdf;base64,abc123",
+		URL:  "data:application/pdf;base64,JVBERi0=",
 	})
 	if p == nil {
 		t.Fatal("expected non-nil result")
@@ -1052,8 +1052,8 @@ func TestFilePartToContent_InlineURL(t *testing.T) {
 	if inline["mimeType"] != "application/pdf" {
 		t.Errorf("mimeType = %v", inline["mimeType"])
 	}
-	if inline["data"] != "abc123" {
-		t.Errorf("data = %v", inline["data"])
+	if inline["data"] != "JVBERi0=" {
+		t.Errorf("data = %v, want JVBERi0=", inline["data"])
 	}
 }
 
@@ -1101,14 +1101,14 @@ func TestHasRemoteRef_Google(t *testing.T) {
 }
 
 func TestHttpcParseDataURL(t *testing.T) {
-	mt, data, ok := httpc.ParseDataURL("data:application/pdf;base64,abc123")
+	mt, data, ok := httpc.ParseDataURL("data:application/pdf;base64,JVBERi0=")
 	if !ok {
 		t.Fatal("expected ok")
 	}
 	if mt != "application/pdf" {
 		t.Errorf("mediaType = %q", mt)
 	}
-	if data != "abc123" {
+	if data != "JVBERi0=" {
 		t.Errorf("data = %q", data)
 	}
 
@@ -2687,7 +2687,7 @@ func TestParseDataURL(t *testing.T) {
 		ok   bool
 		mime string
 	}{
-		{"data:image/png;base64,abc", true, "image/png"},
+		{"data:image/png;base64,aGVsbG8=", true, "image/png"},
 		{"https://example.com", false, ""},
 		{"data:missing;abc", false, ""},
 	}

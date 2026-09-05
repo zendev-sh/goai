@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -1023,6 +1024,118 @@ func TestChat_ClaudeModel_ResourceFromEndpointParsing(t *testing.T) {
 	)
 	if model.ModelID() != "claude-sonnet-4-20250514" {
 		t.Errorf("ModelID() = %q", model.ModelID())
+	}
+}
+
+// TestChat_AnthropicModel_InjectsAzureAPIKey verifies that Azure-hosted
+// Anthropic models authenticate via the `api-key` header (not `x-api-key`)
+// on the Anthropic-compatible endpoint. Sending x-api-key is ignored by Azure
+// and yields a 401.
+func TestChat_AnthropicModel_InjectsAzureAPIKey(t *testing.T) {
+	var gotAPIKey, gotXAPIKey string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAPIKey = r.Header.Get("api-key")
+		gotXAPIKey = r.Header.Get("x-api-key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"msg_01","type":"message","role":"assistant","model":"anthropic.claude-sonnet-4-20250514-v1:0","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer server.Close()
+
+	t.Setenv("AZURE_RESOURCE_NAME", "")
+	t.Setenv("AZURE_OPENAI_ENDPOINT", "")
+	t.Setenv("AZURE_OPENAI_API_KEY", "")
+
+	// The Anthropic base URL is derived from the resource name, so route it to
+	// the test server through a rewriting transport.
+	model := Chat("anthropic.claude-sonnet-4-20250514-v1:0",
+		WithAPIKey("secret-key"),
+		WithEndpoint("https://resource.services.ai.azure.com"),
+		WithHTTPClient(&http.Client{Transport: &rewriteTransport{target: server.URL}}),
+	)
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		ProviderOptions: map[string]any{"streamingTransport": false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotAPIKey != "secret-key" {
+		t.Errorf("api-key = %q, want %q", gotAPIKey, "secret-key")
+	}
+	if gotXAPIKey != "" {
+		t.Errorf("x-api-key = %q, want empty (Azure Anthropic endpoint rejects x-api-key)", gotXAPIKey)
+	}
+}
+
+// TestChat_AnthropicModel_TokenSourceAPIKey verifies the WithTokenSource path
+// on Azure-hosted Anthropic models also injects the resolved token as `api-key`
+// instead of `x-api-key`.
+func TestChat_AnthropicModel_TokenSourceAPIKey(t *testing.T) {
+	var gotAPIKey, gotXAPIKey string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAPIKey = r.Header.Get("api-key")
+		gotXAPIKey = r.Header.Get("x-api-key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"msg_02","type":"message","role":"assistant","model":"m","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer server.Close()
+
+	t.Setenv("AZURE_RESOURCE_NAME", "")
+	t.Setenv("AZURE_OPENAI_ENDPOINT", "")
+	t.Setenv("AZURE_OPENAI_API_KEY", "")
+
+	model := Chat("anthropic.claude-sonnet-4-20250514-v1:0",
+		WithTokenSource(provider.StaticToken("managed-token")),
+		WithEndpoint("https://resource.services.ai.azure.com"),
+		WithHTTPClient(&http.Client{Transport: &rewriteTransport{target: server.URL}}),
+	)
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+		ProviderOptions: map[string]any{"streamingTransport": false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotAPIKey != "managed-token" {
+		t.Errorf("api-key = %q, want %q", gotAPIKey, "managed-token")
+	}
+	if gotXAPIKey != "" {
+		t.Errorf("x-api-key = %q, want empty (Azure Anthropic endpoint rejects x-api-key)", gotXAPIKey)
+	}
+}
+
+// TestBuildHTTPClient_PreservesClientSettings verifies that WithHTTPClient
+// settings (Timeout, CheckRedirect, Jar) survive the Azure transport wrapper
+// instead of being silently dropped in the rebuilt client.
+func TestBuildHTTPClient_PreservesClientSettings(t *testing.T) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	customClient := &http.Client{
+		Timeout:       5 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
+		Jar:           jar,
+	}
+
+	got := buildHTTPClient(&options{
+		apiKey:     "k",
+		endpoint:   "https://x.openai.azure.com",
+		httpClient: customClient,
+	}, "gpt-4o")
+
+	if got.Timeout != 5*time.Second {
+		t.Errorf("Timeout = %v, want %v", got.Timeout, 5*time.Second)
+	}
+	if got.CheckRedirect == nil {
+		t.Error("CheckRedirect = nil, want preserved")
+	}
+	if got.Jar != jar {
+		t.Errorf("Jar = %v, want preserved", got.Jar)
 	}
 }
 

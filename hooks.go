@@ -170,11 +170,19 @@ type FinishInfo struct {
 //   - GenerateObject: after the tool loop exits (including max_steps error path)
 //   - StreamObject: in the consume goroutine, after the stream completes
 //
-// It does NOT fire when DoGenerate/DoStream returns a provider error (API failure,
-// context cancelled). In those cases, the OnResponse hook receives the error.
+// It does fire on provider error/abort paths - it is NOT skipped:
+//   - GenerateText/GenerateObject: a DoGenerate error fires OnFinish with
+//     StoppedBy set to StopCauseAbort and FinishReason from the last completed
+//     step (empty if none), before the error is returned. The OnResponse hook
+//     also receives the error.
+//   - StreamText/StreamObject: a mid-loop DoStream error or a mid-stream
+//     ChunkError fires OnFinish with StoppedBy set to StopCauseAbort before the
+//     stream closes. An initial DoStream error returns (nil, error) BEFORE the
+//     stream-level OnFinish. For StreamText/StreamObject, check stream.Err()
+//     after consuming for the definitive error.
+//
 // Note: GenerateObject's max_steps error IS a goai-level error, not a provider error,
 // so OnFinish fires before that error is returned.
-// For StreamText/StreamObject, check stream.Err() for definitive error status.
 func WithOnFinish(fn func(FinishInfo)) Option {
 	return func(o *options) { o.OnFinish = append(o.OnFinish, fn) }
 }

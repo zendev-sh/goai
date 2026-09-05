@@ -592,8 +592,8 @@ type Part struct {
     Type            PartType        // Part kind.
     Text            string          // For PartText, PartReasoning.
     URL             string          // For images (data:image/... format).
-    ToolCallID      string          // For PartToolCall.
-    ToolName        string          // For PartToolCall.
+    ToolCallID      string          // For PartToolCall and PartToolResult.
+    ToolName        string          // For PartToolCall and PartToolResult.
     ToolInput       json.RawMessage // For PartToolCall.
     ToolOutput      string          // For PartToolResult.
     CacheControl    string          // Cache directive (e.g. "ephemeral").

@@ -1128,6 +1128,9 @@ func TestGenerateText_ToolLoop_MaxStepsReached(t *testing.T) {
 	if result.FinishReason != provider.FinishToolCalls {
 		t.Errorf("FinishReason = %q, want tool_calls (MaxSteps hit)", result.FinishReason)
 	}
+	if !result.StepsExhausted {
+		t.Error("StepsExhausted = false, want true (MaxSteps reached with pending tool calls)")
+	}
 }
 
 func TestGenerateText_ToolLoop_OnStepFinish(t *testing.T) {
@@ -2814,6 +2817,9 @@ func TestStreamText_ToolLoop_MaxStepsReached(t *testing.T) {
 	if result.FinishReason != provider.FinishToolCalls {
 		t.Errorf("FinishReason = %q, want tool_calls", result.FinishReason)
 	}
+	if !result.StepsExhausted {
+		t.Error("StepsExhausted = false, want true (MaxSteps reached with pending tool calls)")
+	}
 }
 
 // TestStreamText_ToolLoop_ParallelExecution verifies that two tool calls in one
@@ -4241,6 +4247,98 @@ func TestStreamText_ToolLoop_EmptyStepGuard(t *testing.T) {
 	}
 	if result.FinishReason != "" {
 		t.Errorf("FinishReason = %q, want empty", result.FinishReason)
+	}
+}
+
+// TestStreamText_ToolLoop_UnresolvedToolCallError verifies that a mid-stream
+// ChunkError following a provider ChunkStepFinish("tool_calls") reaches
+// stream.Err(), stops the loop with StopCauseAbort, and does NOT emit a phantom
+// step or a duplicate ChunkError / natural ChunkFinish after the error.
+func TestStreamText_ToolLoop_UnresolvedToolCallError(t *testing.T) {
+	model := &mockModel{
+		id: "test-unresolved",
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkToolCallStreamStart, ToolCallID: "tc1", ToolName: "tool"},
+				provider.StreamChunk{Type: provider.ChunkToolCallStreamStart, ToolCallID: "tc2", ToolName: "tool"},
+				provider.StreamChunk{Type: provider.ChunkToolCallDelta, ToolInput: `{"arg":1}`},
+				provider.StreamChunk{Type: provider.ChunkStepFinish, FinishReason: provider.FinishToolCalls},
+				provider.StreamChunk{Type: provider.ChunkError, Error: errors.New("tool call arguments received but tool name/id never resolved")},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishToolCalls},
+			), nil
+		},
+	}
+
+	var mu sync.Mutex
+	var chunks []provider.StreamChunk
+
+	stream, err := StreamText(t.Context(), model,
+		WithPrompt("go"),
+		WithMaxSteps(3),
+		WithTools(Tool{
+			Name:    "tool",
+			Execute: func(_ context.Context, _ json.RawMessage) (string, error) { return "ok", nil },
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for chunk := range stream.Stream() {
+		mu.Lock()
+		chunks = append(chunks, chunk)
+		mu.Unlock()
+	}
+
+	if stream.Err() == nil {
+		t.Fatal("expected non-nil Err()")
+	}
+	if !strings.Contains(stream.Err().Error(), "never resolved") {
+		t.Errorf("Err() = %q, want message containing 'never resolved'", stream.Err())
+	}
+
+	// The ChunkError forwarded by drainStep must be the only one - the loop must
+	// not re-send it on the abort path.
+	var errChunks int
+	var stepFinishChunks, finishChunks int
+	var abortFinish, naturalFinish bool
+	for _, c := range chunks {
+		switch c.Type {
+		case provider.ChunkError:
+			errChunks++
+		case provider.ChunkStepFinish:
+			stepFinishChunks++
+		case provider.ChunkFinish:
+			finishChunks++
+			if c.StoppedBy == provider.StopCauseAbort {
+				abortFinish = true
+			}
+			if c.StoppedBy == provider.StopCauseNatural {
+				naturalFinish = true
+			}
+		}
+	}
+	if errChunks != 1 {
+		t.Errorf("ChunkError seen %d times, want 1 (no duplicate re-send)", errChunks)
+	}
+	// ChunkStepFinish count is 1: the provider-internal step boundary. goai must
+	// NOT emit a phantom goai ChunkStepFinish for a failed step.
+	if stepFinishChunks != 1 {
+		t.Errorf("ChunkStepFinish seen %d times, want 1 (no phantom step)", stepFinishChunks)
+	}
+	if finishChunks != 1 {
+		t.Errorf("ChunkFinish seen %d times, want 1", finishChunks)
+	}
+	if !abortFinish {
+		t.Error("final ChunkFinish StoppedBy != abort")
+	}
+	if naturalFinish {
+		t.Error("final ChunkFinish StoppedBy == natural, want abort (error path)")
+	}
+
+	result := stream.Result()
+	if len(result.Steps) != 0 {
+		t.Errorf("Steps = %d, want 0 (no phantom step)", len(result.Steps))
 	}
 }
 

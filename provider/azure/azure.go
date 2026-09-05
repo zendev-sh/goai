@@ -181,6 +181,20 @@ func resolveOptions(o *options) {
 	o.apiVersion = cmp.Or(o.apiVersion, defaultAPIVersion)
 }
 
+// wrapClientTransport builds an HTTP client that uses the given transport
+// while preserving the caller's Timeout, CheckRedirect, and Jar settings.
+func wrapClientTransport(client *http.Client, t http.RoundTripper) *http.Client {
+	if client == nil {
+		return &http.Client{Transport: t}
+	}
+	return &http.Client{
+		Transport:     t,
+		Timeout:       client.Timeout,
+		CheckRedirect: client.CheckRedirect,
+		Jar:           client.Jar,
+	}
+}
+
 // buildHTTPClient creates an HTTP client with the Azure transport that rewrites
 // URLs and injects auth. Shared between Chat() and Image().
 func buildHTTPClient(o *options, modelID string) *http.Client {
@@ -200,7 +214,7 @@ func buildHTTPClient(o *options, modelID string) *http.Client {
 		useDeploymentBasedURLs: o.useDeploymentBasedURLs,
 	}
 
-	return &http.Client{Transport: azureTransport}
+	return wrapClientTransport(o.httpClient, azureTransport)
 }
 
 // Chat creates an Azure language model for the given model/deployment ID.
@@ -358,15 +372,26 @@ func buildAnthropicModel(o *options, modelID string) provider.LanguageModel {
 	resourceName := extractResourceName(o)
 	anthropicEndpoint := fmt.Sprintf("https://%s.services.ai.azure.com/anthropic", resourceName)
 
-	anthropicOpts := []anthropic.Option{anthropic.WithBaseURL(anthropicEndpoint)}
-	if o.apiKey != "" {
-		anthropicOpts = append(anthropicOpts, anthropic.WithAPIKey(o.apiKey))
+	baseTransport := http.DefaultTransport
+	if o.httpClient != nil && o.httpClient.Transport != nil {
+		baseTransport = o.httpClient.Transport
 	}
-	if o.tokenSource != nil {
-		anthropicOpts = append(anthropicOpts, anthropic.WithTokenSource(o.tokenSource))
-	}
-	if o.httpClient != nil {
-		anthropicOpts = append(anthropicOpts, anthropic.WithHTTPClient(o.httpClient))
+
+	// Azure's Anthropic-compatible endpoint authenticates via the `api-key`
+	// header, not Anthropic's `x-api-key`. The transport below injects the
+	// Azure credential and strips the x-api-key header the anthropic provider
+	// would otherwise send (which Azure ignores, causing a 401). The anthropic
+	// provider gets a dummy key purely so it never errors on auth.
+	httpClient := wrapClientTransport(o.httpClient, &anthropicAuthRoundTripper{
+		base:        baseTransport,
+		apiKey:      o.apiKey,
+		tokenSource: o.tokenSource,
+	})
+
+	anthropicOpts := []anthropic.Option{
+		anthropic.WithBaseURL(anthropicEndpoint),
+		anthropic.WithHTTPClient(httpClient),
+		anthropic.WithAPIKey("azure-delegated"),
 	}
 	if len(o.headers) > 0 {
 		anthropicOpts = append(anthropicOpts, anthropic.WithHeaders(o.headers))
@@ -398,7 +423,7 @@ func buildAIServicesModel(o *options, modelID string) provider.LanguageModel {
 		apiVersion:  defaultAIServicesAPIVersion,
 	}
 
-	httpClient := &http.Client{Transport: transport}
+	httpClient := wrapClientTransport(o.httpClient, transport)
 
 	openaiOpts := []openai.Option{
 		openai.WithHTTPClient(httpClient),
@@ -441,7 +466,7 @@ func buildCognitiveServicesModel(o *options, modelID string) provider.LanguageMo
 		apiVersion:  cognitiveServicesAPIVersion,
 	}
 
-	httpClient := &http.Client{Transport: transport}
+	httpClient := wrapClientTransport(o.httpClient, transport)
 
 	// openai.Chat defaults to Responses API which is what codex/pro models need.
 	return openai.Chat(
@@ -452,6 +477,36 @@ func buildCognitiveServicesModel(o *options, modelID string) provider.LanguageMo
 		openai.WithResponsesStreamIdleTimeout(o.responsesStreamIdleTimeout),
 		openai.WithResponsesStreamDoneCompatibility(o.responsesStreamAllowDone),
 	)
+}
+
+// anthropicAuthRoundTripper sets Azure's `api-key` authentication header on
+// requests to the Azure-hosted Anthropic endpoint and strips the `x-api-key`
+// header the anthropic provider injects, which Azure ignores (causing a 401).
+type anthropicAuthRoundTripper struct {
+	base        http.RoundTripper
+	apiKey      string
+	tokenSource provider.TokenSource
+}
+
+func (t *anthropicAuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	newReq := req.Clone(req.Context())
+
+	// Replace Anthropic auth with Azure auth. Both headers are cleared so the
+	// wrong header never leaks to Azure; the ordering mirrors the other Azure
+	// round trippers (custom headers are applied by the anthropic provider).
+	newReq.Header.Del("x-api-key")
+	newReq.Header.Del("api-key")
+	if t.apiKey != "" {
+		newReq.Header.Set("api-key", t.apiKey)
+	} else if t.tokenSource != nil {
+		token, err := t.tokenSource.Token(req.Context())
+		if err != nil {
+			return nil, fmt.Errorf("azure: resolving auth token: %w", err)
+		}
+		newReq.Header.Set("api-key", token)
+	}
+
+	return t.base.RoundTrip(newReq)
 }
 
 // aiServicesRoundTripper injects Azure auth headers and api-version query parameter

@@ -448,6 +448,22 @@ func TestClassifyStreamError(t *testing.T) {
 	}
 }
 
+func TestClassifyStreamError_APIError_PreservesResponseBody(t *testing.T) {
+	body := `{"type":"error","error":{"code":"insufficient_quota","message":"quota exceeded"}}`
+	err := ClassifyStreamError([]byte(body))
+
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected APIError, got %T: %v", err, err)
+	}
+	if apiErr.Message != "Quota exceeded. Check your plan and billing details." {
+		t.Errorf("Message = %q, want quota-exceeded message", apiErr.Message)
+	}
+	if apiErr.ResponseBody != body {
+		t.Errorf("ResponseBody = %q, want %q", apiErr.ResponseBody, body)
+	}
+}
+
 func TestParseHTTPErrorWithHeaders_RetryAfter(t *testing.T) {
 	tests := []struct {
 		name       string

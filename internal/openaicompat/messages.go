@@ -1,8 +1,10 @@
 package openaicompat
 
 import (
+	"encoding/base64"
 	"strings"
 
+	"github.com/zendev-sh/goai/internal/httpc"
 	"github.com/zendev-sh/goai/provider"
 )
 
@@ -175,17 +177,20 @@ func filePartToContent(part provider.Part, flatInputFile bool) (map[string]any, 
 		if mediaType == "" {
 			mediaType = part.RemoteRef.MediaType
 		}
-		payload = string(part.RemoteRef.Data)
+		// RemoteRef.Data holds raw file bytes; base64-encode them for the
+		// data URL (mirrors provider/google).
+		payload = base64.StdEncoding.EncodeToString(part.RemoteRef.Data)
 		fileData = "data:" + mediaType + ";base64," + payload
 	case strings.HasPrefix(part.URL, "data:"):
-		rest := part.URL[5:]
-		if i := strings.Index(rest, ";base64,"); i >= 0 {
+		if mt, data, ok := httpc.ParseDataURL(part.URL); ok {
 			if mediaType == "" {
-				mediaType = rest[:i]
+				mediaType = mt
 			}
-			payload = rest[i+len(";base64,"):]
+			payload = data
+			fileData = "data:" + mediaType + ";base64," + payload
 		}
-		fileData = "data:" + mediaType + ";base64," + payload
+		// An invalid data URL (no ";base64,") is not inlined: it must not
+		// degrade into an empty base64 payload, so leave fileData empty.
 	case part.URL != "":
 		// Remote URL: usable for the "file" part (gateways fetch it), never
 		// for input_audio (audio must be base64 inline).

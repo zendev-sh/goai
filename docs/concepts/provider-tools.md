@@ -54,7 +54,7 @@ result, err := goai.GenerateText(ctx, model,
 
 ## Available Tools
 
-### Anthropic (12 tools)
+### Anthropic (14 tools)
 
 Import: `github.com/zendev-sh/goai/provider/anthropic`
 
@@ -67,8 +67,10 @@ Import: `github.com/zendev-sh/goai/provider/anthropic`
 | `anthropic.Tools.TextEditor_20250728(opts...)` | Text editor with optional maxCharacters (Sonnet 4+)    |
 | `anthropic.Tools.WebSearch(opts...)`           | Web search via Brave Search (v20250305)                |
 | `anthropic.Tools.WebSearch_20260209(opts...)`  | Web search (v20260209, requires beta header)           |
+| `anthropic.Tools.WebSearch_20260318(opts...)`  | Web search with `response_inclusion` (v20260318, requires beta header) |
 | `anthropic.Tools.WebFetch(opts...)`            | Fetch web content by URL (v20260209)                   |
 | `anthropic.Tools.CodeExecution()`              | Python code execution in sandbox (v20260120)           |
+| `anthropic.Tools.CodeExecution_20250522()`     | Legacy Python-only code execution (v20250522)          |
 | `anthropic.Tools.CodeExecution_20250825()`     | Code execution (v20250825, requires beta header)       |
 | `anthropic.Tools.ToolSearchToolRegex()`        | Regex-based deferred tool discovery                    |
 | `anthropic.Tools.ToolSearchToolBM25()`         | BM25-based deferred tool discovery                     |
@@ -185,7 +187,7 @@ td := openai.Tools.ImageGeneration(
 | `WithImageQuality(quality string)`             | `string`              | `"auto"`, `"low"`, `"medium"`, `"high"`               |
 | `WithImageSize(size string)`                   | `string`              | `"auto"`, `"1024x1024"`, `"1024x1536"`, `"1536x1024"` |
 
-### Google (4 tools)
+### Google (5 tools)
 
 Import: `github.com/zendev-sh/goai/provider/google`
 
@@ -195,6 +197,7 @@ Import: `github.com/zendev-sh/goai/provider/google`
 | `google.Tools.URLContext()`          | Fetch and process web content from URLs |
 | `google.Tools.CodeExecution()`       | Python code execution in sandbox        |
 | `google.Tools.ComputerUse(opts...)`  | Computer use with environment/function controls |
+| `google.Tools.FileSearch(opts...)`   | File-based grounding (Vertex AI Search / uploaded files) |
 
 ```go
 // Each factory returns a provider.ToolDefinition. Wrap with goai.Tool{} before passing to WithTools.

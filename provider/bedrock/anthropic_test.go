@@ -25,8 +25,9 @@ func TestBedrockAnthropicURLBuilder(t *testing.T) {
 		{"foo.bar.model-v1:0", true, base + "/model/foo.bar.model-v1:0/invoke-with-response-stream"},
 	}
 	for _, tc := range cases {
+		// url.PathEscape leaves ":" raw (sub-delims are kept unescaped in a
+		// path segment), so the built URL keeps "v1:0" unescaped.
 		got := bedrockAnthropicURLBuilder(base, tc.modelID, tc.streaming)
-		// url.PathEscape converts ":" → "%3A".
 		if !strings.HasPrefix(got, base+"/model/") {
 			t.Errorf("url = %q, want prefix %q", got, base+"/model/")
 		}

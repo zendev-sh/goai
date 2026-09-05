@@ -383,7 +383,7 @@ Key architectural decisions that shape the SDK:
 - **Token caching without blocking**: `CachedTokenSource` releases mutex before network calls, accepting brief double‑fetch to avoid goroutine deadlock.
 - **Cross‑provider error pattern matching**: 14 regex patterns detect "context overflow" across 25+ providers' inconsistent error messages, enabling uniform `ContextOverflowError`.
 - **Bedrock AWS independence**: Manual SigV4 signing and EventStream binary protocol parsing avoid AWS SDK dependency.
-- **Provider‑defined tools scale**: 23 tools across 5 providers, each with options structs, version handling, and provider‑specific serialization.
+- **Provider‑defined tools scale**: 26 tools across 5 providers, each with options structs, version handling, and provider‑specific serialization.
 - **Structured output multi‑strategy**: Anthropic uses native `output_format` (claude‑opus‑4‑5/4‑6/4‑7/4‑8, claude‑sonnet‑4‑5/4‑6, claude‑haiku‑4‑5, claude‑opus‑5, claude‑sonnet‑5, claude‑fable‑5, claude‑mythos‑5) or tool trick (older models), adapting to varying provider capabilities.
 
 These decisions maintain a single API surface while supporting diverse provider implementations.

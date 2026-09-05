@@ -138,7 +138,7 @@ Thinking types: `"enabled"` (with `budgetTokens`), `"adaptive"`, `"disabled"`.
 
 ## Provider Tools
 
-Twelve built-in tools are available via `anthropic.Tools`. These use Anthropic's native tool types.
+Fourteen built-in tools are available via `anthropic.Tools`. These use Anthropic's native tool types.
 
 | Tool | Version | Description | Execution |
 |------|---------|-------------|-----------|
@@ -149,8 +149,10 @@ Twelve built-in tools are available via `anthropic.Tools`. These use Anthropic's
 | `anthropic.Tools.TextEditor_20250728()` | 20250728 | Text editor with maxCharacters | Client-side |
 | `anthropic.Tools.WebSearch()` | 20250305 | Web search via Brave Search | Server-side |
 | `anthropic.Tools.WebSearch_20260209()` | 20260209 | Updated web search | Server-side |
+| `anthropic.Tools.WebSearch_20260318()` | 20260318 | Adds `response_inclusion` option | Server-side |
 | `anthropic.Tools.WebFetch()` | 20260209 | Fetch URL content | Server-side |
 | `anthropic.Tools.CodeExecution()` | 20260120 | Server-side Python execution | Server-side |
+| `anthropic.Tools.CodeExecution_20250522()` | 20250522 | Legacy Python-only code execution | Server-side |
 | `anthropic.Tools.CodeExecution_20250825()` | 20250825 | Earlier code execution version | Server-side |
 | `anthropic.Tools.ToolSearchToolRegex()` | — | Regex-based deferred tool discovery | Server-side |
 | `anthropic.Tools.ToolSearchToolBM25()` | — | BM25-based deferred tool discovery | Server-side |

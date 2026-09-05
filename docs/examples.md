@@ -344,9 +344,24 @@ MCP over Streamable HTTP transport. Demonstrates session management, notificatio
 go run ./examples/mcp-remote/main.go
 ```
 
+### mcp-oauth
+
+OAuth 2.1 + PKCE authentication for a remote MCP server. Runs a loopback server to capture the OAuth redirect, opens the authorization URL in your browser, then lists the server's tools. If `GEMINI_API_KEY` is set, it also lets Gemini call the MCP tools.
+
+- **Transport:** Streamable HTTP (OAuth 2.1 + PKCE)
+- **Requires:** a browser for OAuth authorization and a zero-config OAuth MCP server URL (e.g. `https://mcp.linear.app/mcp`, `https://mcp.sentry.dev/mcp`); `GEMINI_API_KEY` is optional
+- **Features:** `mcp.NewOAuthTokenSource`, dynamic client registration (RFC 7591), PKCE (RFC 7636), automatic token refresh
+- **Source:** [`examples/mcp-oauth/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-oauth)
+
+```bash
+go run ./examples/mcp-oauth/main.go https://mcp.linear.app/mcp
+```
+
 ### mcp-sse
 
 MCP over legacy SSE transport (protocol version 2024-11-05). Endpoint discovery, tool listing, and tool calling.
+
+> **Note:** This example requires a local MCP test server implementation compatible with the commands used in `examples/mcp-sse/main.go`.
 
 - **Transport:** SSE (legacy)
 - **Features:** `mcp.NewSSETransport`, legacy protocol support

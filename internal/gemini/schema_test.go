@@ -479,6 +479,59 @@ func TestSanitizeSchema_NullableTypeAsAnySlice(t *testing.T) {
 	}
 }
 
+func TestSanitizeSchema_TypeArrayVariants(t *testing.T) {
+	// Only genuine nullable single types are normalized. True unions and bare
+	// single-type arrays must be preserved as-is without a spurious nullable.
+	cases := []struct {
+		name  string
+		input map[string]any
+		want  map[string]any
+	}{
+		{
+			name:  "nullable string",
+			input: map[string]any{"type": []string{"string", "null"}},
+			want:  map[string]any{"type": "string", "nullable": true},
+		},
+		{
+			name:  "union without null",
+			input: map[string]any{"type": []any{"string", "integer"}},
+			want:  map[string]any{"type": []any{"string", "integer"}},
+		},
+		{
+			name:  "single type no null",
+			input: map[string]any{"type": []string{"string"}},
+			want:  map[string]any{"type": "string"},
+		},
+		{
+			name:  "union with null",
+			input: map[string]any{"type": []any{"string", "integer", "null"}},
+			want:  map[string]any{"type": []any{"string", "integer", "null"}},
+		},
+		{
+			name:  "null only",
+			input: map[string]any{"type": []any{"null"}},
+			want:  map[string]any{"type": []any{"null"}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := SanitizeSchema(tc.input)
+			// Preserved unions keep the original array value.
+			if !reflect.DeepEqual(result["type"], tc.want["type"]) {
+				t.Errorf("type = %#v, want %#v", result["type"], tc.want["type"])
+			}
+			_, hasNullable := result["nullable"]
+			_, wantNullable := tc.want["nullable"]
+			if hasNullable != wantNullable {
+				t.Errorf("nullable presence = %v, want %v", hasNullable, wantNullable)
+			}
+			if wantNullable && result["nullable"] != true {
+				t.Errorf("nullable = %v, want true", result["nullable"])
+			}
+		})
+	}
+}
+
 func TestSanitizeSchema_FullSchemaFromOutput(t *testing.T) {
 	// Simulate what SchemaFrom produces for a struct with pointer and time fields.
 	schema := map[string]any{

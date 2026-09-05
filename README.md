@@ -51,15 +51,15 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 - **Prompt caching**: Automatic cache control for supported providers (Anthropic, Bedrock, MiniMax)
 - **Citations/sources**: Grounding and inline citations from xAI, Perplexity, Google, OpenAI
 - **Web search**: Built-in web search tools for OpenAI, Anthropic, Google, Groq, xAI. Model decides when to search
-- **Code execution**: Server-side Python sandboxes via OpenAI, Anthropic, Google, xAI. No local setup
+- **Code execution**: Server-side Python sandboxes via OpenAI, Anthropic, Google. No local setup
 - **Computer use**: Anthropic computer, bash, text editor tools for autonomous desktop interaction
-- **23 provider-defined tools**: Web fetch, file search, image generation, X search, and more - [full list](#provider-defined-tools)
+- **26 provider-defined tools**: Web fetch, file search, image generation, X search, and more - [full list](#provider-defined-tools)
 - **MCP client**: Connect to any MCP server (stdio, HTTP, SSE), auto-convert tools for use with GoAI
 - **Observability**: Built-in Langfuse and OpenTelemetry (OTel) integrations for tracing generations, tools, and multi-step loops
 - **Multi-agent orchestration**: For declarative YAML workflows on top of GoAI, see [zenflow](https://github.com/zendev-sh/zenflow)
 - **10 lifecycle hooks**: Observability (`OnRequest`, `OnResponse`, `OnToolCallStart`, `OnToolCall`, `OnStepFinish`, `OnFinish`, `OnPanic`) and interceptor (`OnBeforeToolExecute`, `OnAfterToolExecute`, `OnBeforeStep`) hooks for permission gates, secret scanning, output transformation, and loop control
 - **Retry/backoff**: Automatic retry with exponential backoff on retryable HTTP errors (429/5xx)
-- **Minimal dependencies**: Core depends on `golang.org/x/oauth2` + one indirect (`cloud.google.com/go/compute/metadata`). Optional `observability/otel` submodule uses separate `go.mod` with OTel SDK.
+- **Minimal dependencies**: Core depends on `golang.org/x/oauth2` + one indirect (`cloud.google.com/go/compute/metadata`). Optional `observability/otel` and `observability/langfuse` submodules each use their own separate `go.mod`.
 
 ## Performance vs Vercel AI SDK
 
@@ -686,13 +686,13 @@ Retry behavior: automatic exponential backoff on retryable HTTP errors (429/5xx,
 
 ## Provider-Defined Tools
 
-Providers expose built-in tools that the model can invoke server-side. GoAI supports 23 provider-defined tools across 5 providers:
+Providers expose built-in tools that the model can invoke server-side. GoAI supports 26 provider-defined tools across 5 providers:
 
 | Provider  | Tools                                                                                                                                                                  | Import               |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
-| Anthropic | `Computer`, `Computer_20251124`, `Bash`, `TextEditor`, `TextEditor_20250728`, `WebSearch`, `WebSearch_20260209`, `WebFetch`, `CodeExecution`, `CodeExecution_20250825`, `ToolSearchToolRegex`, `ToolSearchToolBM25` | `provider/anthropic` |
+| Anthropic | `Computer`, `Computer_20251124`, `Bash`, `TextEditor`, `TextEditor_20250728`, `WebSearch`, `WebSearch_20260209`, `WebSearch_20260318`, `WebFetch`, `CodeExecution`, `CodeExecution_20250522`, `CodeExecution_20250825`, `ToolSearchToolRegex`, `ToolSearchToolBM25` | `provider/anthropic` |
 | OpenAI    | `WebSearch`, `CodeInterpreter`, `FileSearch`, `ImageGeneration`                                                                                                        | `provider/openai`    |
-| Google    | `GoogleSearch`, `URLContext`, `CodeExecution`, `ComputerUse`                                                                                                           | `provider/google`    |
+| Google    | `GoogleSearch`, `URLContext`, `CodeExecution`, `ComputerUse`, `FileSearch`                                                                                            | `provider/google`    |
 | xAI       | `WebSearch`, `XSearch`                                                                                                                                                 | `provider/xai`       |
 | Groq      | `BrowserSearch`                                                                                                                                                        | `provider/groq`      |
 

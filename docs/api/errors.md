@@ -117,10 +117,11 @@ func ParseHTTPError(providerID string, statusCode int, body []byte) error
 
 **Returns:** `*ContextOverflowError` if the error message matches an overflow pattern, otherwise `*APIError`.
 
-The function extracts human-readable error messages from two common API formats:
+The function extracts human-readable error messages from three common API formats:
 
 - Chat Completions format: `{"error": {"message": "..."}}`
 - Responses API format: `{"message": "...", "code": "...", "type": "..."}` — goai extracts only the `message` field.
+- `{"error": "<message>"}`: the `error` field as a plain string.
 
 ## ParseHTTPErrorWithHeaders
 
@@ -163,9 +164,9 @@ Recognized stream error codes:
 | Code                      | Type               | Retryable | Message                                        |
 | ------------------------- | ------------------ | --------- | ---------------------------------------------- |
 | `context_length_exceeded` | `context_overflow` | No        | `"Input exceeds context window of this model"` |
-| `insufficient_quota`      | `api_error`        | No        |
-| `usage_not_included`      | `api_error`        | No        |
-| `invalid_prompt`          | `api_error`        | No        |
+| `insufficient_quota`      | `api_error`        | No        | `"Quota exceeded. Check your plan and billing details."` |
+| `usage_not_included`      | `api_error`        | No        | `"To use Codex with your ChatGPT plan, upgrade to Plus."` |
+| `invalid_prompt`          | `api_error`        | No        | `"Invalid prompt."` (or the provider's message) |
 
 ---
 

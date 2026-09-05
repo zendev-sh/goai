@@ -193,15 +193,16 @@ Standard error codes:
 | --------------------------------------------------------------------------------------- | -------------------------------------------- |
 | [`mcp-local`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-local)           | Connect to a local stdio MCP server          |
 | [`mcp-remote`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-remote)         | Connect to a remote HTTP MCP server          |
+| [`mcp-oauth`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-oauth)         | OAuth 2.1 + PKCE auth for a remote MCP server |
 | [`mcp-sse`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-sse)               | Connect via legacy SSE transport             |
 | [`mcp-tools`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-tools)           | Convert MCP tools for use with GenerateText  |
 | [`mcp-filesystem`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-filesystem) | File operations via MCP filesystem server    |
 | [`mcp-github`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-github)         | GitHub operations via MCP                    |
 | [`mcp-playwright`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-playwright) | Browser automation via Playwright MCP server |
 
-> **Note:** Some MCP examples are marked with `//go:build ignore` and must be run by targeting the file directly (e.g. `go run ./examples/mcp-local/main.go`).
+> **Note:** All MCP examples are marked with `//go:build ignore` and must be run by targeting the file directly (e.g. `go run ./examples/mcp-local/main.go`).
 
-> **Note:** The `mcp-local`, `mcp-remote`, and `mcp-tools` examples use a local MCP test server command in each example (`go run ./mcp/testserver ...`). Ensure your local setup includes a compatible test server implementation.
+> **Note:** The `mcp-local`, `mcp-remote`, and `mcp-sse` examples rely on a local MCP test server command in each example (`go run ./mcp/testserver ...`) and will not run without one. `mcp-tools` also prefers that test server but falls back to the `@modelcontextprotocol/server-filesystem` npx server when it is missing. Ensure your local setup includes a compatible test server implementation.
 
 > **Requirements:**
 >

@@ -2,7 +2,7 @@
 
 // Example: MCP client basics  - no LLM needed.
 //
-// Connects to the project's built-in testserver via stdio transport and
+// Starts a local MCP test server for this example via stdio transport and
 // exercises every MCP capability: tools, prompts, and resources.
 //
 // Usage:

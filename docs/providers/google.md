@@ -233,7 +233,7 @@ Five built-in tools are available via `google.Tools`.
 | `google.Tools.GoogleSearch()` | Grounding with Google Search | Server-side |
 | `google.Tools.URLContext()` | Fetch and process URL content | Server-side |
 | `google.Tools.CodeExecution()` | Execute Python code in sandbox | Server-side |
-| `google.Tools.ComputerUse(opts...)` | Computer use with configurable environment/excluded functions | Server-side |
+| `google.Tools.ComputerUse(opts...)` | Computer use with configurable environment/excluded functions | Client-side |
 | `google.Tools.FileSearch(opts...)` | File-based grounding (Vertex AI Search / uploaded files) | Server-side |
 
 ### GoogleSearch
