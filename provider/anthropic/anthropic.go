@@ -1380,6 +1380,10 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 	var usage provider.Usage
 	var responseMeta provider.ResponseMetadata
 	var finishMeta map[string]any // metadata accumulated for ChunkFinish
+	// stopReason is message_delta's mapped stop_reason. ChunkFinish must carry
+	// it too: consumers take ChunkFinish's reason as the final word, so an
+	// empty one there erased e.g. "refusal" (content-filter) and "max_tokens".
+	var stopReason provider.FinishReason
 	finish := func(reason provider.FinishReason) {
 		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 		meta := maps.Clone(finishMeta)
@@ -1688,6 +1692,7 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 					if isRFMode && fr == provider.FinishToolCalls {
 						fr = provider.FinishStop
 					}
+					stopReason = fr
 					if !provider.TrySend(ctx, out, provider.StreamChunk{
 						Type:         provider.ChunkStepFinish,
 						FinishReason: fr,
@@ -1753,7 +1758,7 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 			if !flushAllPending() {
 				return
 			}
-			finish("")
+			finish(stopReason)
 			return
 
 		case "error":
@@ -1771,7 +1776,7 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 	}
 	// Clean EOF without message_stop: emit finish with accumulated usage and response meta.
 	_ = flushAllPending()
-	finish("")
+	finish(stopReason)
 }
 
 func handleStreamError(ctx context.Context, data string, event map[string]any, out chan<- provider.StreamChunk) {
