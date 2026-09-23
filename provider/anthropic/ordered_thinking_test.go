@@ -207,3 +207,37 @@ func TestStreamReasoningBlockIDs(t *testing.T) {
 		t.Errorf("reasoning chunks = %v, want %v", got, want)
 	}
 }
+
+// TestStreamReasoningBlockIDInvalidIndex checks that a reasoning delta with a
+// malformed block index is still emitted, under a block ID that names no real
+// block.
+func TestStreamReasoningBlockIDInvalidIndex(t *testing.T) {
+	body := `event: message_start
+data: {"type":"message_start","message":{"id":"msg","model":"claude-opus-5-5","content":[],"usage":{"input_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":"x","delta":{"type":"thinking_delta","thinking":"hmm"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1.5,"delta":{"type":"signature_delta","signature":"sig"}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+	out := make(chan provider.StreamChunk, 64)
+	go parseSSE(t.Context(), strings.NewReader(body), out, false)
+	var got []string
+	for c := range out {
+		if c.Type == provider.ChunkReasoning {
+			got = append(got, fmt.Sprintf("%v:%q:%v", c.Metadata["blockId"], c.Text, c.Metadata["signature"]))
+		}
+	}
+	want := []string{`-1:"hmm":<nil>`, `-1:"":sig`}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("reasoning chunks = %v, want %v", got, want)
+	}
+}
