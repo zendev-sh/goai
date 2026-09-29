@@ -720,10 +720,37 @@ func (m *chatModel) maxTokens(params provider.GenerateParams) int {
 
 // --- Message conversion ---
 
+// hasThinkingBlocks reports whether msg carries a replayable Anthropic
+// thinking or redacted_thinking block (see the PartReasoning case in
+// convertMessages).
+func hasThinkingBlocks(msg provider.Message) bool {
+	for _, p := range msg.Content {
+		if p.Type != provider.PartReasoning {
+			continue
+		}
+		if sig, _ := p.ProviderOptions["signature"].(string); sig != "" {
+			return true
+		}
+		if data, _ := p.ProviderOptions["redactedData"].(string); data != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func convertMessages(msgs []provider.Message) []map[string]any {
 	// Pre-process: fix orphaned tool-calls, merge consecutive roles, reorder parts.
 	msgs = provider.NormalizeToolMessages(msgs)
-	msgs = provider.ReorderAssistantParts(msgs)
+	// An assistant turn carrying thinking blocks is Claude's own output, in the
+	// order Claude produced it: progress-update thinking blocks sit between
+	// tool_use blocks, and each thinking block is bound to everything before
+	// it, so hoisting tool calls past one invalidates it. Only other turns get
+	// the text-before-tool_use reordering.
+	for i := range msgs {
+		if !hasThinkingBlocks(msgs[i]) {
+			provider.ReorderAssistantParts(msgs[i : i+1])
+		}
+	}
 
 	result := make([]map[string]any, 0, len(msgs))
 	for _, msg := range msgs {
@@ -1369,10 +1396,84 @@ func inputTransformations(value any) ([]map[string]any, error) {
 	return result, nil
 }
 
+// orderedContent rebuilds a streamed message's content blocks, in order, as
+// the Parts GoAI replays on the next tool-loop step (ChunkFinish.Content).
+// Anthropic requires every thinking block back verbatim and in place -- each
+// with its own signature, including omitted-display blocks whose text is
+// empty -- which the flat chunk stream cannot express on its own. It is the
+// streaming counterpart of the content slice built in parseResponse.
+type orderedContent struct {
+	parts []provider.Part
+	text  []*strings.Builder // per part: accumulated text/thinking deltas
+	pos   map[string]int     // stream block ID (blockIDOf) -> parts position
+	tools map[string]int     // tool call ID -> parts position
+}
+
+// start records a new content block. A block with a malformed index ("-1")
+// is not tracked: it can't be told apart from other malformed blocks.
+func (c *orderedContent) start(id string, p provider.Part) {
+	if id == "-1" {
+		return
+	}
+	if c.pos == nil {
+		c.pos = map[string]int{}
+		c.tools = map[string]int{}
+	}
+	c.pos[id] = len(c.parts)
+	if p.Type == provider.PartToolCall {
+		c.tools[p.ToolCallID] = len(c.parts)
+	}
+	b := &strings.Builder{}
+	b.WriteString(p.Text)
+	c.parts = append(c.parts, p)
+	c.text = append(c.text, b)
+}
+
+func (c *orderedContent) appendText(id, s string) {
+	if i, ok := c.pos[id]; ok {
+		c.text[i].WriteString(s)
+	}
+}
+
+func (c *orderedContent) setSignature(id, sig string) {
+	if i, ok := c.pos[id]; ok && c.parts[i].Type == provider.PartReasoning {
+		c.parts[i].ProviderOptions["signature"] = sig
+	}
+}
+
+func (c *orderedContent) setToolInput(id, input string) {
+	if i, ok := c.tools[id]; ok {
+		c.parts[i].ToolInput = json.RawMessage(input)
+	}
+}
+
+func (c *orderedContent) setResultBlock(id string, rb map[string]any) {
+	if i, ok := c.tools[id]; ok {
+		c.parts[i].ProviderOptions = map[string]any{"resultBlock": maps.Clone(rb)}
+	}
+}
+
+// finish returns the ordered parts, or nil when no block was seen so the
+// caller falls back to the aggregate fields.
+func (c *orderedContent) finish() []provider.Part {
+	if len(c.parts) == 0 {
+		return nil
+	}
+	out := make([]provider.Part, len(c.parts))
+	for i, p := range c.parts {
+		if p.Type == provider.PartText || p.Type == provider.PartReasoning {
+			p.Text = c.text[i].String()
+		}
+		out[i] = p
+	}
+	return out
+}
+
 func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChunk, isRFMode bool) {
 	defer close(out)
 
 	sseScanner := sse.NewScanner(body)
+	var content orderedContent
 
 	var currentToolCallID string
 	var currentToolName string
@@ -1395,10 +1496,16 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 			responseMeta.ProviderMetadata = maps.Clone(finishMeta)
 			meta["providerMetadata"] = map[string]map[string]any{"anthropic": maps.Clone(finishMeta)}
 		}
-		provider.TrySend(ctx, out, provider.StreamChunk{
+		chunk := provider.StreamChunk{
 			Type: provider.ChunkFinish, FinishReason: reason, Usage: usage,
 			Response: responseMeta, Metadata: meta,
-		})
+		}
+		// The synthetic response-format tool call is not a real turn to
+		// replay; leave replay to the aggregate fields as before.
+		if !isRFMode {
+			chunk.Content = content.finish()
+		}
+		provider.TrySend(ctx, out, chunk)
 	}
 
 	// Pending server_tool_use ChunkToolCalls keyed by tool_use_id, deferred so
@@ -1487,7 +1594,10 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 			if cb, ok := event["content_block"].(map[string]any); ok {
 				cbType, _ := cb["type"].(string)
 				isResultBlock = false
+				// A malformed index names no block (blockIDOf's "-1"), which only
+				// costs the ordered replay snapshot; streaming stays lenient.
 				blockID := blockIDOf(event)
+				track := func(p provider.Part) { content.start(blockID, p) }
 				// If pending server_tool_use calls await their result blocks and
 				// the next block is neither a result nor another server tool,
 				// their results are not coming this step: flush without
@@ -1505,6 +1615,7 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 					isFirstDelta = true
 					isServerTool = false
 					if !isRFBlock {
+						track(provider.Part{Type: provider.PartToolCall, ToolCallID: currentToolCallID, ToolName: currentToolName})
 						if !provider.TrySend(ctx, out, provider.StreamChunk{
 							Type:       provider.ChunkToolCallStreamStart,
 							ToolCallID: currentToolCallID,
@@ -1519,6 +1630,7 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 					isRFBlock = false
 					isFirstDelta = true
 					isServerTool = true
+					track(provider.Part{Type: provider.PartToolCall, ToolCallID: currentToolCallID, ToolName: currentToolName})
 					if !provider.TrySend(ctx, out, provider.StreamChunk{
 						Type:       provider.ChunkToolCallStreamStart,
 						ToolCallID: currentToolCallID,
@@ -1526,11 +1638,26 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 					}) {
 						return
 					}
+				case "thinking":
+					// blockId marks the block boundary on every reasoning
+					// chunk, so consumers can tell consecutive thinking blocks
+					// apart even when one carries no text (omitted display, or
+					// an empty progress update).
+					part := provider.Part{Type: provider.PartReasoning, ProviderOptions: map[string]any{}}
+					part.Text, _ = cb["thinking"].(string)
+					if sig, _ := cb["signature"].(string); sig != "" {
+						part.ProviderOptions["signature"] = sig
+					}
+					track(part)
+				case "text":
+					text, _ := cb["text"].(string)
+					track(provider.Part{Type: provider.PartText, Text: text})
 				case "redacted_thinking":
 					// Redacted thinking arrives as a complete block in
 					// content_block_start (no deltas). Surface the encrypted
 					// data so it can be replayed on the next turn.
 					if data, _ := cb["data"].(string); data != "" {
+						track(provider.Part{Type: provider.PartReasoning, ProviderOptions: map[string]any{"redactedData": data}})
 						if !provider.TrySend(ctx, out, provider.StreamChunk{
 							Type: provider.ChunkReasoning,
 							Text: "",
@@ -1552,6 +1679,7 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 						currentResultUseID, _ = cb["tool_use_id"].(string)
 						if pc, ok := pendingCalls[currentResultUseID]; ok {
 							pc.resultBlock = cb
+							content.setResultBlock(currentResultUseID, cb)
 						}
 					}
 				}
@@ -1565,6 +1693,7 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 				case "text_delta":
 					text, _ := delta["text"].(string)
 					if text != "" {
+						content.appendText(blockID, text)
 						if !provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkText, Text: text}) {
 							return
 						}
@@ -1572,13 +1701,15 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 				case "thinking_delta":
 					text, _ := delta["thinking"].(string)
 					if text != "" {
-if !provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkReasoning, Text: text, Metadata: map[string]any{"blockId": blockID}}) {
+						content.appendText(blockID, text)
+						if !provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkReasoning, Text: text, Metadata: map[string]any{"blockId": blockID}}) {
 							return
 						}
 					}
 				case "signature_delta":
 					sig, _ := delta["signature"].(string)
 					if sig != "" {
+						content.setSignature(blockID, sig)
 						if !provider.TrySend(ctx, out, provider.StreamChunk{
 							Type: provider.ChunkReasoning,
 							Text: "",
@@ -1655,10 +1786,12 @@ if !provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkReasonin
 					name: currentToolName,
 					args: currentToolArgs.String(),
 				}
+				content.setToolInput(currentToolCallID, cmp.Or(currentToolArgs.String(), "{}"))
 				currentToolArgs.Reset()
 			case currentToolCallID != "" && !isRFBlock:
 				// Emit accumulated tool call with complete JSON args.
 				args := cmp.Or(currentToolArgs.String(), "{}")
+				content.setToolInput(currentToolCallID, args)
 				if !provider.TrySend(ctx, out, provider.StreamChunk{
 					Type:       provider.ChunkToolCall,
 					ToolCallID: currentToolCallID,
@@ -2273,8 +2406,6 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 				providerMeta["citations"] = append(existingCitations, citations...)
 			}
 		case "thinking":
-			// Every thinking block goes back verbatim with its own signature,
-			// including omitted-display blocks whose text is empty.
 			part := provider.Part{Type: provider.PartReasoning, Text: block.Thinking, ProviderOptions: map[string]any{}}
 			if block.Signature != "" {
 				part.ProviderOptions["signature"] = block.Signature

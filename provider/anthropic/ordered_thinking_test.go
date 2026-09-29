@@ -30,19 +30,6 @@ var orderedTurn = []map[string]any{
 	{"type": "tool_use", "id": "toolu_2", "name": "lookup", "input": map[string]any{"q": "two"}},
 }
 
-// orderedTurnReplayed is orderedTurn after ReorderAssistantParts moves the
-// tool calls to the end, keeping thinking/text in their original relative order.
-var orderedTurnReplayed = []map[string]any{
-	{"type": "redacted_thinking", "data": "enc-0"},
-	{"type": "thinking", "thinking": "Reasoning about the lookup.", "signature": "sig-a"},
-	{"type": "thinking", "thinking": "", "signature": "sig-b"},
-	{"type": "text", "text": "Looking that up."},
-	{"type": "thinking", "thinking": "Checking the first source.", "signature": "sig-c"},
-	{"type": "thinking", "thinking": "", "signature": "sig-d"},
-	{"type": "tool_use", "id": "toolu_1", "name": "lookup", "input": map[string]any{"q": "one"}},
-	{"type": "tool_use", "id": "toolu_2", "name": "lookup", "input": map[string]any{"q": "two"}},
-}
-
 // leadingTurn is an assistant turn whose thinking blocks all precede the
 // tool_use, as every model before Claude 5.x produces: consecutive blocks,
 // each with its own signature, one of them empty (omitted display).
@@ -205,17 +192,32 @@ func TestReplayLeadingThinking(t *testing.T) {
 	}
 }
 
-// TestReplayOrderedThinking checks that a turn with thinking interleaved
-// between text blocks replays with the thinking/text order intact, not
-// bunched ahead of the text (the aggregate-fields path would reorder them).
-func TestReplayOrderedThinking(t *testing.T) {
+// TestOrderedThinkingReplay checks that the tool loop sends the assistant turn
+// back exactly as produced -- every thinking block with its own signature
+// (empty ones included), redacted thinking, and the original interleaving
+// with text and tool_use -- on every transport.
+func TestOrderedThinkingReplay(t *testing.T) {
 	for _, tc := range []replayCase{
 		{name: "generate/json"},
 		{name: "generate/sse", autoStreaming: true},
+		{name: "stream", stream: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			replayed, _ := runReplay(t, tc, orderedTurn)
-			assertReplayed(t, replayed, orderedTurnReplayed)
+			replayed, steps := runReplay(t, tc, orderedTurn)
+			assertReplayed(t, replayed, orderedTurn)
+
+			// The first step exposes the same ordered content to callers.
+			if len(steps) == 0 {
+				t.Fatal("no steps")
+			}
+			var kinds []string
+			for _, p := range steps[0].Content {
+				kinds = append(kinds, string(p.Type))
+			}
+			wantKinds := []string{"reasoning", "reasoning", "reasoning", "text", "reasoning", "tool-call", "reasoning", "tool-call"}
+			if !reflect.DeepEqual(kinds, wantKinds) {
+				t.Errorf("step content kinds = %v, want %v", kinds, wantKinds)
+			}
 		})
 	}
 }
