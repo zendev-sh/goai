@@ -45,13 +45,32 @@ type CachedContentInput struct {
 	TTL             time.Duration
 }
 
-// CachedContent identifies a stored resource and when the provider will expire
-// it. Name is the resource name to pass back as the cachedContent of a request
-// (and to Renew): "cachedContents/<id>" on the direct API, or the full
-// "projects/.../cachedContents/<id>" path on Vertex.
+// CachedContent is the stored resource as returned by the API. Name is the
+// resource name to pass back as the cachedContent of a request (and to Renew):
+// "cachedContents/<id>" on the direct API, or the full
+// "projects/.../cachedContents/<id>" path on Vertex. Every output field of the
+// resource is mapped; the input-only ones (contents, tools, systemInstruction,
+// toolConfig, ttl) are never returned. Optional fields absent from the
+// response keep their zero value.
 type CachedContent struct {
-	Name      string
-	ExpiresAt time.Time
+	Name        string
+	DisplayName string
+	Model       string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	ExpiresAt   time.Time
+	Usage       CachedContentUsage
+}
+
+// CachedContentUsage is the resource's usageMetadata. TotalTokens is the size
+// of the cached prefix, which storage is billed on. The per-modality counts
+// are only reported by Vertex.
+type CachedContentUsage struct {
+	TotalTokens          int
+	TextCount            int
+	ImageCount           int
+	VideoDurationSeconds int
+	AudioDurationSeconds int
 }
 
 // Create stores a new cachedContents resource and returns its name + expiry.
@@ -118,8 +137,19 @@ func (c *CacheClient) send(ctx context.Context, method, url string, body any) (C
 		return CachedContent{}, fmt.Errorf("google: cachedContents response exceeds %d bytes", maxCacheResponseBytes)
 	}
 	var out struct {
-		Name       string `json:"name"`
-		ExpireTime string `json:"expireTime"`
+		Name          string `json:"name"`
+		DisplayName   string `json:"displayName"`
+		Model         string `json:"model"`
+		CreateTime    string `json:"createTime"`
+		UpdateTime    string `json:"updateTime"`
+		ExpireTime    string `json:"expireTime"`
+		UsageMetadata struct {
+			TotalTokenCount      int `json:"totalTokenCount"`
+			TextCount            int `json:"textCount"`
+			ImageCount           int `json:"imageCount"`
+			VideoDurationSeconds int `json:"videoDurationSeconds"`
+			AudioDurationSeconds int `json:"audioDurationSeconds"`
+		} `json:"usageMetadata"`
 	}
 	if uerr := json.Unmarshal(data, &out); uerr != nil {
 		return CachedContent{}, fmt.Errorf("parsing cachedContents response: %w", uerr)
@@ -131,7 +161,43 @@ func (c *CacheClient) send(ctx context.Context, method, url string, body any) (C
 	if err != nil {
 		return CachedContent{}, fmt.Errorf("parsing cachedContents expireTime %q: %w", out.ExpireTime, err)
 	}
-	return CachedContent{Name: out.Name, ExpiresAt: expires}, nil
+	created, err := parseOptionalTime("createTime", out.CreateTime)
+	if err != nil {
+		return CachedContent{}, err
+	}
+	updated, err := parseOptionalTime("updateTime", out.UpdateTime)
+	if err != nil {
+		return CachedContent{}, err
+	}
+	u := out.UsageMetadata
+	return CachedContent{
+		Name:        out.Name,
+		DisplayName: out.DisplayName,
+		Model:       out.Model,
+		CreatedAt:   created,
+		UpdatedAt:   updated,
+		ExpiresAt:   expires,
+		Usage: CachedContentUsage{
+			TotalTokens:          u.TotalTokenCount,
+			TextCount:            u.TextCount,
+			ImageCount:           u.ImageCount,
+			VideoDurationSeconds: u.VideoDurationSeconds,
+			AudioDurationSeconds: u.AudioDurationSeconds,
+		},
+	}, nil
+}
+
+// parseOptionalTime parses an RFC 3339 timestamp field that the API may omit;
+// an absent field yields the zero time.
+func parseOptionalTime(field, value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parsing cachedContents %s %q: %w", field, value, err)
+	}
+	return t, nil
 }
 
 // cacheModelName is the model reference accepted in the cachedContents body:

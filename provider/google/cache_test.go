@@ -290,6 +290,16 @@ func TestCacheClient_ResponseParsingErrors(t *testing.T) {
 			response: `{"name":"cachedContents/123","expireTime":"invalid-date"}`,
 			wantErr:  "parsing cachedContents expireTime",
 		},
+		{
+			name:     "invalid createTime format",
+			response: `{"name":"cachedContents/123","expireTime":"2026-01-01T00:00:00Z","createTime":"invalid-date"}`,
+			wantErr:  "parsing cachedContents createTime",
+		},
+		{
+			name:     "invalid updateTime format",
+			response: `{"name":"cachedContents/123","expireTime":"2026-01-01T00:00:00Z","updateTime":"invalid-date"}`,
+			wantErr:  "parsing cachedContents updateTime",
+		},
 	}
 
 	for _, tt := range tests {
@@ -380,5 +390,96 @@ func TestCacheClient_RejectsOversizedResponse(t *testing.T) {
 	_, err := c.Create(context.Background(), CachedContentInput{Model: "m", TTL: time.Hour})
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("expected size-limit error, got: %v", err)
+	}
+}
+
+// cacheResponseServer answers every cachedContents call with the given body.
+func cacheResponseServer(t *testing.T, response string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, response)
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestCacheClient_ParsesResourceMetadata(t *testing.T) {
+	server := cacheResponseServer(t, `{
+		"name": "cachedContents/abc",
+		"displayName": "session prefix",
+		"model": "models/gemini-3.5-flash",
+		"createTime": "2026-01-01T00:00:00.123456Z",
+		"updateTime": "2026-01-01T00:30:00Z",
+		"expireTime": "2026-01-01T01:00:00Z",
+		"usageMetadata": {"totalTokenCount": 12345}
+	}`)
+
+	c := NewCacheClient(WithAPIKey("k"), WithBaseURL(server.URL))
+	for name, call := range map[string]func() (CachedContent, error){
+		"Create": func() (CachedContent, error) {
+			return c.Create(context.Background(), CachedContentInput{Model: "gemini-3.5-flash", TTL: time.Hour})
+		},
+		"Renew": func() (CachedContent, error) {
+			return c.Renew(context.Background(), "cachedContents/abc", time.Hour)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := call()
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			want := CachedContent{
+				Name:        "cachedContents/abc",
+				DisplayName: "session prefix",
+				Model:       "models/gemini-3.5-flash",
+				CreatedAt:   time.Date(2026, 1, 1, 0, 0, 0, 123456000, time.UTC),
+				UpdatedAt:   time.Date(2026, 1, 1, 0, 30, 0, 0, time.UTC),
+				ExpiresAt:   time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC),
+				Usage:       CachedContentUsage{TotalTokens: 12345},
+			}
+			if got != want {
+				t.Errorf("got %+v\nwant %+v", got, want)
+			}
+		})
+	}
+}
+
+// Vertex reports a per-modality breakdown alongside the total.
+func TestCacheClient_ParsesVertexUsageMetadata(t *testing.T) {
+	server := cacheResponseServer(t, `{
+		"name": "projects/p/locations/us-central1/cachedContents/z",
+		"expireTime": "2026-01-01T01:00:00Z",
+		"usageMetadata": {
+			"totalTokenCount": 9000,
+			"textCount": 4000,
+			"imageCount": 2,
+			"videoDurationSeconds": 30,
+			"audioDurationSeconds": 15
+		}
+	}`)
+
+	c := NewCacheClient(WithTokenSource(provider.StaticToken("tok")), WithVertex("p", "us-central1"), WithBaseURL(server.URL))
+	got, err := c.Create(context.Background(), CachedContentInput{Model: "gemini-3.5-flash", TTL: time.Hour})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	want := CachedContentUsage{TotalTokens: 9000, TextCount: 4000, ImageCount: 2, VideoDurationSeconds: 30, AudioDurationSeconds: 15}
+	if got.Usage != want {
+		t.Errorf("Usage = %+v, want %+v", got.Usage, want)
+	}
+}
+
+// Optional fields absent from the response stay at their zero value.
+func TestCacheClient_MissingOptionalFieldsAreZero(t *testing.T) {
+	server := cacheResponseServer(t, `{"name":"cachedContents/abc","expireTime":"2026-01-01T00:00:00Z"}`)
+
+	c := NewCacheClient(WithAPIKey("k"), WithBaseURL(server.URL))
+	got, err := c.Create(context.Background(), CachedContentInput{Model: "m", TTL: time.Hour})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !got.CreatedAt.IsZero() || !got.UpdatedAt.IsZero() || got.DisplayName != "" || got.Model != "" || got.Usage != (CachedContentUsage{}) {
+		t.Errorf("optional fields not zero: %+v", got)
 	}
 }
