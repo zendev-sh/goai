@@ -772,6 +772,49 @@ func streamResponsesWithConfig(
 				}
 			}
 
+		case "response.reasoning_text.delta":
+			// Raw reasoning text, as opposed to a summary of it, filling the
+			// reasoning item's reasoning_text content parts. DeepSeek's
+			// Responses API streams its whole chain of thought this way.
+			var ev struct {
+				ItemID       *string `json:"item_id"`
+				ContentIndex *int    `json:"content_index"`
+				Delta        *string `json:"delta"`
+			}
+			ev.ItemID = new(string)
+			ev.ContentIndex = new(int)
+			if err := decodeResponsesEvent(eventType, read.event.Data, &ev); err != nil {
+				trySendResponsesError(ctx, out, err)
+				return
+			}
+			if ev.ItemID == nil {
+				trySendResponsesError(ctx, out, nullResponsesEventField(eventType, "item_id"))
+				return
+			}
+			if ev.ContentIndex == nil {
+				trySendResponsesError(ctx, out, nullResponsesEventField(eventType, "content_index"))
+				return
+			}
+			if ev.Delta == nil {
+				trySendResponsesError(ctx, out, missingResponsesEventField(eventType, "delta"))
+				return
+			}
+			if *ev.Delta != "" {
+				id := *ev.ItemID
+				if idx, ar := activeReasoningForEvent(activeReasoning, currentReasoningIdx, *ev.ItemID); idx >= 0 {
+					id = ar.canonicalID
+				}
+				if !provider.TrySend(ctx, out, provider.StreamChunk{
+					Type: provider.ChunkReasoning,
+					Text: *ev.Delta,
+					Metadata: map[string]any{
+						"reasoningId": fmt.Sprintf("%s:%d", id, *ev.ContentIndex),
+					},
+				}) {
+					return
+				}
+			}
+
 		case "response.reasoning_summary_part.added":
 			var ev struct {
 				ItemID         *string `json:"item_id"`
@@ -1394,6 +1437,19 @@ func parseResponsesResult(body []byte) (*provider.GenerateResult, error) {
 					providerMeta["reasoning"] = append(reasoning, map[string]any{
 						"type": s.Type,
 						"text": s.Text,
+					})
+				}
+			}
+			// Raw reasoning comes as reasoning_text content parts instead of
+			// a summary, as DeepSeek's Responses API returns it.
+			for _, c := range item.Content {
+				if c.Type == "reasoning_text" && c.Text != "" {
+					reasoningParts = append(reasoningParts, c.Text)
+					itemText = append(itemText, c.Text)
+					reasoning, _ := providerMeta["reasoning"].([]map[string]any)
+					providerMeta["reasoning"] = append(reasoning, map[string]any{
+						"type": c.Type,
+						"text": c.Text,
 					})
 				}
 			}

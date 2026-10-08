@@ -5164,3 +5164,95 @@ func TestParseResponsesResult_SingleSummaryHasNoSeparator(t *testing.T) {
 		t.Errorf("Reasoning = %q, want %q", result.Reasoning, "Only one.")
 	}
 }
+
+func TestParseResponsesResult_ReasoningText(t *testing.T) {
+	// Raw reasoning arrives as reasoning_text content parts rather than a
+	// summary, as DeepSeek's Responses API returns it.
+	body := `{
+		"id": "resp-1",
+		"model": "deepseek-flash",
+		"status": "completed",
+		"output": [
+			{"type": "reasoning", "id": "rs_1", "summary": [], "content": [
+				{"type": "reasoning_text", "text": "The user asks 1+1."}
+			]},
+			{"type": "message", "content": [{"type": "output_text", "text": "2"}]}
+		],
+		"usage": {"input_tokens": 1, "output_tokens": 1}
+	}`
+
+	result, err := parseResponsesResult([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "2" {
+		t.Errorf("Text = %q, want %q", result.Text, "2")
+	}
+	if result.Reasoning != "The user asks 1+1." {
+		t.Errorf("Reasoning = %q, want %q", result.Reasoning, "The user asks 1+1.")
+	}
+}
+
+func TestStreamResponses_ReasoningText(t *testing.T) {
+	// The event sequence DeepSeek's Responses API streams for a reasoning
+	// item: its raw chain of thought as response.reasoning_text.delta.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: response.output_item.added\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_1","status":"in_progress","content":[],"summary":[]}}`+"\n\n")
+		_, _ = fmt.Fprint(w, "event: response.content_part.added\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"response.content_part.added","content_index":0,"item_id":"rs_1","output_index":0,"part":{"type":"reasoning_text","text":""}}`+"\n\n")
+		_, _ = fmt.Fprint(w, "event: response.reasoning_text.delta\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"The user ","item_id":"rs_1","output_index":0}`+"\n\n")
+		_, _ = fmt.Fprint(w, "event: response.reasoning_text.delta\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"asks 1+1.","item_id":"rs_1","output_index":0}`+"\n\n")
+		_, _ = fmt.Fprint(w, "event: response.reasoning_text.done\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"response.reasoning_text.done","content_index":0,"text":"The user asks 1+1.","item_id":"rs_1","output_index":0}`+"\n\n")
+		_, _ = fmt.Fprint(w, "event: response.output_item.done\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_1","content":[{"type":"reasoning_text","text":"The user asks 1+1."}],"summary":[]}}`+"\n\n")
+		_, _ = fmt.Fprint(w, "event: response.output_text.delta\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"response.output_text.delta","output_index":1,"content_index":0,"item_id":"msg_1","delta":"2"}`+"\n\n")
+		_, _ = fmt.Fprint(w, "event: response.completed\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":5,"output_tokens":7}}}`+"\n\n")
+	}))
+	defer server.Close()
+
+	model := Chat("deepseek-flash", WithAPIKey("key"), WithBaseURL(server.URL))
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "1+1?"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var reasoning strings.Builder
+	var ids []string
+	var text string
+	for chunk := range result.Stream {
+		switch chunk.Type {
+		case provider.ChunkReasoning:
+			if chunk.Text != "" {
+				reasoning.WriteString(chunk.Text)
+				id, _ := chunk.Metadata["reasoningId"].(string)
+				ids = append(ids, id)
+			}
+		case provider.ChunkText:
+			text += chunk.Text
+		case provider.ChunkError:
+			t.Fatalf("stream error: %v", chunk.Error)
+		}
+	}
+	if reasoning.String() != "The user asks 1+1." {
+		t.Errorf("reasoning = %q, want %q", reasoning.String(), "The user asks 1+1.")
+	}
+	for _, id := range ids {
+		if id != "rs_1:0" {
+			t.Errorf("reasoningId = %q, want %q", id, "rs_1:0")
+		}
+	}
+	if text != "2" {
+		t.Errorf("text = %q, want %q", text, "2")
+	}
+}
