@@ -546,6 +546,11 @@ func TestResponsesStreamRejectsInvalidRecognizedEventSchema(t *testing.T) {
 			data:      `{"summary_index":"first"}`,
 		},
 		{
+			name:      "reasoning text delta",
+			eventType: "response.reasoning_text.delta",
+			data:      `{"content_index":"first"}`,
+		},
+		{
 			name:      "reasoning summary part added",
 			eventType: "response.reasoning_summary_part.added",
 			data:      `{"item_id":123,"output_index":0,"summary_index":0}`,
@@ -676,6 +681,24 @@ func TestResponsesStreamRejectsInvalidRecognizedEventSchema(t *testing.T) {
 			name:       "reasoning delta null",
 			eventType:  "response.reasoning_summary_text.delta",
 			data:       `{"item_id":"rs_1","summary_index":0,"delta":null}`,
+			wantReason: "event payload is missing required delta",
+		},
+		{
+			name:       "reasoning text item id null",
+			eventType:  "response.reasoning_text.delta",
+			data:       `{"item_id":null,"content_index":0,"delta":"thinking"}`,
+			wantReason: "event payload has null item_id",
+		},
+		{
+			name:       "reasoning text content index null",
+			eventType:  "response.reasoning_text.delta",
+			data:       `{"item_id":"rs_1","content_index":null,"delta":"thinking"}`,
+			wantReason: "event payload has null content_index",
+		},
+		{
+			name:       "reasoning text delta null",
+			eventType:  "response.reasoning_text.delta",
+			data:       `{"item_id":"rs_1","content_index":0,"delta":null}`,
 			wantReason: "event payload is missing required delta",
 		},
 		{
