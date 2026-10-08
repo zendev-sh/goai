@@ -66,7 +66,7 @@ curl -H "Authorization: Bearer $FPT_API_KEY" https://mkp-api.fptcloud.jp/v1/mode
 
 ## Tested Models
 
-**Unit tested** (mock HTTP server): `Qwen3-32B`
+**Unit tested** (mock HTTP server): `Qwen2.5-Coder-32B-Instruct`
 
 **E2E verified** (real API, generate + stream, JP region): `Qwen3-32B`
 

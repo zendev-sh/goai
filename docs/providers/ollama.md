@@ -37,7 +37,7 @@ Any model available in Ollama. Common examples:
 
 ## Tested Models
 
-**Unit tested** (mock HTTP server, 2026-03-15): `llama3`, `llama3.2:1b`, `nomic-embed-text`
+**Unit tested** (mock HTTP server, 2026-03-15): `llama3`, `nomic-embed-text`
 
 ## Usage
 

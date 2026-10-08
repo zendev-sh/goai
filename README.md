@@ -854,9 +854,9 @@ goai/                       # Core SDK
 │   ├── cohere/             # Cohere (Chat v2 + Embed)
 │   ├── minimax/            # MiniMax (Anthropic-compatible API)
 │   ├── compat/             # Generic OpenAI-compatible
-│   	└── ...                 # 18 OpenAI-compatible provider implementation files
+│   	└── ...                 # 19 OpenAI-compatible provider implementation files
 ├── internal/
-│   ├── openaicompat/       # Shared codec for 18 OpenAI-compatible provider implementation files
+│   ├── openaicompat/       # Shared codec for 19 OpenAI-compatible provider implementation files
 │   ├── gemini/             # Schema sanitization (Vertex, Google)
 │   ├── sse/                # SSE line parser
 │   └── httpc/              # HTTP utilities

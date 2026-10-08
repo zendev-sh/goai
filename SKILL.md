@@ -323,7 +323,7 @@ Available provider tools:
 
 - **OpenAI**: `WebSearch()`, `CodeInterpreter()`, `ImageGeneration()`, `FileSearch(opts...)`
 - **Anthropic**: `WebSearch()`, `WebFetch()`, `Computer(opts)`, `Bash()`, `TextEditor()`, `CodeExecution()`, `ToolSearchToolRegex()`, `ToolSearchToolBM25()` (+ versioned variants)
-- **Google**: `GoogleSearch()`, `URLContext()`, `CodeExecution()`, `ComputerUse(opts...)`
+- **Google**: `GoogleSearch()`, `URLContext()`, `CodeExecution()`, `ComputerUse(opts...)`, `FileSearch(opts...)`
 - **xAI**: `WebSearch()`, `XSearch()`
 - **Groq**: `BrowserSearch()`
 
@@ -579,8 +579,8 @@ model := openai.Chat("gpt-4o", openai.WithTokenSource(ts))
 | Provider      | Import               | Chat | Embed | Image | Provider Tools |
 | ------------- | -------------------- | ---- | ----- | ----- | -------------- |
 | OpenAI        | `provider/openai`    | Yes  | Yes   | Yes   | 4              |
-| Anthropic     | `provider/anthropic` | Yes  | -     | -     | 12             |
-| Google Gemini | `provider/google`    | Yes  | Yes   | Yes   | 4              |
+| Anthropic     | `provider/anthropic` | Yes  | -     | -     | 14             |
+| Google Gemini | `provider/google`    | Yes  | Yes   | Yes   | 5              |
 | AWS Bedrock   | `provider/bedrock`   | Yes  | Yes   | -     | -              |
 | Azure OpenAI  | `provider/azure`     | Yes  | -     | Yes   | -              |
 | Vertex AI     | `provider/vertex`    | Yes  | Yes   | Yes   | -              |
@@ -605,7 +605,7 @@ Fireworks, Together, DeepInfra, OpenRouter, Perplexity, Cerebras
 | -------- | ----------------- | ---- | ----- | -------------------- |
 | Ollama   | `provider/ollama` | Yes  | Yes   | `http://localhost:11434` |
 | vLLM     | `provider/vllm`   | Yes  | Yes   | `localhost:8000/v1`  |
-| RunPod   | `provider/runpod` | Yes  | -     | `RUNPOD_ENDPOINT_ID` |
+| RunPod   | `provider/runpod` | Yes  | -     | `https://api.runpod.ai/v2/{endpointID}/openai/v1` |
 | Custom   | `provider/compat` | Yes  | Yes   | user-defined         |
 
 ---

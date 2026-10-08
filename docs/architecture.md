@@ -24,7 +24,7 @@ GoAI is a Go SDK that provides one unified API across 25+ LLM providers. This do
 └──┬─────────┬──────────┬──────────┬──────────┬─────────┬──────────┘
    │         │          │          │          │         │
 ┌──▼───┐ ┌───▼───┐ ┌───▼───┐ ┌───▼────┐ ┌───▼──┐ ┌───▼────────┐
-│OpenAI│ │Anthro.│ │Google │ │Bedrock │ │Cohere│ │18 compat   │
+│OpenAI│ │Anthro.│ │Google │ │Bedrock │ │Cohere│ │19 compat   │
 │      │ │       │ │       │ │        │ │      │ │providers   │
 └──┬───┘ └───┬───┘ └───┬───┘ └───┬────┘ └───┬──┘ └───┬────────┘
    │         │         │         │          │        │
@@ -36,9 +36,9 @@ GoAI is a Go SDK that provides one unified API across 25+ LLM providers. This do
    └──────────────────────┬──────────────────────────┘
                             │
                ┌────────────▼─────────────┐
-               │  internal/openaicompat   │
-               │  Shared codec for 18     │
-               │  OpenAI-compatible APIs  │
+│  internal/openaicompat   │
+│  Shared codec for 19     │
+│  OpenAI-compatible APIs  │
                └────────────┬─────────────┘
                             │
                ┌────────────▼─────────────┐
@@ -118,7 +118,7 @@ An optional `CapableModel` interface allows providers to declare feature support
 
 | Package                 | Description                                                                                                                                                                                                    |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `internal/openaicompat` | Shared request building and response parsing for all OpenAI-compatible APIs. `BuildRequest` constructs the wire format, `ParseStream`/`ParseResponse` decode responses into GoAI types. Used by 18 provider implementation files directly. |
+| `internal/openaicompat` | Shared request building and response parsing for all OpenAI-compatible APIs. `BuildRequest` constructs the wire format, `ParseStream`/`ParseResponse` decode responses into GoAI types. Used by 19 provider implementation files directly. |
 | `internal/gemini`       | Gemini schema sanitization (`SanitizeSchema`). Used by the Vertex and Google providers to conform JSON Schemas to Gemini's stricter requirements.                                                                     |
 | `internal/sse`          | Minimal SSE (Server-Sent Events) scanner. Handles `data:` prefix, blank lines, `[DONE]` sentinel. JSON deserialization is left to the caller.                                                                         |
 | `internal/httpc`        | HTTP utilities: `MustMarshalJSON`, `MustNewRequest`, `ParseDataURL`. Shared across all providers.                                                                                                                     |
@@ -135,20 +135,20 @@ These providers implement their own request/response codec because their APIs di
 | ------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **OpenAI**    | Chat Completions + Responses API | All models default to Responses API (matching Vercel v2.0.89+). Chat Completions available via `useResponsesAPI: false` in ProviderOptions. Separate `responses.go` handles different SSE format. Provider-defined tools: web search, code interpreter, file search, image generation. |
 | **Anthropic** | Messages API                     | Custom SSE event format (`message_start`, `content_block_start`, `content_block_delta`, etc.). Structured output via tool trick (injects synthetic tool) or native `output_format`. Provider-defined tools: computer use, bash, text editor, web search, web fetch, code execution.               |
-| **Google**    | Gemini REST API                  | Custom JSON format with `contents[]` array, `generationConfig`, `tools[]`. Structured output via `responseMimeType` + `responseSchema` in `generationConfig`. Provider-defined tools: Google Search grounding, URL context, code execution.                                                        |
+| **Google**    | Gemini REST API                  | Custom JSON format with `contents[]` array, `generationConfig`, `tools[]`. Structured output via `responseMimeType` + `responseSchema` in `generationConfig`. Provider-defined tools: Google Search grounding, URL context, code execution, computer use, file search.                                                        |
 | **Bedrock**   | AWS Converse + InvokeModel API   | Binary EventStream protocol for streaming, SigV4 request signing (without AWS SDK), cross-region inference fallback with `us.` prefix retry. InvokeModel API for embeddings (Titan, Cohere, Nova, Marengo).                                                                                                                                                       |
 | **Cohere**    | Chat v2 + Embed API              | Custom message format with native embed API. Tool results use standard `role: "tool"` with `tool_call_id`. Structured output via native `response_format` (`json_object` type with `json_schema`).                                                                                                                      |
 
 ### OpenAI-Compatible Providers (shared codec)
 
-18 provider implementation files directly import `internal/openaicompat` (including `openai` for its Chat Completions path). Each thin wrapper:
+19 provider implementation files directly import `internal/openaicompat` (including `openai` for its Chat Completions path). Each thin wrapper:
 
 1. Sets the correct base URL and auth headers
 2. Resolves credentials from environment variables
 3. Delegates to `openaicompat.BuildRequest` / `ParseStream` / `ParseResponse`
 
 ```
-Direct openaicompat importers (18 provider files):
+Direct openaicompat importers (19 provider files):
 ├── openai/      ← Chat Completions path uses openaicompat; Responses path is native
 ├── vertex/      ← Uses OAuth2 ADC for auth
 ├── mistral/     ├── groq/       ├── xai/
@@ -156,7 +156,7 @@ Direct openaicompat importers (18 provider files):
 ├── deepinfra/   ├── openrouter/ ├── perplexity/
 ├── cerebras/    ├── runpod/      ├── cloudflare/
 ├── fptcloud/    ├── nvidia/      ├── requesty/
-└── compat/      ← Generic, user-configured endpoint
+├── heabsy/      ├── compat/      ← Generic, user-configured endpoint
 
 Indirect users (via delegation):
 ├── azure/       ← Delegates to openai/ (OpenAI models), anthropic/ (Claude), AI Services (others)

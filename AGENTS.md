@@ -45,16 +45,16 @@ goai/
 │   ├── cohere/             # Cohere (Chat v2 + Embed)
 │   ├── minimax/            # MiniMax (Anthropic-compat, delegates to anthropic/)
 │   ├── compat/             # Generic OpenAI-compatible
-│   └── <18 more>/          # Mostly OpenAI-compat (some via compat/ or anthropic/ wrappers)
+│   └── <19 more>/          # Mostly OpenAI-compat (some via compat/ or anthropic/ wrappers)
 │ # tools.go files: 5 files with provider-defined tools: anthropic/ (14 tools), openai/ (4 tools), google/ (5 tools), xai/ (2 tools), groq/ (1 tool)
 ├── internal/
-│   ├── openaicompat/       # Shared codec for 18 provider implementation files
+│   ├── openaicompat/       # Shared codec for 19 provider implementation files
 │   ├── gemini/             # Schema sanitization (Vertex, Google)
 │   ├── sse/                # SSE parser
 │   └── httpc/              # HTTP helpers + ParseDataURL
 ├── mcp/                    # MCP (Model Context Protocol) client
 ├── observability/
-│   ├── langfuse/           # Langfuse observability integration
+│   ├── langfuse/           # Langfuse observability integration (separate go.mod)
 │   └── otel/               # OpenTelemetry tracing and metrics (separate go.mod)
 ├── examples/               # 33 runnable examples (including 8 MCP examples)
 └── bench/                  # Performance benchmarks (GoAI vs Vercel AI SDK)
@@ -62,7 +62,7 @@ goai/
 
 ## Key Rules
 
-1. **Keep dependencies minimal** - core runtime: direct `golang.org/x/oauth2`, indirect `cloud.google.com/go/compute/metadata` for ADC; `go.uber.org/goleak` is test-only. Optional submodules (`observability/otel`) use separate `go.mod`.
+1. **Keep dependencies minimal** - core runtime: direct `golang.org/x/oauth2`, indirect `cloud.google.com/go/compute/metadata` for ADC; `go.uber.org/goleak` is test-only. Optional submodules (`observability/langfuse`, `observability/otel`) use separate `go.mod`.
 2. **Vercel AI SDK is the reference** - check Vercel source before modifying provider behavior
 3. **90% test coverage** per package - mock HTTP servers, not internals
 4. **Interface compliance checks** - provider structs should include compile-time checks (type name may vary, e.g. `*chatCompletionsModel`)

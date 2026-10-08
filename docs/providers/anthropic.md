@@ -1,6 +1,6 @@
 ---
 title: Anthropic Provider
-description: "Use Anthropic Claude models in Go with GoAI. Supports the Messages API, extended thinking, prompt caching, and 12 provider-defined tools."
+description: "Use Anthropic Claude models in Go with GoAI. Supports the Messages API, extended thinking, prompt caching, and 14 provider-defined tools."
 ---
 
 # Anthropic
