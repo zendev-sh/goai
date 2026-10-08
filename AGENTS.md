@@ -45,10 +45,10 @@ goai/
 │   ├── cohere/             # Cohere (Chat v2 + Embed)
 │   ├── minimax/            # MiniMax (Anthropic-compat, delegates to anthropic/)
 │   ├── compat/             # Generic OpenAI-compatible
-│   └── <19 more>/          # Mostly OpenAI-compat (some via compat/ or anthropic/ wrappers)
+│   └── <20 more>/          # Mostly OpenAI-compat (some via compat/ or anthropic/ wrappers)
 │ # tools.go files: 5 files with provider-defined tools: anthropic/ (14 tools), openai/ (4 tools), google/ (5 tools), xai/ (2 tools), groq/ (1 tool)
 ├── internal/
-│   ├── openaicompat/       # Shared codec for 19 provider implementation files
+│   ├── openaicompat/       # Shared codec for 20 provider implementation files
 │   ├── gemini/             # Schema sanitization (Vertex, Google)
 │   ├── sse/                # SSE parser
 │   └── httpc/              # HTTP helpers + ParseDataURL

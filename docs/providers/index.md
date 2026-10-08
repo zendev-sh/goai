@@ -51,6 +51,7 @@ Most use the shared `internal/openaicompat` codec (some wrappers delegate via `p
 | [FPT Cloud](fptcloud.md)    | `mkp-api.fptcloud.com` / `.jp` | `FPT_API_KEY`, `FPT_REGION`           |
 | [NVIDIA NIM](nvidia.md)     | `integrate.api.nvidia.com/v1` | `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`  |
 | [Heabsy](heabsy.md)         | `api.heabsy.com`    | `HEABSY_API_KEY`, `HEABSY_BASE_URL`           |
+| [Opper](opper.md)           | `api.opper.ai`      | `OPPER_API_KEY`, `OPPER_BASE_URL`             |
 
 ## Local / Custom
 
