@@ -33,6 +33,7 @@ func TestRun(t *testing.T) {
 		{"CLI", "", "web_search", map[string]any{"objective": "Go release highlights", "search_queries": []any{"Go release highlights"}}, false, false},
 		{"fetch", "https://go.dev/doc/go1.25", "web_fetch", map[string]any{"urls": []any{"https://go.dev/doc/go1.25"}}, false, false},
 		{"tool error", "", "web_search", map[string]any{"objective": "Go release highlights", "search_queries": []any{"Go release highlights"}}, true, false},
+		{"RPC error", "", "web_search", map[string]any{"objective": "Go release highlights", "search_queries": []any{"Go release highlights"}}, false, false},
 		{"output error", "", "", nil, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -92,6 +93,12 @@ func TestRun(t *testing.T) {
 					t.Errorf("unexpected method %s", msg.Method)
 				}
 				w.Header().Set("Content-Type", "application/json")
+				if tc.name == "RPC error" && msg.Method == "tools/call" {
+					if err := json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32603, "message": "fixture failure"}}); err != nil {
+						t.Error(err)
+					}
+					return
+				}
 				if err := json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": result}); err != nil {
 					t.Error(err)
 				}
@@ -117,7 +124,11 @@ func TestRun(t *testing.T) {
 				}
 				return
 			}
-			if tc.toolError {
+			if tc.name == "RPC error" {
+				if err == nil || !strings.Contains(err.Error(), "fixture failure") {
+					t.Fatalf("expected RPC error, got %v", err)
+				}
+			} else if tc.toolError {
 				if err == nil || !strings.Contains(err.Error(), tc.tool) {
 					t.Fatalf("expected tool error, got %v", err)
 				}
