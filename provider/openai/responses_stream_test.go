@@ -1094,3 +1094,30 @@ func countTerminalOutcomes(out <-chan provider.StreamChunk) int {
 	}
 	return count
 }
+
+func TestStreamResponses_ReasoningTextCancelledWhileSending(t *testing.T) {
+	// A reasoning_text delta waiting to be received when the caller cancels
+	// is dropped, and the stream ends without delivering it.
+	ctx, cancel := context.WithCancel(t.Context())
+	input := "event: response.reasoning_text.delta\n" +
+		`data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"thinking","item_id":"rs_1","output_index":0}` + "\n\n"
+
+	out := make(chan provider.StreamChunk) // unbuffered, and not received from yet
+	done := make(chan struct{})
+	go func() {
+		streamResponses(ctx, io.NopCloser(strings.NewReader(input)), out)
+		close(done)
+	}()
+	time.Sleep(50 * time.Millisecond) // let the delta reach the send
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("stream did not stop after cancellation")
+	}
+	for chunk := range out {
+		if chunk.Type == provider.ChunkReasoning {
+			t.Fatalf("reasoning delivered after cancellation: %#v", chunk)
+		}
+	}
+}
