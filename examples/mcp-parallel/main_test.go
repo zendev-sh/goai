@@ -7,9 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -27,6 +30,7 @@ func TestRun(t *testing.T) {
 		outputError     bool
 	}{
 		{"search", "", "web_search", map[string]any{"objective": "Go release highlights", "search_queries": []any{"Go release highlights"}}, false, false},
+		{"CLI", "", "web_search", map[string]any{"objective": "Go release highlights", "search_queries": []any{"Go release highlights"}}, false, false},
 		{"fetch", "https://go.dev/doc/go1.25", "web_fetch", map[string]any{"urls": []any{"https://go.dev/doc/go1.25"}}, false, false},
 		{"tool error", "", "web_search", map[string]any{"objective": "Go release highlights", "search_queries": []any{"Go release highlights"}}, true, false},
 		{"output error", "", "", nil, false, true},
@@ -98,7 +102,12 @@ func TestRun(t *testing.T) {
 			if tc.outputError {
 				writer = failingWriter{}
 			}
-			err := run(context.Background(), server.URL+"/mcp", server.Client(), "Go release highlights", tc.url, writer)
+			var err error
+			if tc.name == "CLI" {
+				out = *bytes.NewBufferString(runCLI(t, server.URL))
+			} else {
+				err = run(context.Background(), server.URL+"/mcp", server.Client(), "Go release highlights", tc.url, writer)
+			}
 			if tc.outputError {
 				if !errors.Is(err, io.ErrClosedPipe) {
 					t.Fatalf("expected output error, got %v", err)
@@ -121,6 +130,45 @@ func TestRun(t *testing.T) {
 		})
 	}
 }
+
+// Exercise the documented flags and default endpoint through the real CLI.
+// Only the network destination is redirected to the HTTP fixture.
+func runCLI(t *testing.T, endpoint string) string {
+	oldArgs, oldFlags, oldOut, oldTransport := os.Args, flag.CommandLine, os.Stdout, http.DefaultTransport
+	t.Cleanup(func() {
+		os.Args, flag.CommandLine, os.Stdout, http.DefaultTransport = oldArgs, oldFlags, oldOut, oldTransport
+	})
+	target, err := url.Parse(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != parallelURL {
+			t.Errorf("CLI endpoint = %s", r.URL)
+		}
+		clone := r.Clone(r.Context())
+		clone.URL.Scheme, clone.URL.Host = target.Scheme, target.Host
+		return oldTransport.RoundTrip(clone)
+	})
+	file, err := os.CreateTemp(t.TempDir(), "stdout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = file.Close() })
+	os.Stdout = file
+	os.Args = []string{"mcp-parallel", "-query", "Go release highlights"}
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	main()
+	data, err := os.ReadFile(file.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 type failingWriter struct{}
 
