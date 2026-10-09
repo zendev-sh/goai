@@ -49,7 +49,7 @@ func run(ctx context.Context, endpoint string, httpClient *http.Client, query, u
 		mcp.WithHTTPHeaders(map[string]string{"User-Agent": userAgent}),
 	)
 	client := mcp.NewClient("goai-mcp-parallel", "1.0.0", mcp.WithTransport(transport))
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	if err := client.Connect(ctx); err != nil {
 		return err
 	}
@@ -62,7 +62,9 @@ func run(ctx context.Context, endpoint string, httpClient *http.Client, query, u
 			return err
 		}
 		for _, tool := range tools.Tools {
-			fmt.Fprintf(out, "Tool: %s\n", tool.Name)
+			if _, err := fmt.Fprintf(out, "Tool: %s\n", tool.Name); err != nil {
+				return err
+			}
 		}
 		cursor = tools.NextCursor
 		if cursor == "" {

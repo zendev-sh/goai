@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -22,10 +24,12 @@ func TestRun(t *testing.T) {
 		name, url, tool string
 		args            map[string]any
 		toolError       bool
+		outputError     bool
 	}{
-		{"search", "", "web_search", map[string]any{"objective": "Go release highlights", "search_queries": []any{"Go release highlights"}}, false},
-		{"fetch", "https://go.dev/doc/go1.25", "web_fetch", map[string]any{"urls": []any{"https://go.dev/doc/go1.25"}}, false},
-		{"tool error", "", "web_search", map[string]any{"objective": "Go release highlights", "search_queries": []any{"Go release highlights"}}, true},
+		{"search", "", "web_search", map[string]any{"objective": "Go release highlights", "search_queries": []any{"Go release highlights"}}, false, false},
+		{"fetch", "https://go.dev/doc/go1.25", "web_fetch", map[string]any{"urls": []any{"https://go.dev/doc/go1.25"}}, false, false},
+		{"tool error", "", "web_search", map[string]any{"objective": "Go release highlights", "search_queries": []any{"Go release highlights"}}, true, false},
+		{"output error", "", "", nil, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var methods []string
@@ -90,7 +94,20 @@ func TestRun(t *testing.T) {
 			}))
 			defer server.Close()
 			var out bytes.Buffer
-			err := run(context.Background(), server.URL+"/mcp", server.Client(), "Go release highlights", tc.url, &out)
+			var writer io.Writer = &out
+			if tc.outputError {
+				writer = failingWriter{}
+			}
+			err := run(context.Background(), server.URL+"/mcp", server.Client(), "Go release highlights", tc.url, writer)
+			if tc.outputError {
+				if !errors.Is(err, io.ErrClosedPipe) {
+					t.Fatalf("expected output error, got %v", err)
+				}
+				if want := []string{"initialize", "notifications/initialized", "tools/list"}; !reflect.DeepEqual(methods, want) {
+					t.Errorf("methods = %v", methods)
+				}
+				return
+			}
 			if tc.toolError {
 				if err == nil || !strings.Contains(err.Error(), tc.tool) {
 					t.Fatalf("expected tool error, got %v", err)
@@ -104,6 +121,10 @@ func TestRun(t *testing.T) {
 		})
 	}
 }
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
 func TestRunCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
