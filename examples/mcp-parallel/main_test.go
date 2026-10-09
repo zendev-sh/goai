@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/zendev-sh/goai/mcp"
 )
 
 // Run explicitly, like the example itself:
