@@ -290,6 +290,31 @@ export GEMINI_API_KEY=...
 go run ./examples/mcp-tools/main.go
 ```
 
+### mcp-parallel
+
+Search the web or extract a page with [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp) over Streamable HTTP. The example discovers tools and calls `web_search` or `web_fetch` directly, without a language model or API key. Anonymous access is free for light use, with lower rate limits.
+
+- **Transport:** HTTP (`https://search.parallel.ai/mcp`)
+- **Requires:** Go 1.25+ and internet access
+- **Features:** `mcp.NewHTTPTransport`, `client.ListTools`, search and page extraction
+- **Source:** [`examples/mcp-parallel/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-parallel)
+
+From a checkout of this repository, install the declared dependencies and run either mode:
+
+```bash
+go mod download
+go run ./examples/mcp-parallel/main.go -query "Go 1.25 release highlights"
+go run ./examples/mcp-parallel/main.go -url https://go.dev/doc/go1.25
+```
+
+Both modes print the available tool names and the returned page excerpts. `-url` selects fetch instead of search. Ctrl+C cancels the request; the example has a two-minute overall deadline.
+
+Like the example, its HTTP fixture tests are run by targeting the files directly:
+
+```bash
+go test -race ./examples/mcp-parallel/main.go ./examples/mcp-parallel/main_test.go
+```
+
 ### mcp-filesystem
 
 Filesystem MCP server integration via stdio. Lists available tools and calls `list_directory` on the official MCP filesystem server.
