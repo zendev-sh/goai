@@ -190,6 +190,31 @@ the final `ChunkFinish.Content` carries the completed snapshot; GoAI's tool-loop
 provider supplies no ordered content, existing aggregate replay behavior remains
 unchanged. JSON persistence of `ResponseMessages` preserves the metadata.
 
+Reasoning parts retain the completed wire item as a JSON string in
+`ProviderOptions["openai"]["rawItem"]`. Keeping the original JSON avoids numeric
+overflow or precision loss in extension fields, including after history is saved
+and loaded with `encoding/json`. Replay preserves `summary`, raw
+`content[].reasoning_text`, `encrypted_content`, and their original boundaries;
+the aggregate `Reasoning`/part `Text` is for display, not a replacement for this
+state. Treat the stored item as read-only. If `rawItem` is missing or cannot be
+decoded into an object, replay uses the legacy summary/encrypted-content
+representation, retaining the item ID and available encrypted state rather than
+turning reasoning into assistant output. This is a degraded recovery path: raw
+content lost by an older version or damaged history cannot be reconstructed.
+
+This supports both [OpenAI reasoning replay](https://developers.openai.com/api/docs/guides/reasoning#preserve-reasoning-without-stored-responses)
+and [DeepSeek Responses](https://api-docs.deepseek.com/guides/responses_api/#multi-turn-conversation).
+For automatic tool loops, GoAI reads the service's response `store` field.
+An explicit `store: false` disables automatic `previous_response_id` continuation
+and keeps the full history in the next request, even for `resp_` response IDs.
+DeepSeek returns `store: false`, so using it through `openai.Chat` with a custom
+base URL requires no extra storage option. OpenAI's stored-response continuation
+is unchanged; omitted/null response fields retain the existing behavior.
+Explicit caller-supplied `previousResponseId`/`previous_response_id` options are
+not removed, and an explicit request-side `store: false` is still respected.
+Append `ResponseMessages` to the original history rather than rebuilding it from
+display text. DeepSeek's raw reasoning remains in `content`, never `summary`.
+
 The same ordered replay is preserved by `GenerateObject` and `StreamObject`,
 including their step hooks. With `WithResponsesStreamDoneCompatibility(true)`,
 completed item events also supply the snapshot when the endpoint terminates

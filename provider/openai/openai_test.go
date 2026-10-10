@@ -2404,8 +2404,8 @@ func TestParseResponsesResult_ReasoningEmptySummaryPreservesReplayState(t *testi
 	if !ok {
 		t.Fatal("encrypted reasoning state was not replayable")
 	}
-	summary, ok := input["summary"].([]map[string]any)
-	if !ok || len(summary) != 0 {
+	summary, err := json.Marshal(input["summary"])
+	if err != nil || string(summary) != "[]" {
 		t.Fatalf("summary = %#v, want empty array", input["summary"])
 	}
 }

@@ -732,6 +732,15 @@ func buildParams(opts options) provider.GenerateParams {
 }
 
 func setPreviousResponseID(params *provider.GenerateParams, response provider.ResponseMetadata) {
+	// A Responses-compatible service can use resp_ IDs without storing any
+	// state. Its explicit storage result takes precedence over the ID heuristic.
+	if store, ok := response.ProviderMetadata["store"].(bool); ok && !store {
+		if auto, _ := params.ProviderOptions["goaiAutoPreviousResponseID"].(bool); auto {
+			delete(params.ProviderOptions, "previousResponseId")
+			delete(params.ProviderOptions, "goaiAutoPreviousResponseID")
+		}
+		return
+	}
 	if !strings.HasPrefix(response.ID, "resp_") {
 		return
 	}

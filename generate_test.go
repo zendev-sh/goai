@@ -126,25 +126,39 @@ func TestReasoningAccumulator_KeyAndSignaturePresenceTransitions(t *testing.T) {
 
 func TestSetPreviousResponseID(t *testing.T) {
 	tests := []struct {
-		name string
-		id   string
-		opts map[string]any
-		want any
+		name     string
+		id       string
+		opts     map[string]any
+		metadata map[string]any
+		want     any
+		wantAuto bool
 	}{
-		{name: "responses id", id: "resp_123", want: "resp_123"},
+		{name: "responses id", id: "resp_123", want: "resp_123", wantAuto: true},
 		{name: "non responses id", id: "msg_123", want: nil},
 		{name: "store false", id: "resp_123", opts: map[string]any{"store": false}, want: nil},
 		{name: "explicit camel case", id: "resp_123", opts: map[string]any{"previousResponseId": "manual"}, want: "manual"},
 		{name: "explicit wire key", id: "resp_123", opts: map[string]any{"previous_response_id": "manual"}, want: nil},
+		{name: "server stored", id: "resp_123", metadata: map[string]any{"store": true}, want: "resp_123", wantAuto: true},
+		{name: "server unknown", id: "resp_123", metadata: map[string]any{"store": nil}, want: "resp_123", wantAuto: true},
+		{name: "server stateless", id: "resp_123", metadata: map[string]any{"store": false}},
+		{name: "server overrides requested storage", id: "resp_123", opts: map[string]any{"store": true}, metadata: map[string]any{"store": false}},
+		{name: "request disables stored continuation", id: "resp_123", opts: map[string]any{"store": false}, metadata: map[string]any{"store": true}},
+		{name: "stateless preserves explicit camel case", id: "resp_123", opts: map[string]any{"previousResponseId": "manual"}, metadata: map[string]any{"store": false}, want: "manual"},
+		{name: "stateless preserves explicit wire key", id: "resp_123", opts: map[string]any{"previous_response_id": "manual"}, metadata: map[string]any{"store": false}},
+		{name: "stateless clears automatic state", id: "resp_123", opts: map[string]any{"previousResponseId": "resp_old", "goaiAutoPreviousResponseID": true}, metadata: map[string]any{"store": false}},
+		{name: "stateless without response id clears automatic state", opts: map[string]any{"previousResponseId": "resp_old", "goaiAutoPreviousResponseID": true}, metadata: map[string]any{"store": false}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			params := provider.GenerateParams{ProviderOptions: tt.opts}
-			setPreviousResponseID(&params, provider.ResponseMetadata{ID: tt.id})
+			setPreviousResponseID(&params, provider.ResponseMetadata{ID: tt.id, ProviderMetadata: tt.metadata})
 			if got := params.ProviderOptions["previousResponseId"]; got != tt.want {
 				t.Errorf("previousResponseId = %v, want %v", got, tt.want)
 			}
-			if tt.name == "explicit wire key" && params.ProviderOptions["previous_response_id"] != "manual" {
+			if got, _ := params.ProviderOptions["goaiAutoPreviousResponseID"].(bool); got != tt.wantAuto {
+				t.Errorf("automatic continuation = %v, want %v", got, tt.wantAuto)
+			}
+			if strings.Contains(tt.name, "explicit wire key") && params.ProviderOptions["previous_response_id"] != "manual" {
 				t.Errorf("explicit wire option was changed: %#v", params.ProviderOptions)
 			}
 		})

@@ -473,6 +473,21 @@ func reasoningInputItem(part provider.Part) (map[string]any, bool) {
 	if itemID == "" {
 		return nil, false
 	}
+	// Completed items are protocol state, not display text. Preserve raw
+	// reasoning content, summary boundaries and encrypted state independently.
+	if raw, ok := openAI["rawItem"].(string); ok {
+		var item map[string]any
+		decoder := json.NewDecoder(strings.NewReader(raw))
+		decoder.UseNumber()
+		if err := decoder.Decode(&item); err == nil && item != nil {
+			if item["summary"] == nil {
+				item["summary"] = []map[string]any{}
+			}
+			return item, true
+		}
+	}
+	// Missing or damaged raw state must not discard the item ID/encrypted state
+	// or send reasoning as assistant output. Retain the legacy reconstruction.
 	item := map[string]any{"type": "reasoning"}
 	if itemID != "" {
 		item["id"] = itemID
@@ -514,6 +529,9 @@ type responsesReasoning struct {
 	// lastSummary is the summary_index of the previous delta, or -1 before the
 	// first one. Segments are only delimited by that index, never by the text.
 	lastSummary int
+	// lastContent is the content_index of the previous non-empty raw reasoning
+	// delta, or -1 before the first one. It is independent of summary_index.
+	lastContent int
 }
 
 // Bound the completed output retained for client-side replay across a stream.
@@ -543,9 +561,8 @@ func openAIReasoningPart(itemID, text, encryptedContent string) provider.Part {
 	}
 }
 
-// summarySeparator delimits consecutive reasoning summaries. Their boundary
-// exists only in summary_index, so concatenating the deltas runs two summaries
-// together and merges the markdown at the seam.
+// summarySeparator delimits consecutive reasoning summaries or raw content
+// parts. Their boundary exists in the part index, not in the delta text.
 const summarySeparator = "\n\n"
 
 // streamResponses parses SSE from the OpenAI Responses API with the default
@@ -800,13 +817,17 @@ func streamResponsesWithConfig(
 				return
 			}
 			if *ev.Delta != "" {
-				id := *ev.ItemID
+				id, text := *ev.ItemID, *ev.Delta
 				if idx, ar := activeReasoningForEvent(activeReasoning, currentReasoningIdx, *ev.ItemID); idx >= 0 {
 					id = ar.canonicalID
+					if ar.lastContent >= 0 && *ev.ContentIndex != ar.lastContent {
+						text = summarySeparator + text
+					}
+					ar.lastContent = *ev.ContentIndex
 				}
 				if !provider.TrySend(ctx, out, provider.StreamChunk{
 					Type: provider.ChunkReasoning,
-					Text: *ev.Delta,
+					Text: text,
 					Metadata: map[string]any{
 						"reasoningId": fmt.Sprintf("%s:%d", id, *ev.ContentIndex),
 					},
@@ -913,6 +934,7 @@ func streamResponsesWithConfig(
 				activeReasoning[*ev.OutputIndex] = &responsesReasoning{
 					canonicalID: ev.Item.ID,
 					lastSummary: -1,
+					lastContent: -1,
 				}
 				currentReasoningIdx = *ev.OutputIndex
 			}
@@ -1128,6 +1150,7 @@ func streamResponsesWithConfig(
 				Response *struct {
 					ID                string            `json:"id"`
 					Model             string            `json:"model"`
+					Store             *bool             `json:"store"`
 					Output            []json.RawMessage `json:"output"`
 					IncompleteDetails *struct {
 						Reason string `json:"reason"`
@@ -1174,7 +1197,11 @@ func streamResponsesWithConfig(
 				incompleteReason = ev.Response.IncompleteDetails.Reason
 			}
 			finishReason := mapResponsesFinishReason(eventType, incompleteReason, hasFunctionCall)
-			finish(ev.Response.Output, provider.ResponseMetadata{ID: ev.Response.ID, Model: ev.Response.Model}, finishReason)
+			response := provider.ResponseMetadata{ID: ev.Response.ID, Model: ev.Response.Model}
+			if ev.Response.Store != nil {
+				response.ProviderMetadata = map[string]any{"store": *ev.Response.Store}
+			}
+			finish(ev.Response.Output, response, finishReason)
 			return
 
 		case "response.failed":
@@ -1284,6 +1311,7 @@ type responsesResult struct {
 	ID     string `json:"id"`
 	Model  string `json:"model"`
 	Status string `json:"status"`
+	Store  *bool  `json:"store"`
 
 	Output []struct {
 		Type    string `json:"type"`
@@ -1357,9 +1385,8 @@ func parseResponsesResult(body []byte) (*provider.GenerateResult, error) {
 		return nil, &goai.APIError{Message: resp.Error.Message, ResponseBody: string(body)}
 	}
 
-	// Side-channel raw parse so server-executed items (web_search_call etc.)
-	// can be round-tripped verbatim on the assistant turn -- the typed struct
-	// only models the subset of fields we explicitly consume.
+	// Preserve reasoning and server-executed items for replay separately from
+	// the display fields extracted by the typed parser.
 	var rawOutput struct {
 		Output []json.RawMessage `json:"output"`
 	}
@@ -1370,6 +1397,9 @@ func parseResponsesResult(body []byte) (*provider.GenerateResult, error) {
 			ID:    resp.ID,
 			Model: resp.Model,
 		},
+	}
+	if resp.Store != nil {
+		result.Response.ProviderMetadata = map[string]any{"store": *resp.Store}
 	}
 
 	// Extract text, tool calls, sources, logprobs from output.
@@ -1453,8 +1483,12 @@ func parseResponsesResult(body []byte) (*provider.GenerateResult, error) {
 					})
 				}
 			}
-			if len(itemText) > 0 || item.EncryptedContent != "" {
-				reasoningItems = append(reasoningItems, openAIReasoningPart(item.ID, strings.Join(itemText, summarySeparator), item.EncryptedContent))
+			if item.ID != "" || len(itemText) > 0 || item.EncryptedContent != "" {
+				part := openAIReasoningPart(item.ID, strings.Join(itemText, summarySeparator), item.EncryptedContent)
+				// Keep JSON as a string so arbitrary extension numbers survive both
+				// parsing and ordinary JSON persistence of ResponseMessages.
+				part.ProviderOptions["openai"].(map[string]any)["rawItem"] = string(rawOutput.Output[i])
+				reasoningItems = append(reasoningItems, part)
 				result.Content = append(result.Content, reasoningItems[len(reasoningItems)-1])
 			}
 		default:
