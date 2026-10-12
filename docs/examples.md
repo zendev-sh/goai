@@ -315,6 +315,22 @@ Like the example, its HTTP fixture tests are run by targeting the files directly
 go test -race ./examples/mcp-parallel/main.go ./examples/mcp-parallel/main_test.go
 ```
 
+### mcp-sem
+
+Inspect a known entity and its related source with [Sem](https://github.com/Ataraxy-Labs/sem) over stdio MCP. This optional example calls only `sem_find`; it does not use a language model or require an API key.
+
+- **Requires:** Go 1.25+, Node.js with `npx`, a trusted Git checkout, and supported macOS/Linux x64 or ARM64.
+- **Source:** [`examples/mcp-sem/`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-sem)
+
+```bash
+go run ./examples/mcp-sem/main.go -repo /absolute/path/to/repo -query parse_config
+go test -race ./examples/mcp-sem/main.go ./examples/mcp-sem/main_test.go
+```
+
+Replace the path and symbol with your own. The first launch downloads the pinned npm package and native binary. The example disables Sem cloud sync and telemetry, not npm downloads. Ctrl+C cancels the operation; the overall deadline is two minutes.
+
+The full Sem server is not read-only: other tools can execute repository commands. The explicit repository path is not an OS sandbox, and stdio inherits the parent environment. Use trusted repositories and a suitably isolated environment. Structural results depend on language/index coverage and do not prove the absence of callers or replace tests. No agent performance claims are implied by this connectivity example.
+
 ### mcp-filesystem
 
 Filesystem MCP server integration via stdio. Lists available tools and calls `list_directory` on the official MCP filesystem server.

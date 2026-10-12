@@ -189,6 +189,9 @@ Standard error codes:
 
 ## Examples
 
+For local structural code navigation without model calls, see the optional
+[`mcp-sem` example](../examples.md#mcp-sem).
+
 | Example                                                                                 | Description                                  |
 | --------------------------------------------------------------------------------------- | -------------------------------------------- |
 | [`mcp-local`](https://github.com/zendev-sh/goai/tree/main/examples/mcp-local)           | Connect to a local stdio MCP server          |
