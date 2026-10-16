@@ -439,10 +439,19 @@ type streamResponse struct {
 	Usage *streamUsage `json:"usage,omitempty"`
 }
 
-// promptTokensDetails carries the standard prompt_tokens_details.cached_tokens
-// field, plus the top-level cache counters some providers emit instead (item 46).
+// promptTokensDetails carries prompt_tokens_details.cached_tokens (cache reads)
+// and cache_write_tokens (cache writes, GPT-5.6+ on Azure OpenAI).
 type promptTokensDetails struct {
-	CachedTokens int `json:"cached_tokens"`
+	CachedTokens     int `json:"cached_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens"`
+}
+
+// cacheWriteTokens returns prompt tokens written to the cache, or 0 if absent.
+func cacheWriteTokens(details *promptTokensDetails) int {
+	if details == nil {
+		return 0
+	}
+	return details.CacheWriteTokens
 }
 
 type streamUsage struct {
@@ -538,7 +547,8 @@ func ParseStream(ctx context.Context, scanner *sse.Scanner, out chan<- provider.
 				usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 			}
 			usage.CacheReadTokens = cacheReadTokens(resp.Usage.PromptTokensDetails, resp.Usage.PromptCacheHitTokens, resp.Usage.CachedTokens)
-			usage.InputTokens -= usage.CacheReadTokens
+			usage.CacheWriteTokens = cacheWriteTokens(resp.Usage.PromptTokensDetails)
+			usage.InputTokens -= usage.CacheReadTokens + usage.CacheWriteTokens
 			if usage.InputTokens < 0 {
 				usage.InputTokens = 0
 			}
@@ -970,7 +980,8 @@ func ParseResponse(body []byte) (*provider.GenerateResult, error) {
 			result.Usage.TotalTokens = result.Usage.InputTokens + result.Usage.OutputTokens
 		}
 		result.Usage.CacheReadTokens = cacheReadTokens(resp.Usage.PromptTokensDetails, resp.Usage.PromptCacheHitTokens, resp.Usage.CachedTokens)
-		result.Usage.InputTokens -= result.Usage.CacheReadTokens
+		result.Usage.CacheWriteTokens = cacheWriteTokens(resp.Usage.PromptTokensDetails)
+		result.Usage.InputTokens -= result.Usage.CacheReadTokens + result.Usage.CacheWriteTokens
 		if result.Usage.InputTokens < 0 {
 			result.Usage.InputTokens = 0
 		}

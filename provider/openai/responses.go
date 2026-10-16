@@ -1162,7 +1162,8 @@ func streamResponsesWithConfig(
 							ReasoningTokens int `json:"reasoning_tokens"`
 						} `json:"output_tokens_details"`
 						InputTokensDetails *struct {
-							CachedTokens int `json:"cached_tokens"`
+							CachedTokens     int `json:"cached_tokens"`
+							CacheWriteTokens int `json:"cache_write_tokens"`
 						} `json:"input_tokens_details"`
 					} `json:"usage"`
 				} `json:"response"`
@@ -1188,8 +1189,9 @@ func streamResponsesWithConfig(
 				}
 				if responseUsage.InputTokensDetails != nil {
 					usage.CacheReadTokens = responseUsage.InputTokensDetails.CachedTokens
+					usage.CacheWriteTokens = responseUsage.InputTokensDetails.CacheWriteTokens
 				}
-				usage.InputTokens -= usage.CacheReadTokens
+				usage.InputTokens -= usage.CacheReadTokens + usage.CacheWriteTokens
 			}
 
 			var incompleteReason string
@@ -1346,7 +1348,8 @@ type responsesResult struct {
 			ReasoningTokens int `json:"reasoning_tokens"`
 		} `json:"output_tokens_details,omitempty"`
 		InputTokensDetails *struct {
-			CachedTokens int `json:"cached_tokens"`
+			CachedTokens     int `json:"cached_tokens"`
+			CacheWriteTokens int `json:"cache_write_tokens"`
 		} `json:"input_tokens_details,omitempty"`
 	} `json:"usage,omitempty"`
 
@@ -1554,8 +1557,9 @@ func parseResponsesResult(body []byte) (*provider.GenerateResult, error) {
 		}
 		if resp.Usage.InputTokensDetails != nil {
 			result.Usage.CacheReadTokens = resp.Usage.InputTokensDetails.CachedTokens
+			result.Usage.CacheWriteTokens = resp.Usage.InputTokensDetails.CacheWriteTokens
 		}
-		result.Usage.InputTokens -= result.Usage.CacheReadTokens
+		result.Usage.InputTokens -= result.Usage.CacheReadTokens + result.Usage.CacheWriteTokens
 	}
 
 	if len(providerMeta) > 0 {
