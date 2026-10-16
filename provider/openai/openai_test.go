@@ -2587,6 +2587,34 @@ func TestParseResponsesResult_CachedTokens(t *testing.T) {
 	}
 }
 
+func TestParseResponsesResult_CacheWriteTokens(t *testing.T) {
+	body := `{
+		"id": "resp-1",
+		"model": "gpt-5.6",
+		"status": "completed",
+		"output": [],
+		"usage": {
+			"input_tokens": 100,
+			"output_tokens": 10,
+			"input_tokens_details": {"cached_tokens": 30, "cache_write_tokens": 20}
+		}
+	}`
+
+	result, err := parseResponsesResult([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Usage.CacheWriteTokens != 20 {
+		t.Errorf("CacheWriteTokens = %d, want 20", result.Usage.CacheWriteTokens)
+	}
+	if result.Usage.CacheReadTokens != 30 {
+		t.Errorf("CacheReadTokens = %d, want 30", result.Usage.CacheReadTokens)
+	}
+	if result.Usage.InputTokens != 50 {
+		t.Errorf("InputTokens = %d, want 50 (100-30-20)", result.Usage.InputTokens)
+	}
+}
+
 func TestChat_ChatCompletions_NetworkError(t *testing.T) {
 	// Use a server that immediately closes
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2639,6 +2667,43 @@ func TestStreamResponses_CachedTokens(t *testing.T) {
 	}
 	if usage.CacheReadTokens != 30 {
 		t.Errorf("CacheReadTokens = %d, want 30", usage.CacheReadTokens)
+	}
+}
+
+func TestStreamResponses_CacheWriteTokens(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: response.output_text.delta\n")
+		_, _ = fmt.Fprint(w, `data: {"delta":"ok"}`+"\n\n")
+		_, _ = fmt.Fprint(w, "event: response.completed\n")
+		_, _ = fmt.Fprint(w, `data: {"response":{"usage":{"input_tokens":100,"output_tokens":10,"input_tokens_details":{"cached_tokens":30,"cache_write_tokens":20}}}}`+"\n\n")
+	}))
+	defer server.Close()
+
+	model := Chat("gpt-5.6", WithAPIKey("key"), WithBaseURL(server.URL))
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var usage provider.Usage
+	for chunk := range result.Stream {
+		if chunk.Type == provider.ChunkFinish {
+			usage = chunk.Usage
+		}
+	}
+	if usage.CacheWriteTokens != 20 {
+		t.Errorf("CacheWriteTokens = %d, want 20", usage.CacheWriteTokens)
+	}
+	if usage.CacheReadTokens != 30 {
+		t.Errorf("CacheReadTokens = %d, want 30", usage.CacheReadTokens)
+	}
+	if usage.InputTokens != 50 {
+		t.Errorf("InputTokens = %d, want 50 (100-30-20)", usage.InputTokens)
 	}
 }
 

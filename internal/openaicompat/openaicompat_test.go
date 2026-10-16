@@ -991,6 +991,35 @@ data: [DONE]
 	}
 }
 
+func TestParseStream_CacheWriteTokens(t *testing.T) {
+	input := `data: {"choices":[{"delta":{"content":"hi"},"index":0}]}
+data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}],"usage":{"prompt_tokens":100,"completion_tokens":10,"prompt_tokens_details":{"cached_tokens":60,"cache_write_tokens":25}}}
+data: [DONE]
+`
+	scanner := sse.NewScanner(strings.NewReader(input))
+	out := make(chan provider.StreamChunk, 10)
+
+	go ParseStream(t.Context(), scanner, out)
+
+	var finishChunk provider.StreamChunk
+	for chunk := range out {
+		if chunk.Type == provider.ChunkFinish {
+			finishChunk = chunk
+		}
+	}
+
+	if finishChunk.Usage.CacheWriteTokens != 25 {
+		t.Errorf("CacheWriteTokens = %d, want 25", finishChunk.Usage.CacheWriteTokens)
+	}
+	if finishChunk.Usage.CacheReadTokens != 60 {
+		t.Errorf("CacheReadTokens = %d, want 60", finishChunk.Usage.CacheReadTokens)
+	}
+	// InputTokens excludes both reads and writes: 100 - 60 - 25 = 15
+	if finishChunk.Usage.InputTokens != 15 {
+		t.Errorf("InputTokens = %d, want 15", finishChunk.Usage.InputTokens)
+	}
+}
+
 func TestParseStream_StreamError(t *testing.T) {
 	input := `data: {"type":"error","error":{"code":"context_length_exceeded","message":"too long"}}
 `
@@ -1255,6 +1284,29 @@ func TestParseResponse_CachedTokens(t *testing.T) {
 	}
 	if result.Usage.CacheReadTokens != 80 {
 		t.Errorf("CacheReadTokens = %d, want 80", result.Usage.CacheReadTokens)
+	}
+}
+
+func TestParseResponse_CacheWriteTokens(t *testing.T) {
+	body := []byte(`{
+		"id": "chatcmpl-790",
+		"model": "gpt-5.6",
+		"choices": [{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],
+		"usage": {"prompt_tokens": 100, "completion_tokens": 10, "prompt_tokens_details": {"cached_tokens": 60, "cache_write_tokens": 25}}
+	}`)
+
+	result, err := ParseResponse(body)
+	if err != nil {
+		t.Fatalf("ParseResponse error: %v", err)
+	}
+	if result.Usage.CacheWriteTokens != 25 {
+		t.Errorf("CacheWriteTokens = %d, want 25", result.Usage.CacheWriteTokens)
+	}
+	if result.Usage.CacheReadTokens != 60 {
+		t.Errorf("CacheReadTokens = %d, want 60", result.Usage.CacheReadTokens)
+	}
+	if result.Usage.InputTokens != 15 {
+		t.Errorf("InputTokens = %d, want 15 (100-60-25)", result.Usage.InputTokens)
 	}
 }
 
