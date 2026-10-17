@@ -11,6 +11,7 @@
 package openai
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -45,6 +46,7 @@ type options struct {
 	responsesStreamAllowDone   bool
 	outputFormat               string
 	useMaxCompletionTokens     *bool
+	errorProvider              string // provider name for error parsing (default "openai")
 }
 
 // WithAPIKey sets a static API key for authentication.
@@ -95,6 +97,15 @@ func WithHTTPClient(c *http.Client) Option {
 func WithUseMaxCompletionTokens(use bool) Option {
 	return func(o *options) {
 		o.useMaxCompletionTokens = &use
+	}
+}
+
+// WithErrorProvider overrides the provider name used in error parsing (default
+// "openai"). OpenAI-compatible hosts such as Azure should set it so a 404 for a
+// missing deployment is not retried like OpenAI's own transient 404.
+func WithErrorProvider(name string) Option {
+	return func(o *options) {
+		o.errorProvider = name
 	}
 }
 
@@ -266,7 +277,7 @@ func (m *chatModel) doHTTP(ctx context.Context, url string, body map[string]any)
 		Body:       body,
 		Headers:    m.opts.headers,
 		HTTPClient: m.opts.httpClient,
-		ProviderID: "openai",
+		ProviderID: cmp.Or(m.opts.errorProvider, "openai"),
 	}, goai.ParseHTTPErrorWithHeaders)
 }
 

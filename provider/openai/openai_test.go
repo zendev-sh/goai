@@ -3132,6 +3132,43 @@ func TestWithHTTPClient(t *testing.T) {
 	}
 }
 
+// OpenAI-compatible hosts (Azure, gateways) return 404 for a missing deployment,
+// which must not be retried like OpenAI's own transient 404.
+func TestWithErrorProvider(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = fmt.Fprint(w, `{"error":{"message":"The API deployment for this resource does not exist.","code":"DeploymentNotFound"}}`)
+	}))
+	defer server.Close()
+
+	tests := []struct {
+		name          string
+		opts          []Option
+		wantRetryable bool
+	}{
+		{"default openai keeps the 404 retry", nil, true},
+		{"custom provider does not retry 404", []Option{WithErrorProvider("azure")}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := append([]Option{WithAPIKey("test-key"), WithBaseURL(server.URL)}, tt.opts...)
+			model := Chat("gpt-4o", opts...)
+			_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+				Messages:        []provider.Message{{Role: "user", Content: []provider.Part{{Type: "text", Text: "hi"}}}},
+				ProviderOptions: chatCompletionsOpts,
+			})
+			var apiErr *goai.APIError
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("err = %v, want *goai.APIError", err)
+			}
+			if apiErr.StatusCode != http.StatusNotFound || apiErr.IsRetryable != tt.wantRetryable {
+				t.Errorf("status=%d retryable=%v, want 404 retryable=%v", apiErr.StatusCode, apiErr.IsRetryable, tt.wantRetryable)
+			}
+		})
+	}
+}
+
 // headerInjectTransport is a test RoundTripper that injects a header.
 type headerInjectTransport struct {
 	base   http.RoundTripper
