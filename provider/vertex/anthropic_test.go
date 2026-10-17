@@ -287,3 +287,49 @@ func TestAnthropicChat_NoEnvLeak(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// countingTransport counts the requests that go through it.
+type countingTransport struct{ n int }
+
+func (c *countingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	c.n++
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+func TestAnthropicChat_ForwardsHTTPClientAndHeaders(t *testing.T) {
+	var gotCustom, gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCustom = r.Header.Get("X-Custom")
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"msg-1","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer server.Close()
+
+	transport := &countingTransport{}
+	model := AnthropicChat("claude-sonnet-4-20250514",
+		WithTokenSource(provider.StaticToken("test-token")),
+		WithBaseURL(server.URL),
+		WithHTTPClient(&http.Client{Transport: transport}),
+		WithHeaders(map[string]string{"X-Custom": "val", "Authorization": "Bearer spoofed"}),
+	)
+
+	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if transport.n != 1 {
+		t.Errorf("requests through custom client = %d, want 1", transport.n)
+	}
+	if gotCustom != "val" {
+		t.Errorf("X-Custom = %q, want val", gotCustom)
+	}
+	if gotAuth != "Bearer test-token" {
+		t.Errorf("auth = %q, want Bearer test-token (WithHeaders must not override it)", gotAuth)
+	}
+}

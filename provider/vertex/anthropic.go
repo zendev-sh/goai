@@ -34,7 +34,7 @@ func AnthropicChat(modelID string, opts ...Option) provider.LanguageModel {
 	baseURL := anthropicBaseURL(o)
 	ts := resolveAnthropicTokenSource(o)
 
-	return anthropic.Chat(modelID,
+	anthropicOpts := []anthropic.Option{
 		anthropic.WithTokenSource(ts),
 		anthropic.WithBaseURL(baseURL),
 		anthropic.WithAuthMode(anthropic.AuthBearer),
@@ -42,7 +42,14 @@ func AnthropicChat(modelID string, opts ...Option) provider.LanguageModel {
 		anthropic.WithBodyTransformer(anthropicBodyTransformer),
 		anthropic.WithErrorProvider("vertex-anthropic"),
 		anthropic.WithSkipEnvResolve(),
-	)
+	}
+	if len(o.headers) > 0 {
+		anthropicOpts = append(anthropicOpts, anthropic.WithHeaders(o.headers))
+	}
+	if o.httpClient != nil {
+		anthropicOpts = append(anthropicOpts, anthropic.WithHTTPClient(o.httpClient))
+	}
+	return anthropic.Chat(modelID, anthropicOpts...)
 }
 
 // anthropicBaseURL builds the base URL for Vertex Anthropic endpoints.
