@@ -135,7 +135,7 @@ func TestLive_SetupMessage(t *testing.T) {
 		ProviderOptions: map[string]any{"google": map[string]any{
 			"sessionResumption":        map[string]any{"handle": "prev"},
 			"contextWindowCompression": map[string]any{"slidingWindow": map[string]any{}},
-			"generationConfig":         map[string]any{"temperature": 0.5},
+			"generationConfig":         map[string]any{"temperature": 0.5, "speechConfig": map[string]any{"languageCode": "es-US"}},
 		}},
 	})
 	if err != nil {
@@ -162,6 +162,7 @@ func TestLive_SetupMessage(t *testing.T) {
 		`"maxOutputTokens":256`,
 		`"temperature":0.5`,
 		`"voiceName":"Kore"`,
+		`"languageCode":"es-US"`,
 		`"automaticActivityDetection":{"disabled":true,"silenceDurationMs":500}`,
 		`"activityHandling":"NO_INTERRUPTION"`,
 		`"inputAudioTranscription":{"languageCodes":["es-MX"]}`,

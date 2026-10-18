@@ -13,6 +13,7 @@ import (
 	"time"
 
 	goai "github.com/zendev-sh/goai"
+	"github.com/zendev-sh/goai/internal/jsonmerge"
 	"github.com/zendev-sh/goai/internal/realtimews"
 	"github.com/zendev-sh/goai/provider"
 )
@@ -307,7 +308,8 @@ func buildLiveSetup(modelName string, params provider.RealtimeParams) (map[strin
 		}
 	}
 
-	if err := mergeLiveProviderOptions(setup, params.ProviderOptions); err != nil {
+	setup, err = mergeLiveProviderOptions(setup, params.ProviderOptions)
+	if err != nil {
 		return nil, nil, err
 	}
 	return setup, scheduling, nil
@@ -425,32 +427,18 @@ func buildLiveTranscription(cfg provider.TranscriptionConfig) (map[string]any, e
 	return tc, nil
 }
 
-// mergeLiveProviderOptions overlays ProviderOptions["google"] on the setup.
-// Fields the SDK derives from RealtimeParams cannot be overridden; nested
-// objects the SDK also builds are merged one level deep.
-func mergeLiveProviderOptions(setup map[string]any, providerOptions map[string]any) error {
+// mergeLiveProviderOptions overlays ProviderOptions["google"] on the setup;
+// nested objects merge at every level. Fields the SDK derives from
+// RealtimeParams cannot be overridden.
+func mergeLiveProviderOptions(setup map[string]any, providerOptions map[string]any) (map[string]any, error) {
 	gopts, _ := providerOptions["google"].(map[string]any)
-	for key, value := range gopts {
+	for key := range gopts {
 		switch key {
 		case "model", "systemInstruction", "tools":
-			return fmt.Errorf("%w: %s is derived from the realtime params", provider.ErrInvalidRealtimeConfig, key)
+			return nil, fmt.Errorf("%w: %s is derived from the realtime params", provider.ErrInvalidRealtimeConfig, key)
 		}
-		existing, isMap := setup[key].(map[string]any)
-		overlay, overlayIsMap := value.(map[string]any)
-		if !isMap || !overlayIsMap {
-			setup[key] = value
-			continue
-		}
-		merged := make(map[string]any, len(existing)+len(overlay))
-		for k, v := range existing {
-			merged[k] = v
-		}
-		for k, v := range overlay {
-			merged[k] = v
-		}
-		setup[key] = merged
 	}
-	return nil
+	return jsonmerge.Deep(setup, gopts), nil
 }
 
 // liveConn is one Live WebSocket session. A single reader goroutine translates
