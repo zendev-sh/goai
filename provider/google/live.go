@@ -605,6 +605,9 @@ func (c *liveConn) awaitSetup(ctx context.Context) error {
 		if err := json.Unmarshal(data, &msg); err != nil {
 			return fmt.Errorf("google: decoding live message: %w", err)
 		}
+		if msg.Error != nil {
+			return msg.Error.err()
+		}
 		if msg.SetupComplete != nil {
 			return nil
 		}
@@ -654,6 +657,10 @@ func liveCloseError(err error) error {
 	return fmt.Errorf("google: live session closed with status %d: %s", code, reason)
 }
 
+func (e *liveError) err() error {
+	return fmt.Errorf("google: live api error %d %s: %s", e.Code, e.Status, e.Message)
+}
+
 func (c *liveConn) setErr(err error) {
 	if err == nil {
 		return
@@ -674,6 +681,10 @@ func (c *liveConn) translate(msg liveServerMessage) []provider.RealtimeEvent {
 			c.responding = true
 			events = append(events, provider.RealtimeEvent{Type: provider.RealtimeResponseStarted})
 		}
+	}
+
+	if msg.Error != nil {
+		events = append(events, provider.RealtimeEvent{Type: provider.RealtimeError, Error: msg.Error.err()})
 	}
 
 	if va := msg.VoiceActivity; va != nil {
@@ -764,7 +775,7 @@ func (c *liveConn) translate(msg liveServerMessage) []provider.RealtimeEvent {
 		usage := provider.Usage{
 			CacheReadTokens: um.CachedContentTokenCount,
 			InputTokens:     max(um.PromptTokenCount-um.CachedContentTokenCount, 0),
-			OutputTokens:    um.ResponseTokenCount,
+			OutputTokens:    cmp.Or(um.ResponseTokenCount, um.CandidatesTokenCount),
 			ReasoningTokens: um.ThoughtsTokenCount,
 			TotalTokens:     um.TotalTokenCount,
 		}

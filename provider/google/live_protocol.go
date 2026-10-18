@@ -46,6 +46,14 @@ type liveServerMessage struct {
 	SessionResumptionUpdate *liveSessionResumptionUpdate `json:"sessionResumptionUpdate"`
 	UsageMetadata           *liveUsageMetadata           `json:"usageMetadata"`
 	VoiceActivity           *liveVoiceActivity           `json:"voiceActivity"`
+	// Error is an API error sent as a message instead of a close frame.
+	Error *liveError `json:"error"`
+}
+
+type liveError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Status  string `json:"status"`
 }
 
 type liveServerContent struct {
@@ -99,6 +107,7 @@ type liveUsageMetadata struct {
 	PromptTokenCount        int `json:"promptTokenCount"`
 	CachedContentTokenCount int `json:"cachedContentTokenCount"`
 	ResponseTokenCount      int `json:"responseTokenCount"`
+	CandidatesTokenCount    int `json:"candidatesTokenCount"` // Vertex AI name for responseTokenCount
 	ThoughtsTokenCount      int `json:"thoughtsTokenCount"`
 	TotalTokenCount         int `json:"totalTokenCount"`
 }

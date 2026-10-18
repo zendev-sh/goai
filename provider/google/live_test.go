@@ -301,6 +301,8 @@ func TestLive_ServerEvents(t *testing.T) {
 			`{"sessionResumptionUpdate":{"newHandle":"h1","resumable":true}}`,
 			`{"sessionResumptionUpdate":{"resumable":false}}`,
 			`{"usageMetadata":{"promptTokenCount":100,"cachedContentTokenCount":40,"responseTokenCount":20,"thoughtsTokenCount":5,"totalTokenCount":125}}`,
+			`{"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":7,"totalTokenCount":17}}`,
+			`{"error":{"code":429,"message":"Resource exhausted","status":"RESOURCE_EXHAUSTED"}}`,
 		} {
 			sendServerMessage(t, ctx, conn, msg)
 		}
@@ -328,6 +330,8 @@ func TestLive_ServerEvents(t *testing.T) {
 		provider.RealtimeSessionGoAway,
 		provider.RealtimeSessionResumeState,
 		provider.RealtimeUsageUpdated,
+		provider.RealtimeUsageUpdated, // Vertex AI naming
+		provider.RealtimeError,
 	}
 	events := make([]provider.RealtimeEvent, 0, len(want))
 	for range want {
@@ -362,6 +366,12 @@ func TestLive_ServerEvents(t *testing.T) {
 	wantUsage := provider.Usage{InputTokens: 60, CacheReadTokens: 40, OutputTokens: 20, ReasoningTokens: 5, TotalTokens: 125}
 	if ev := events[13]; ev.Usage != wantUsage {
 		t.Fatalf("usage = %+v, want %+v", ev.Usage, wantUsage)
+	}
+	if ev := events[14]; ev.Usage.OutputTokens != 7 || ev.Usage.InputTokens != 10 {
+		t.Fatalf("vertex usage = %+v", ev.Usage)
+	}
+	if ev := events[15]; ev.Error == nil || !strings.Contains(ev.Error.Error(), "RESOURCE_EXHAUSTED") {
+		t.Fatalf("error event = %+v", ev)
 	}
 }
 
@@ -604,6 +614,18 @@ func TestLive_ConnectionErrors(t *testing.T) {
 		}
 		if conn.Err() == nil {
 			t.Fatal("expected a decode error")
+		}
+	})
+
+	t.Run("error message during setup", func(t *testing.T) {
+		server := liveTestServer(t, func(ctx context.Context, conn *websocket.Conn, _ *http.Request) {
+			readClientMessage(t, ctx, conn)
+			sendServerMessage(t, ctx, conn, `{"error":{"code":400,"message":"Invalid JSON payload","status":"INVALID_ARGUMENT"}}`)
+			drainUntilClose(ctx, conn)
+		})
+		_, err := Live("m", WithAPIKey("k"), WithBaseURL(server.URL)).OpenRealtime(t.Context(), provider.RealtimeParams{})
+		if err == nil || !strings.Contains(err.Error(), "Invalid JSON payload") {
+			t.Fatalf("err = %v", err)
 		}
 	})
 
