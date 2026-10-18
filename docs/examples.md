@@ -271,6 +271,22 @@ go run examples/file-search/main.go openai <vector-store-id>
 
 ---
 
+## Realtime
+
+### realtime-voice
+
+Bidirectional voice session with Gemini Live. Sends a text prompt or a recorded 16 kHz PCM file, writes the 24 kHz spoken reply to a file, prints transcripts, and lets the model call a local tool that the session runs automatically.
+
+- **Provider:** Google Gemini (Gemini API or Vertex AI)
+- **Features:** `google.Live`, `vertex.Live`, `OpenRealtimeSession`, `InputAudio`, `SendText`, `WithRealtimeTools`, transcripts
+- **Source:** [`examples/realtime-voice/`](https://github.com/zendev-sh/goai/tree/main/examples/realtime-voice)
+
+```bash
+export GEMINI_API_KEY=...
+go run ./examples/realtime-voice/main.go -text "What time is it in Tokyo?"
+ffplay -f s16le -ar 24000 -ac 1 reply.pcm
+```
+
 ## MCP
 
 MCP (Model Context Protocol) client examples. Connect to MCP servers and use their tools with GoAI.

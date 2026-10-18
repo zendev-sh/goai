@@ -23,6 +23,7 @@ goai/
 ├── embed.go                # Embed, EmbedMany
 ├── image.go                # GenerateImage
 ├── video.go                # GenerateVideo
+├── realtime.go             # OpenRealtimeSession (experimental realtime voice sessions)
 ├── options.go              # WithPrompt, WithTools, etc.
 ├── schema.go               # SchemaFrom[T] - JSON Schema from Go structs
 ├── errors.go               # APIError, ContextOverflowError
@@ -33,12 +34,13 @@ goai/
 ├── hooks.go                # Lifecycle hooks (OnRequest, OnResponse, OnToolCallStart, OnToolCall, OnStepFinish, OnFinish, OnPanic, OnBeforeStep, OnBeforeToolExecute, OnAfterToolExecute + Wrap* helpers)
 ├── partial_json.go         # Partial JSON parser for streaming
 ├── provider/
-│   ├── provider.go         # LanguageModel, EmbeddingModel, ImageModel, VideoModel interfaces
+│   ├── provider.go         # LanguageModel, EmbeddingModel, ImageModel, VideoModel, RealtimeModel interfaces
+│   ├── realtime.go         # Realtime audio formats, params, events, capabilities
 │   ├── types.go            # Message, Part, Usage, StreamChunk
 │   ├── token.go            # TokenSource, CachedTokenSource (lock-free fetch)
 │   ├── openai/             # OpenAI (Chat Completions + Responses API)
 │   ├── anthropic/          # Anthropic (Messages API)
-│   ├── google/             # Google Gemini (REST)
+│   ├── google/             # Google Gemini (REST + Live realtime)
 │   ├── bedrock/            # AWS Bedrock (Converse API + SigV4 + EventStream, RWMutex for fallback; InvokeModel API for embeddings)
 │   ├── vertex/             # Vertex AI
 │   ├── azure/              # Azure OpenAI
@@ -51,7 +53,8 @@ goai/
 │   ├── openaicompat/       # Shared codec for 20 provider implementation files
 │   ├── gemini/             # Schema sanitization (Vertex, Google)
 │   ├── sse/                # SSE parser
-│   └── httpc/              # HTTP helpers + ParseDataURL
+│   ├── httpc/              # HTTP helpers + ParseDataURL
+│   └── realtimews/         # Provider-neutral WebSocket transport for realtime adapters
 ├── mcp/                    # MCP (Model Context Protocol) client
 ├── observability/
 │   ├── langfuse/           # Langfuse observability integration (separate go.mod)
@@ -62,7 +65,7 @@ goai/
 
 ## Key Rules
 
-1. **Keep dependencies minimal** - core runtime: direct `golang.org/x/oauth2`, indirect `cloud.google.com/go/compute/metadata` for ADC; `go.uber.org/goleak` is test-only. Optional submodules (`observability/langfuse`, `observability/otel`) use separate `go.mod`.
+1. **Keep dependencies minimal** - core runtime: direct `golang.org/x/oauth2` and `github.com/coder/websocket` (realtime transport, zero transitive deps), indirect `cloud.google.com/go/compute/metadata` for ADC; `go.uber.org/goleak` is test-only. Optional submodules (`observability/langfuse`, `observability/otel`) use separate `go.mod`.
 2. **Vercel AI SDK is the reference** - check Vercel source before modifying provider behavior
 3. **90% test coverage** per package - mock HTTP servers, not internals
 4. **Interface compliance checks** - provider structs should include compile-time checks (type name may vary, e.g. `*chatCompletionsModel`)

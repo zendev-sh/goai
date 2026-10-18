@@ -120,6 +120,7 @@ export default defineConfig({
             { text: 'Provider-Defined Tools', link: '/concepts/provider-tools' },
             { text: 'TokenSource', link: '/concepts/token-source' },
             { text: 'MCP Client', link: '/concepts/mcp' },
+            { text: 'Realtime Voice', link: '/concepts/realtime' },
             { text: 'Error Handling', link: '/concepts/error-handling' },
             { text: 'Multi-Turn Conversations', link: '/concepts/multi-turn' },
             { text: 'Prompt Caching', link: '/concepts/prompt-caching' },
@@ -190,6 +191,7 @@ export default defineConfig({
             { text: 'Types', link: '/api/types' },
             { text: 'Options', link: '/api/options' },
             { text: 'Errors', link: '/api/errors' },
+            { text: 'Realtime', link: '/api/realtime' },
           ],
         },
         {

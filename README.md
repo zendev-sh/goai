@@ -55,11 +55,12 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 - **Computer use**: Anthropic computer, bash, text editor tools for autonomous desktop interaction
 - **26 provider-defined tools**: Web fetch, file search, image generation, X search, and more - [full list](#provider-defined-tools)
 - **MCP client**: Connect to any MCP server (stdio, HTTP, SSE), auto-convert tools for use with GoAI
+- **Realtime voice** (experimental): Bidirectional audio sessions with interruption and automatic tool calls via Gemini Live, on the Gemini API or Vertex AI
 - **Observability**: Built-in Langfuse and OpenTelemetry (OTel) integrations for tracing generations, tools, and multi-step loops
 - **Multi-agent orchestration**: For declarative YAML workflows on top of GoAI, see [zenflow](https://github.com/zendev-sh/zenflow)
 - **10 lifecycle hooks**: Observability (`OnRequest`, `OnResponse`, `OnToolCallStart`, `OnToolCall`, `OnStepFinish`, `OnFinish`, `OnPanic`) and interceptor (`OnBeforeToolExecute`, `OnAfterToolExecute`, `OnBeforeStep`) hooks for permission gates, secret scanning, output transformation, and loop control
 - **Retry/backoff**: Automatic retry with exponential backoff on retryable HTTP errors (429/5xx)
-- **Minimal dependencies**: Core depends on `golang.org/x/oauth2` + one indirect (`cloud.google.com/go/compute/metadata`). Optional `observability/otel` and `observability/langfuse` submodules each use their own separate `go.mod`.
+- **Minimal dependencies**: Core depends on `golang.org/x/oauth2` and `github.com/coder/websocket` (realtime sessions; no transitive dependencies) + one indirect (`cloud.google.com/go/compute/metadata`). Optional `observability/otel` and `observability/langfuse` submodules each use their own separate `go.mod`.
 
 ## Performance vs Vercel AI SDK
 
@@ -362,6 +363,32 @@ os.WriteFile("plane.mp4", result.Video.Data, 0644)
 ```
 
 Image-to-video is supported with `WithVideoImage`. First/last frames and image references are available through `WithVideoFrameImages` and `WithVideoInputReferences`.
+
+## Realtime Voice
+
+Open a bidirectional voice session: stream audio in, play audio out, and let the model call tools mid-conversation. Experimental.
+
+```go
+model := google.Live("gemini-3.8-live") // or vertex.Live(...) on Vertex AI
+session, err := goai.OpenRealtimeSession(ctx, model, goai.WithRealtimeTools(weatherTool))
+if err != nil {
+	panic(err)
+}
+defer session.Close()
+
+go func() {
+	for frame := range mic { // 16 kHz mono PCM16
+		_ = session.InputAudio(ctx, frame)
+	}
+}()
+for ev := range session.Events() {
+	if ev.Type == provider.RealtimeOutputAudio {
+		play(ev.Audio) // 24 kHz mono PCM16
+	}
+}
+```
+
+See [examples/realtime-voice](examples/realtime-voice/) and the [realtime documentation](https://goai.sh/concepts/realtime).
 
 ## Observability
 

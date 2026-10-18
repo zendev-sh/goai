@@ -197,6 +197,25 @@ fmt.Printf("Generated %d bytes\n", len(result.Video.Data))
 
 Use `WithVideoImage` for image-to-video generation. `WithVideoFrameImages` supports first and last frames, while `WithVideoInputReferences` accepts image references; Veo does not allow combining those two modes. Common pixel resolutions are translated to Google's `720p`, `1080p`, and `4k` values. The Gemini Developer API supports `WithVideoSeed` but not the generic FPS option.
 
+### Realtime Voice (Live API)
+
+`Live` opens a [realtime session](../concepts/realtime.md) over the Gemini Live WebSocket API. Audio is 16 kHz mono PCM16 in and 24 kHz mono PCM16 out. Experimental.
+
+```go
+model := google.Live("gemini-3.8-live", google.WithAPIKey(apiKey))
+session, err := goai.OpenRealtimeSession(ctx, model,
+    goai.WithRealtimeTools(weatherTool),
+    goai.WithRealtimeInputTranscription(provider.TranscriptionConfig{Enabled: true, Language: "es-MX"}),
+    goai.WithRealtimeOutputTranscription(provider.TranscriptionConfig{Enabled: true}),
+)
+```
+
+- **Vertex AI:** add `google.WithVertex(project, location)` with an OAuth `WithTokenSource`, or use [`vertex.Live`](vertex.md#realtime-voice-live-api).
+- **Turns:** provider voice activity detection by default; `TurnModeClientVAD` sends `activityStart`/`activityEnd`. Manual commit and explicit response requests are not part of the Live API and return `provider.ErrRealtimeUnsupported`.
+- **Tools:** Gemini 3.8 Live runs functions without blocking by default. Set the behavior and result scheduling per tool with `google.LiveToolOptions(behavior, scheduling)` in `Tool.ProviderDefinedOptions`. Calls the model cancels arrive as `RealtimeToolCallCancelled`. There is no tool choice.
+- **Session fields:** other setup fields go under `ProviderOptions["google"]` with their Live API names, for example `sessionResumption`, `contextWindowCompression`, `proactivity`, or `historyConfig`. The SDK-derived `model`, `systemInstruction`, and `tools` cannot be overridden.
+- **Lifecycle:** `RealtimeSessionGoAway` warns before the connection limit; with `sessionResumption` enabled, `RealtimeSessionResumeState` carries the handle for reconnecting.
+
 ## Options
 
 | Option | Type | Description |

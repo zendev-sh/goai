@@ -145,6 +145,20 @@ Image provider options (pass under the `"vertex"` key in `ImageParams.ProviderOp
 | `sampleImageSize` | string | `1K` or `2K` |
 | `seed` | int | Seed for reproducible generation |
 
+### Realtime Voice (Live API)
+
+`Live` opens a Gemini Live [realtime session](../concepts/realtime.md) on Vertex AI. It resolves the project, location, and Application Default Credentials like `Chat`, connects to the regional `LlmBidiService` endpoint, and names the model as a Vertex publisher resource. A project is required. Experimental.
+
+```go
+model := vertex.Live("gemini-3.8-live",
+    vertex.WithProject("my-gcp-project"),
+    vertex.WithLocation("us-central1"),
+)
+session, err := goai.OpenRealtimeSession(ctx, model, goai.WithRealtimeTools(weatherTool))
+```
+
+The session protocol, audio formats, and options are the same as on the Gemini API; see the [Google provider](google.md#realtime-voice-live-api). `WithBaseURL` replaces the endpoint host.
+
 ## Options
 
 | Option | Type | Description |
