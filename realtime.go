@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	defaultRealtimeEventBuffer      = 64
-	defaultRealtimeMaxParallelTools = 4
-	defaultRealtimeToolTimeout      = 30 * time.Second
+	defaultRealtimeEventBuffer         = 64
+	defaultRealtimeMaxParallelTools    = 4
+	defaultRealtimeToolTimeout         = 30 * time.Second
+	defaultRealtimeBackpressureTimeout = time.Second
 )
 
 // RealtimeOption configures OpenRealtimeSession.
@@ -25,6 +26,7 @@ type realtimeOptions struct {
 	params           provider.RealtimeParams
 	tools            []Tool
 	eventBuffer      int
+	backpressureWait time.Duration
 	maxParallelTools int
 	toolTimeout      time.Duration
 	sequentialTools  bool
@@ -39,6 +41,7 @@ type realtimeOptions struct {
 func defaultRealtimeOptions() realtimeOptions {
 	return realtimeOptions{
 		eventBuffer:      defaultRealtimeEventBuffer,
+		backpressureWait: defaultRealtimeBackpressureTimeout,
 		maxParallelTools: defaultRealtimeMaxParallelTools,
 		toolTimeout:      defaultRealtimeToolTimeout,
 	}
@@ -100,9 +103,19 @@ func WithRealtimeProviderOptions(options map[string]any) RealtimeOption {
 }
 
 // WithRealtimeEventBuffer configures the bounded event queue exposed to the
-// consumer. Values below one are rejected by OpenRealtimeSession.
+// consumer. Values below one are rejected by OpenRealtimeSession. When the
+// queue is full the session waits up to the backpressure timeout (see
+// WithRealtimeBackpressureTimeout) before failing with ErrRealtimeBackpressure.
 func WithRealtimeEventBuffer(size int) RealtimeOption {
 	return func(o *realtimeOptions) { o.eventBuffer = size }
+}
+
+// WithRealtimeBackpressureTimeout sets how long the session waits for the
+// consumer to drain a full event queue before terminating with
+// ErrRealtimeBackpressure. Failing fast avoids accumulating stale audio. The
+// default is one second; values below zero are rejected by OpenRealtimeSession.
+func WithRealtimeBackpressureTimeout(timeout time.Duration) RealtimeOption {
+	return func(o *realtimeOptions) { o.backpressureWait = timeout }
 }
 
 // WithRealtimeToolTimeout sets the timeout for each automatically dispatched tool.
@@ -170,13 +183,18 @@ func WithRealtimeOnPanic(fn func(PanicInfo)) RealtimeOption {
 
 // RealtimeSession is the high-level lifecycle wrapper around a provider
 // RealtimeConnection. It optionally dispatches registered GoAI tools.
+//
+// All methods are safe for concurrent use. Events are delivered in the order
+// the provider emitted them, each as a copy the consumer owns. Input buffers are
+// copied before they are sent, so callers may reuse them once a method returns.
 type RealtimeSession struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	conn   provider.RealtimeConnection
 
-	events chan provider.RealtimeEvent
-	done   chan struct{}
+	events           chan provider.RealtimeEvent
+	done             chan struct{}
+	backpressureWait time.Duration
 
 	closeOnce sync.Once
 	wg        sync.WaitGroup
@@ -197,6 +215,8 @@ type RealtimeSession struct {
 
 // OpenRealtimeSession opens a realtime provider connection and starts its event
 // lifecycle. The returned session owns the connection until Close.
+//
+// Experimental: see provider.RealtimeModel.
 func OpenRealtimeSession(ctx context.Context, model provider.RealtimeModel, opts ...RealtimeOption) (*RealtimeSession, error) {
 	if ctx == nil {
 		return nil, errors.New("goai: realtime context is nil")
@@ -213,6 +233,9 @@ func OpenRealtimeSession(ctx context.Context, model provider.RealtimeModel, opts
 	}
 	if o.eventBuffer < 1 {
 		return nil, fmt.Errorf("%w: event buffer must be positive", provider.ErrInvalidRealtimeConfig)
+	}
+	if o.backpressureWait < 0 {
+		return nil, fmt.Errorf("%w: backpressure timeout cannot be negative", provider.ErrInvalidRealtimeConfig)
 	}
 	if o.maxParallelTools < 1 {
 		return nil, fmt.Errorf("%w: max parallel tools must be positive", provider.ErrInvalidRealtimeConfig)
@@ -243,12 +266,13 @@ func OpenRealtimeSession(ctx context.Context, model provider.RealtimeModel, opts
 	}
 
 	s := &RealtimeSession{
-		ctx:    sessionCtx,
-		cancel: cancel,
-		conn:   conn,
-		events: make(chan provider.RealtimeEvent, o.eventBuffer),
-		done:   make(chan struct{}),
-		tools:  toolMap,
+		ctx:              sessionCtx,
+		cancel:           cancel,
+		conn:             conn,
+		events:           make(chan provider.RealtimeEvent, o.eventBuffer),
+		done:             make(chan struct{}),
+		backpressureWait: o.backpressureWait,
+		tools:            toolMap,
 		toolHooks: toolHooks{
 			sequential:      true,
 			onToolCallStart: o.onToolCallStart,
@@ -378,17 +402,36 @@ func (s *RealtimeSession) consume() {
 			s.handleInternalEvent(event)
 			s.fireEventHooks(event)
 
-			select {
-			case s.events <- event:
-			case <-s.ctx.Done():
-				return
-			default:
-				s.setErr(provider.ErrRealtimeBackpressure)
-				s.cancel()
-				_ = s.conn.Close()
+			if !s.publish(event) {
 				return
 			}
 		}
+	}
+}
+
+// publish delivers event to the consumer. A full queue gets a bounded grace
+// period so a briefly slow consumer does not kill a healthy session.
+func (s *RealtimeSession) publish(event provider.RealtimeEvent) bool {
+	select {
+	case s.events <- event:
+		return true
+	case <-s.ctx.Done():
+		return false
+	default:
+	}
+
+	timer := time.NewTimer(s.backpressureWait)
+	defer timer.Stop()
+	select {
+	case s.events <- event:
+		return true
+	case <-s.ctx.Done():
+		return false
+	case <-timer.C:
+		s.setErr(provider.ErrRealtimeBackpressure)
+		s.cancel()
+		_ = s.conn.Close()
+		return false
 	}
 }
 

@@ -39,8 +39,6 @@ const (
 	AudioG711U AudioEncoding = "g711_ulaw"
 	// AudioG711A is G.711 A-law audio.
 	AudioG711A AudioEncoding = "g711_alaw"
-	// AudioOpus is Opus-encoded audio. Support depends on provider and transport.
-	AudioOpus AudioEncoding = "opus"
 )
 
 // AudioFormat describes the bytes sent to or received from a realtime model.
@@ -272,15 +270,12 @@ type RealtimeCapabilities struct {
 	ContextCompression      bool
 	UsageUpdates            bool
 	RateLimitUpdates        bool
-	DirectClientCredential  bool
-	DirectClientTransports  []string
 	SupportedInputAudio     []AudioFormat
 	SupportedOutputAudio    []AudioFormat
 }
 
 // Clone returns capabilities whose slice fields do not alias the receiver.
 func (c RealtimeCapabilities) Clone() RealtimeCapabilities {
-	c.DirectClientTransports = append([]string(nil), c.DirectClientTransports...)
 	c.SupportedInputAudio = append([]AudioFormat(nil), c.SupportedInputAudio...)
 	c.SupportedOutputAudio = append([]AudioFormat(nil), c.SupportedOutputAudio...)
 	return c

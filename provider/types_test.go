@@ -257,7 +257,6 @@ func TestRealtimeStructuredTypes(t *testing.T) {
 
 func TestRealtimeCapabilitiesClone(t *testing.T) {
 	original := RealtimeCapabilities{
-		DirectClientTransports: []string{"websocket", "webrtc"},
 		SupportedInputAudio: []AudioFormat{{
 			Encoding: AudioPCM16, SampleRate: 16000, Channels: 1,
 		}},
@@ -266,13 +265,9 @@ func TestRealtimeCapabilitiesClone(t *testing.T) {
 		}},
 	}
 	clone := original.Clone()
-	clone.DirectClientTransports[0] = "changed"
 	clone.SupportedInputAudio[0].SampleRate = 1
 	clone.SupportedOutputAudio[0].SampleRate = 2
 
-	if original.DirectClientTransports[0] != "websocket" {
-		t.Fatalf("transport slice aliased: %+v", original.DirectClientTransports)
-	}
 	if original.SupportedInputAudio[0].SampleRate != 16000 {
 		t.Fatalf("input audio slice aliased: %+v", original.SupportedInputAudio)
 	}

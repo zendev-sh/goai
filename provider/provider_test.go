@@ -128,10 +128,9 @@ func TestRealtimeModelInterface(t *testing.T) {
 	model := &mockRealtimeModel{
 		id: "realtime-model",
 		caps: provider.RealtimeCapabilities{
-			InputAudio:             true,
-			OutputAudio:            true,
-			FunctionCalling:        true,
-			DirectClientTransports: []string{"websocket"},
+			InputAudio:      true,
+			OutputAudio:     true,
+			FunctionCalling: true,
 			SupportedInputAudio: []provider.AudioFormat{{
 				Encoding: provider.AudioPCM16, SampleRate: 16000, Channels: 1,
 			}},
@@ -147,12 +146,8 @@ func TestRealtimeModelInterface(t *testing.T) {
 	}
 
 	// RealtimeCapabilitiesOf must not expose provider-owned slices.
-	caps.DirectClientTransports[0] = "mutated"
 	caps.SupportedInputAudio[0].SampleRate = 1
 	fresh := provider.RealtimeCapabilitiesOf(model)
-	if fresh.DirectClientTransports[0] != "websocket" {
-		t.Fatalf("capabilities transport was mutated: %+v", fresh.DirectClientTransports)
-	}
 	if fresh.SupportedInputAudio[0].SampleRate != 16000 {
 		t.Fatalf("capabilities audio was mutated: %+v", fresh.SupportedInputAudio)
 	}
@@ -178,7 +173,7 @@ func TestRealtimeModelInterface(t *testing.T) {
 
 func TestRealtimeCapabilitiesOfNonCapableModel(t *testing.T) {
 	caps := provider.RealtimeCapabilitiesOf(&bareRealtimeModel{id: "bare"})
-	if caps.InputAudio || caps.OutputAudio || caps.FunctionCalling || len(caps.DirectClientTransports) != 0 {
+	if caps.InputAudio || caps.OutputAudio || caps.FunctionCalling || len(caps.SupportedInputAudio) != 0 {
 		t.Fatalf("expected zero capabilities, got %+v", caps)
 	}
 }

@@ -133,6 +133,9 @@ func TestOpenRealtimeSessionValidation(t *testing.T) {
 	if _, err := OpenRealtimeSession(t.Context(), model, WithRealtimeEventBuffer(0)); !errors.Is(err, provider.ErrInvalidRealtimeConfig) {
 		t.Fatalf("event buffer error = %v", err)
 	}
+	if _, err := OpenRealtimeSession(t.Context(), model, WithRealtimeBackpressureTimeout(-time.Second)); !errors.Is(err, provider.ErrInvalidRealtimeConfig) {
+		t.Fatalf("backpressure timeout error = %v", err)
+	}
 	if _, err := OpenRealtimeSession(t.Context(), model, WithRealtimeMaxParallelTools(0)); !errors.Is(err, provider.ErrInvalidRealtimeConfig) {
 		t.Fatalf("parallel tools error = %v", err)
 	}
@@ -364,7 +367,8 @@ func TestRealtimeSessionBackpressure(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	conn := newFakeRealtimeConnection(4, 1)
-	session, err := OpenRealtimeSession(t.Context(), &fakeRealtimeModel{id: "test", conn: conn}, WithRealtimeEventBuffer(1))
+	session, err := OpenRealtimeSession(t.Context(), &fakeRealtimeModel{id: "test", conn: conn},
+		WithRealtimeEventBuffer(1), WithRealtimeBackpressureTimeout(10*time.Millisecond))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,6 +380,30 @@ func TestRealtimeSessionBackpressure(t *testing.T) {
 	}
 	if err := session.Close(); !errors.Is(err, provider.ErrRealtimeBackpressure) {
 		t.Fatalf("Close error = %v", err)
+	}
+}
+
+func TestRealtimeSessionSurvivesTransientBackpressure(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	conn := newFakeRealtimeConnection(4, 1)
+	session, err := OpenRealtimeSession(t.Context(), &fakeRealtimeModel{id: "test", conn: conn},
+		WithRealtimeEventBuffer(1), WithRealtimeBackpressureTimeout(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	// The second event finds the queue full; draining it later must not fail the session.
+	conn.events <- provider.RealtimeEvent{Type: provider.RealtimeTextDelta, Text: "one"}
+	conn.events <- provider.RealtimeEvent{Type: provider.RealtimeTextDelta, Text: "two"}
+	for _, want := range []string{"one", "two"} {
+		if got := receiveRealtimeEvent(t, session.Events()); got.Text != want {
+			t.Fatalf("event text = %q, want %q", got.Text, want)
+		}
+	}
+	if err := session.Err(); err != nil {
+		t.Fatalf("session error = %v", err)
 	}
 }
 

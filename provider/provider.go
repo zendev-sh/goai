@@ -36,6 +36,9 @@ func ModelCapabilitiesOf(m LanguageModel) ModelCapabilities {
 // RealtimeModel represents a model that supports a long-lived, bidirectional
 // realtime session. Unlike LanguageModel, a realtime model can receive client
 // events while provider events are being emitted.
+//
+// Experimental: the realtime API may change incompatibly until it covers the
+// Gemini Live, OpenAI Realtime, and OpenAI GPT-Live adapters.
 type RealtimeModel interface {
 	// ModelID returns the provider-specific model identifier.
 	ModelID() string
