@@ -21,7 +21,7 @@ import (
 func liveTestServer(t *testing.T, handle func(ctx context.Context, conn *websocket.Conn, r *http.Request)) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != livePath {
+		if r.URL.Path != livePath && r.URL.Path != liveVertexPath {
 			http.Error(w, "unexpected path "+r.URL.Path, http.StatusNotFound)
 			return
 		}
@@ -93,7 +93,8 @@ func nextEvent(t *testing.T, conn provider.RealtimeConnection) provider.Realtime
 }
 
 func TestLive_SetupMessage(t *testing.T) {
-	t.Cleanup(func() { goleak.VerifyNone(t) })
+	ignore := goleak.IgnoreCurrent()
+	t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
 
 	setupCh := make(chan map[string]any, 1)
 	headerCh := make(chan http.Header, 1)
@@ -180,6 +181,58 @@ func TestLive_SetupMessage(t *testing.T) {
 	}
 }
 
+func TestLive_VertexBackend(t *testing.T) {
+	ignore := goleak.IgnoreCurrent()
+	t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
+
+	type handshake struct {
+		path, auth, apiKey, model string
+	}
+	got := make(chan handshake, 1)
+	server := liveTestServer(t, func(ctx context.Context, conn *websocket.Conn, r *http.Request) {
+		setup := acceptSetup(t, ctx, conn)
+		model, _ := setup["model"].(string)
+		got <- handshake{r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("x-goog-api-key"), model}
+		drainUntilClose(ctx, conn)
+	})
+
+	conn, err := Live("gemini-3.8-live",
+		WithVertex("my-project", "us-central1"),
+		WithVertexBaseURL(server.URL+"/ignored/path"),
+		WithTokenSource(provider.StaticToken("oauth-token")),
+	).OpenRealtime(t.Context(), provider.RealtimeParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	h := <-got
+	if h.path != liveVertexPath {
+		t.Errorf("path = %s, want %s", h.path, liveVertexPath)
+	}
+	if h.auth != "Bearer oauth-token" || h.apiKey != "" {
+		t.Errorf("auth headers = %q / %q", h.auth, h.apiKey)
+	}
+	if want := "projects/my-project/locations/us-central1/publishers/google/models/gemini-3.8-live"; h.model != want {
+		t.Errorf("model = %s, want %s", h.model, want)
+	}
+
+	for in, want := range map[string]string{
+		"gemini-3.8-live":                                   "projects/p/locations/l/publishers/google/models/gemini-3.8-live",
+		"models/gemini-3.8-live":                            "projects/p/locations/l/publishers/google/models/gemini-3.8-live",
+		"publishers/google/models/gemini-3.8-live":          "projects/p/locations/l/publishers/google/models/gemini-3.8-live",
+		"projects/x/locations/y/publishers/google/models/z": "projects/x/locations/y/publishers/google/models/z",
+	} {
+		if got := liveVertexModelName(in, "p", "l"); got != want {
+			t.Errorf("liveVertexModelName(%q) = %s, want %s", in, got, want)
+		}
+	}
+	m := &liveModel{id: "m", opts: options{isVertex: true, project: "p", location: "global"}}
+	if endpoint, _, _ := m.target(); endpoint != "wss://aiplatform.googleapis.com"+liveVertexPath {
+		t.Errorf("global endpoint = %s", endpoint)
+	}
+}
+
 func TestLive_SetupValidation(t *testing.T) {
 	model := Live("gemini-3.8-live", WithAPIKey("k"), WithBaseURL("http://127.0.0.1:1"))
 	pcm := func(rate int) provider.AudioFormat {
@@ -211,7 +264,13 @@ func TestLive_SetupValidation(t *testing.T) {
 	}
 
 	if _, err := Live("m", WithAPIKey("k"), WithVertex("p", "us-central1")).OpenRealtime(t.Context(), provider.RealtimeParams{}); err == nil {
-		t.Fatal("expected Vertex to be rejected")
+		t.Fatal("expected Vertex to reject an API key")
+	}
+	if _, err := Live("m", WithTokenSource(provider.StaticToken("t")), WithVertex("bad/project", "us-central1")).OpenRealtime(t.Context(), provider.RealtimeParams{}); err == nil {
+		t.Fatal("expected an invalid Vertex project to be rejected")
+	}
+	if _, err := Live("m", WithTokenSource(provider.StaticToken("t")), WithVertex("p", "us central")).OpenRealtime(t.Context(), provider.RealtimeParams{}); err == nil {
+		t.Fatal("expected an invalid Vertex location to be rejected")
 	}
 	if _, err := Live("m", WithAPIKey("k"), WithBaseURL("ftp://example.com")).OpenRealtime(t.Context(), provider.RealtimeParams{}); err == nil {
 		t.Fatal("expected unsupported scheme error")
@@ -223,7 +282,8 @@ func TestLive_SetupValidation(t *testing.T) {
 }
 
 func TestLive_ServerEvents(t *testing.T) {
-	t.Cleanup(func() { goleak.VerifyNone(t) })
+	ignore := goleak.IgnoreCurrent()
+	t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
 
 	server := liveTestServer(t, func(ctx context.Context, conn *websocket.Conn, _ *http.Request) {
 		acceptSetup(t, ctx, conn)
@@ -305,7 +365,8 @@ func TestLive_ServerEvents(t *testing.T) {
 }
 
 func TestLive_InterruptedAndToolOnlyTurns(t *testing.T) {
-	t.Cleanup(func() { goleak.VerifyNone(t) })
+	ignore := goleak.IgnoreCurrent()
+	t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
 
 	server := liveTestServer(t, func(ctx context.Context, conn *websocket.Conn, _ *http.Request) {
 		acceptSetup(t, ctx, conn)
@@ -356,7 +417,8 @@ func TestLive_InterruptedAndToolOnlyTurns(t *testing.T) {
 }
 
 func TestLive_ClientMessages(t *testing.T) {
-	t.Cleanup(func() { goleak.VerifyNone(t) })
+	ignore := goleak.IgnoreCurrent()
+	t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
 
 	received := make(chan map[string]json.RawMessage, 8)
 	server := liveTestServer(t, func(ctx context.Context, conn *websocket.Conn, _ *http.Request) {
@@ -463,7 +525,8 @@ func TestLive_ClientMessages(t *testing.T) {
 }
 
 func TestLive_ActivitySignalsNeedClientVAD(t *testing.T) {
-	t.Cleanup(func() { goleak.VerifyNone(t) })
+	ignore := goleak.IgnoreCurrent()
+	t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
 
 	server := liveTestServer(t, func(ctx context.Context, conn *websocket.Conn, _ *http.Request) {
 		acceptSetup(t, ctx, conn)
@@ -480,7 +543,8 @@ func TestLive_ActivitySignalsNeedClientVAD(t *testing.T) {
 }
 
 func TestLive_ConnectionErrors(t *testing.T) {
-	t.Cleanup(func() { goleak.VerifyNone(t) })
+	ignore := goleak.IgnoreCurrent()
+	t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
 
 	t.Run("http error on upgrade", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -558,7 +622,8 @@ func TestLive_ConnectionErrors(t *testing.T) {
 // TestLive_RealtimeSessionToolRoundTrip drives the adapter through the goai
 // session runtime: the model's tool call is executed and answered automatically.
 func TestLive_RealtimeSessionToolRoundTrip(t *testing.T) {
-	t.Cleanup(func() { goleak.VerifyNone(t) })
+	ignore := goleak.IgnoreCurrent()
+	t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
 
 	response := make(chan string, 1)
 	server := liveTestServer(t, func(ctx context.Context, conn *websocket.Conn, _ *http.Request) {
@@ -625,8 +690,11 @@ func TestLiveRealtimeCapabilities(t *testing.T) {
 	if len(caps.SupportedInputAudio) != 1 || caps.SupportedInputAudio[0] != liveInputFormat {
 		t.Fatalf("input formats = %+v", caps.SupportedInputAudio)
 	}
-	if got, _ := liveURL("https://example.com/base/"); got != "wss://example.com/base"+livePath {
+	if got, _ := liveURL("https://example.com/base/", livePath, true); got != "wss://example.com/base"+livePath {
 		t.Fatalf("liveURL = %s", got)
+	}
+	if got, _ := liveURL("https://example.com/v1beta1/projects/p", liveVertexPath, false); got != "wss://example.com"+liveVertexPath {
+		t.Fatalf("vertex liveURL = %s", got)
 	}
 	if liveModelName("models/x") != "models/x" {
 		t.Fatal("liveModelName must keep an explicit models/ prefix")

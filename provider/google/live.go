@@ -1,6 +1,7 @@
 package google
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -24,6 +25,7 @@ var (
 
 const (
 	livePath             = "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+	liveVertexPath       = "/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent"
 	liveInputSampleRate  = 16_000
 	liveOutputSampleRate = 24_000
 	liveReadLimit        = 16 << 20
@@ -70,7 +72,11 @@ func LiveToolOptions(behavior LiveToolBehavior, scheduling LiveResponseSchedulin
 // Live creates a Gemini Live API realtime model for the given model ID, such as
 // "gemini-3.8-live". It speaks the Live WebSocket protocol from the backend and
 // reuses the provider options for the API key, base URL, headers, and HTTP
-// client. Vertex AI is not supported.
+// client.
+//
+// With WithVertex the session runs on Vertex AI: it connects to the regional
+// endpoint, authenticates with the OAuth token from WithTokenSource, and names
+// the model as a Vertex resource. WithVertexBaseURL replaces the endpoint host.
 //
 // Session settings without a common field go under ProviderOptions["google"]
 // using Live setup field names, for example "sessionResumption",
@@ -122,17 +128,14 @@ var (
 // OpenRealtime dials the Live endpoint, sends the setup message, and returns
 // once the server confirms it. ctx bounds the whole session.
 func (m *liveModel) OpenRealtime(ctx context.Context, params provider.RealtimeParams) (provider.RealtimeConnection, error) {
-	if err := validateNonChatOptions(m.opts); err != nil {
-		return nil, err
-	}
 	if err := params.Validate(); err != nil {
 		return nil, err
 	}
-	setup, scheduling, err := buildLiveSetup(m.id, params)
+	endpoint, modelName, err := m.target()
 	if err != nil {
 		return nil, err
 	}
-	endpoint, err := liveURL(m.opts.baseURL)
+	setup, scheduling, err := buildLiveSetup(modelName, params)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +149,11 @@ func (m *liveModel) OpenRealtime(ctx context.Context, params provider.RealtimePa
 	for k, v := range m.opts.headers {
 		header.Set(k, v)
 	}
-	header.Set("x-goog-api-key", token)
+	if m.opts.isVertex {
+		header.Set("Authorization", "Bearer "+token)
+	} else {
+		header.Set("x-goog-api-key", token)
+	}
 
 	ws, resp, err := realtimews.Dial(ctx, endpoint, realtimews.Options{
 		HTTPClient: m.opts.httpClient,
@@ -182,10 +189,33 @@ func (m *liveModel) OpenRealtime(ctx context.Context, params provider.RealtimePa
 	return c, nil
 }
 
-func liveURL(base string) (string, error) {
+// target resolves the WebSocket endpoint and the model resource name for the
+// configured backend: the Gemini API or Vertex AI.
+func (m *liveModel) target() (endpoint, modelName string, err error) {
+	if !m.opts.isVertex {
+		endpoint, err = liveURL(m.opts.baseURL, livePath, true)
+		return endpoint, liveModelName(m.id), err
+	}
+	if !validGCPIdentifier(m.opts.project) {
+		return "", "", fmt.Errorf("google: invalid vertex project %q", m.opts.project)
+	}
+	if !validGCPIdentifier(m.opts.location) {
+		return "", "", fmt.Errorf("google: invalid vertex location %q", m.opts.location)
+	}
+	base := cmp.Or(m.opts.vertexBaseURL, "https://"+vertexHost(m.opts.location))
+	endpoint, err = liveURL(base, liveVertexPath, false)
+	return endpoint, liveVertexModelName(m.id, m.opts.project, m.opts.location), err
+}
+
+// liveURL turns an HTTP(S) base into the WebSocket endpoint for path. The base
+// path is kept for the Gemini API base URL; a Vertex override only sets the host.
+func liveURL(base, path string, keepBasePath bool) (string, error) {
 	u, err := url.Parse(strings.TrimRight(base, "/"))
 	if err != nil {
 		return "", fmt.Errorf("google: invalid base URL: %w", err)
+	}
+	if !keepBasePath {
+		u.Path = ""
 	}
 	switch u.Scheme {
 	case "https", "wss":
@@ -195,7 +225,7 @@ func liveURL(base string) (string, error) {
 	default:
 		return "", fmt.Errorf("google: unsupported base URL scheme %q for Live", u.Scheme)
 	}
-	u.Path += livePath
+	u.Path += path
 	return u.String(), nil
 }
 
@@ -215,7 +245,7 @@ func liveDialError(err error, resp *http.Response) error {
 
 // buildLiveSetup maps RealtimeParams to the Live setup message. It also returns
 // the response scheduling configured per function name.
-func buildLiveSetup(modelID string, params provider.RealtimeParams) (map[string]any, map[string]string, error) {
+func buildLiveSetup(modelName string, params provider.RealtimeParams) (map[string]any, map[string]string, error) {
 	if !params.InputAudio.IsZero() && params.InputAudio != liveInputFormat {
 		return nil, nil, fmt.Errorf("%w: gemini live input must be 16 kHz mono PCM16", provider.ErrUnsupportedAudioFormat)
 	}
@@ -223,7 +253,7 @@ func buildLiveSetup(modelID string, params provider.RealtimeParams) (map[string]
 		return nil, nil, fmt.Errorf("%w: gemini live output is 24 kHz mono PCM16", provider.ErrUnsupportedAudioFormat)
 	}
 
-	setup := map[string]any{"model": liveModelName(modelID)}
+	setup := map[string]any{"model": modelName}
 	if si := buildSystemInstruction(params.System); si != nil {
 		setup["systemInstruction"] = si
 	}
@@ -288,6 +318,17 @@ func liveModelName(id string) string {
 		return id
 	}
 	return "models/" + id
+}
+
+// liveVertexModelName returns the Vertex publisher model resource; a full
+// "projects/..." resource name is kept as given.
+func liveVertexModelName(id, project, location string) string {
+	if strings.HasPrefix(id, "projects/") {
+		return id
+	}
+	id = strings.TrimPrefix(id, "models/")
+	id = strings.TrimPrefix(id, "publishers/google/models/")
+	return fmt.Sprintf("projects/%s/locations/%s/publishers/google/models/%s", project, location, id)
 }
 
 // buildLiveTools reuses the chat tool serialization and adds the Live-only
