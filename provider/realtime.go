@@ -85,11 +85,17 @@ const (
 
 // TurnDetection configures provider-independent turn behavior. ProviderOptions
 // contains experimental provider-specific fields for the selected model.
+//
+// The zero value keeps the provider defaults: automatic responses at the end of
+// a turn and barge-in when the user starts speaking.
 type TurnDetection struct {
-	Mode            TurnMode
-	CreateResponse  bool
-	InterruptOutput bool
-	ProviderOptions map[string]any
+	Mode TurnMode
+	// DisableAutoResponse stops the provider from responding when it detects
+	// the end of a turn; the client calls for a response explicitly.
+	DisableAutoResponse bool
+	// DisableInterruption keeps the model speaking when user activity starts.
+	DisableInterruption bool
+	ProviderOptions     map[string]any
 }
 
 // TranscriptionConfig requests transcription for one side of the conversation.
@@ -139,6 +145,10 @@ func (p RealtimeParams) Validate() error {
 	}
 	return nil
 }
+
+// FinishInterrupted reports a realtime response cut short by user activity or
+// an explicit interruption rather than completed by the model.
+const FinishInterrupted FinishReason = "interrupted"
 
 // RealtimeClientEventType identifies a command sent to a realtime model.
 type RealtimeClientEventType string
@@ -223,6 +233,9 @@ type RealtimeRateLimit struct {
 
 // RealtimeEvent is a normalized event emitted by a realtime connection. Fields
 // not applicable to Type remain at their zero values.
+//
+// For transcript events, Text holds an incremental delta while IsFinal is false
+// and the complete transcript of the turn when IsFinal is true.
 type RealtimeEvent struct {
 	Type             RealtimeEventType
 	SessionID        string

@@ -126,6 +126,19 @@ func (c *Conn) CloseNow() error {
 	return c.closeErr
 }
 
+// StatusNormalClosure is the WebSocket close code for a clean shutdown.
+const StatusNormalClosure = int(websocket.StatusNormalClosure)
+
+// CloseStatus extracts the close code and reason a peer sent when closing the
+// connection. ok is false when err does not carry a WebSocket close frame.
+func CloseStatus(err error) (code int, reason string, ok bool) {
+	var closeErr websocket.CloseError
+	if !errors.As(err, &closeErr) {
+		return 0, "", false
+	}
+	return int(closeErr.Code), closeErr.Reason, true
+}
+
 func cloneHeader(header http.Header) http.Header {
 	if header == nil {
 		return nil

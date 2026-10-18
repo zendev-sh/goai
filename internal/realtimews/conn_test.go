@@ -256,3 +256,29 @@ func TestUnsupportedWriteType(t *testing.T) {
 	}
 	_ = conn.CloseNow()
 }
+
+func TestCloseStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		_ = conn.Close(websocket.StatusPolicyViolation, "quota exceeded")
+	}))
+	defer server.Close()
+
+	conn, _, err := Dial(t.Context(), websocketURL(server.URL), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.CloseNow() }()
+
+	_, _, err = conn.Read(t.Context())
+	code, reason, ok := CloseStatus(err)
+	if !ok || code != int(websocket.StatusPolicyViolation) || reason != "quota exceeded" {
+		t.Fatalf("CloseStatus(%v) = %d, %q, %v", err, code, reason, ok)
+	}
+	if _, _, ok := CloseStatus(errors.New("plain")); ok {
+		t.Fatal("plain error reported a close status")
+	}
+}
