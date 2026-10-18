@@ -83,6 +83,106 @@ func (m *mockVideoModel) DoGenerate(_ context.Context, _ provider.VideoParams) (
 	}, nil
 }
 
+type mockRealtimeConnection struct {
+	events chan provider.RealtimeEvent
+	err    error
+}
+
+func (c *mockRealtimeConnection) Events() <-chan provider.RealtimeEvent { return c.events }
+func (c *mockRealtimeConnection) Send(_ context.Context, _ provider.RealtimeClientEvent) error {
+	return nil
+}
+func (c *mockRealtimeConnection) Close() error { return nil }
+func (c *mockRealtimeConnection) Err() error   { return c.err }
+
+type mockRealtimeModel struct {
+	id   string
+	caps provider.RealtimeCapabilities
+}
+
+func (m *mockRealtimeModel) ModelID() string { return m.id }
+func (m *mockRealtimeModel) OpenRealtime(_ context.Context, _ provider.RealtimeParams) (provider.RealtimeConnection, error) {
+	events := make(chan provider.RealtimeEvent, 1)
+	events <- provider.RealtimeEvent{Type: provider.RealtimeSessionReady, SessionID: "session-1"}
+	close(events)
+	return &mockRealtimeConnection{events: events}, nil
+}
+func (m *mockRealtimeModel) RealtimeCapabilities() provider.RealtimeCapabilities { return m.caps }
+
+type bareRealtimeModel struct{ id string }
+
+func (m *bareRealtimeModel) ModelID() string { return m.id }
+func (m *bareRealtimeModel) OpenRealtime(_ context.Context, _ provider.RealtimeParams) (provider.RealtimeConnection, error) {
+	events := make(chan provider.RealtimeEvent)
+	close(events)
+	return &mockRealtimeConnection{events: events}, nil
+}
+
+var (
+	_ provider.RealtimeModel        = (*mockRealtimeModel)(nil)
+	_ provider.RealtimeCapableModel = (*mockRealtimeModel)(nil)
+	_ provider.RealtimeConnection   = (*mockRealtimeConnection)(nil)
+)
+
+func TestRealtimeModelInterface(t *testing.T) {
+	model := &mockRealtimeModel{
+		id: "realtime-model",
+		caps: provider.RealtimeCapabilities{
+			InputAudio:             true,
+			OutputAudio:            true,
+			FunctionCalling:        true,
+			DirectClientTransports: []string{"websocket"},
+			SupportedInputAudio: []provider.AudioFormat{{
+				Encoding: provider.AudioPCM16, SampleRate: 16000, Channels: 1,
+			}},
+		},
+	}
+
+	if model.ModelID() != "realtime-model" {
+		t.Fatalf("ModelID() = %q", model.ModelID())
+	}
+	caps := provider.RealtimeCapabilitiesOf(model)
+	if !caps.InputAudio || !caps.OutputAudio || !caps.FunctionCalling {
+		t.Fatalf("unexpected capabilities: %+v", caps)
+	}
+
+	// RealtimeCapabilitiesOf must not expose provider-owned slices.
+	caps.DirectClientTransports[0] = "mutated"
+	caps.SupportedInputAudio[0].SampleRate = 1
+	fresh := provider.RealtimeCapabilitiesOf(model)
+	if fresh.DirectClientTransports[0] != "websocket" {
+		t.Fatalf("capabilities transport was mutated: %+v", fresh.DirectClientTransports)
+	}
+	if fresh.SupportedInputAudio[0].SampleRate != 16000 {
+		t.Fatalf("capabilities audio was mutated: %+v", fresh.SupportedInputAudio)
+	}
+
+	conn, err := model.OpenRealtime(t.Context(), provider.RealtimeParams{})
+	if err != nil {
+		t.Fatalf("OpenRealtime error: %v", err)
+	}
+	event := <-conn.Events()
+	if event.Type != provider.RealtimeSessionReady || event.SessionID != "session-1" {
+		t.Fatalf("unexpected event: %+v", event)
+	}
+	if err := conn.Send(t.Context(), provider.RealtimeClientEvent{Type: provider.RealtimeTextInput}); err != nil {
+		t.Fatalf("Send error: %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close error: %v", err)
+	}
+	if conn.Err() != nil {
+		t.Fatalf("Err() = %v", conn.Err())
+	}
+}
+
+func TestRealtimeCapabilitiesOfNonCapableModel(t *testing.T) {
+	caps := provider.RealtimeCapabilitiesOf(&bareRealtimeModel{id: "bare"})
+	if caps.InputAudio || caps.OutputAudio || caps.FunctionCalling || len(caps.DirectClientTransports) != 0 {
+		t.Fatalf("expected zero capabilities, got %+v", caps)
+	}
+}
+
 func TestLanguageModelInterface(t *testing.T) {
 	var model provider.LanguageModel = &mockLanguageModel{
 		id: "gpt-4o",
