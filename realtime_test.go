@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -175,6 +176,13 @@ func TestRealtimeSessionOptionsAreCopied(t *testing.T) {
 		),
 		WithRealtimeTools(Tool{Name: "report", Description: "report", InputSchema: toolSchema}),
 		WithRealtimeProviderOptions(providerOptions),
+		WithRealtimeToolChoice("report"),
+		WithRealtimeVoice("marin"),
+		WithRealtimeTurnDetection(provider.TurnDetection{Mode: provider.TurnModeClientVAD, ProviderOptions: map[string]any{"k": []any{"v"}}}),
+		WithRealtimeInputTranscription(provider.TranscriptionConfig{Enabled: true, Language: "es"}),
+		WithRealtimeOutputTranscription(provider.TranscriptionConfig{Enabled: true}),
+		WithRealtimeSequentialTools(true),
+		nil, // nil options are ignored
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -193,6 +201,13 @@ func TestRealtimeSessionOptionsAreCopied(t *testing.T) {
 	}
 	if got := string(params.Tools[0].InputSchema); got != `{"type":"object"}` {
 		t.Fatalf("tool schema mutated: %s", got)
+	}
+	if params.ToolChoice != "report" || params.Voice != "marin" || params.TurnDetection.Mode != provider.TurnModeClientVAD ||
+		!params.InputTranscription.Enabled || params.InputTranscription.Language != "es" || !params.OutputTranscription.Enabled {
+		t.Fatalf("options not applied: %+v", params)
+	}
+	if cap(session.toolSlots) != 1 {
+		t.Fatalf("sequential tools must allow one slot, got %d", cap(session.toolSlots))
 	}
 
 	if err := session.Close(); err != nil {
@@ -611,4 +626,111 @@ func TestRealtimeSessionToolTimeoutAndBeforeAfterHooks(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+}
+
+type closeErrConnection struct {
+	*fakeRealtimeConnection
+	err error
+}
+
+func (c *closeErrConnection) Close() error {
+	_ = c.fakeRealtimeConnection.Close()
+	return c.err
+}
+
+func TestRealtimeSessionEdgeCases(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	t.Run("send needs a context", func(t *testing.T) {
+		conn := newFakeRealtimeConnection(1, 1)
+		session, err := OpenRealtimeSession(t.Context(), &fakeRealtimeModel{id: "test", conn: conn})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close()
+		var nilCtx context.Context
+		if err := session.SendText(nilCtx, "x"); err == nil {
+			t.Fatal("expected nil context error")
+		}
+	})
+
+	t.Run("connection close error is reported", func(t *testing.T) {
+		closeErr := errors.New("close failed")
+		conn := &closeErrConnection{fakeRealtimeConnection: newFakeRealtimeConnection(1, 1), err: closeErr}
+		session, err := OpenRealtimeSession(t.Context(), &fakeRealtimeModel{id: "test", conn: conn})
+		if err != nil {
+			t.Fatal(err)
+		}
+		go conn.finish(nil)
+		if err := session.Close(); !errors.Is(err, closeErr) {
+			t.Fatalf("Close = %v, want %v", err, closeErr)
+		}
+	})
+
+	t.Run("cancelled context stops publishing", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		conn := newFakeRealtimeConnection(4, 1)
+		// The hook runs right before an event is queued: cancelling there makes
+		// the second event find both a full queue and a cancelled session.
+		session, err := OpenRealtimeSession(ctx, &fakeRealtimeModel{id: "test", conn: conn},
+			WithRealtimeEventBuffer(1), WithRealtimeBackpressureTimeout(time.Minute),
+			WithRealtimeOnEvent(func(ev provider.RealtimeEvent) {
+				if ev.Text == "two" {
+					cancel()
+				}
+			}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		conn.events <- provider.RealtimeEvent{Type: provider.RealtimeTextDelta, Text: "one"}
+		conn.events <- provider.RealtimeEvent{Type: provider.RealtimeTextDelta, Text: "two"}
+		waitRealtimeDone(t, session)
+		if err := session.Err(); err != nil {
+			t.Fatalf("cancellation must not be a session error: %v", err)
+		}
+		_ = session.Close()
+	})
+}
+
+func TestEncodeRealtimeToolOutput(t *testing.T) {
+	long := strings.Repeat("é", 600)
+	got := string(encodeRealtimeToolOutput("", errors.New(long)))
+	var decoded map[string]string
+	if err := json.Unmarshal([]byte(got), &decoded); err != nil {
+		t.Fatalf("invalid JSON %s", got)
+	}
+	if n := len([]rune(decoded["error"])); n != 503 || !strings.HasSuffix(decoded["error"], "...") {
+		t.Fatalf("error message not truncated to 500 runes: %d", n)
+	}
+	if got := string(encodeRealtimeToolOutput(`{"ok":true}`, nil)); got != `{"ok":true}` {
+		t.Fatalf("JSON output = %s", got)
+	}
+	if got := string(encodeRealtimeToolOutput("plain", nil)); got != `{"text":"plain"}` {
+		t.Fatalf("text output = %s", got)
+	}
+}
+
+func TestRealtimeCloneHelpers(t *testing.T) {
+	event := provider.RealtimeClientEvent{
+		Audio:      []byte{1},
+		Metadata:   map[string]any{"list": []any{map[string]any{"k": "v"}}, "strings": []string{"a"}, "raw": json.RawMessage(`1`)},
+		Cursor:     &provider.PlaybackCursor{ItemID: "i"},
+		ToolResult: &provider.RealtimeToolResult{ToolCallID: "c", Output: json.RawMessage(`{}`)},
+	}
+	clone := cloneRealtimeClientEvent(event)
+	event.Audio[0] = 9
+	event.Cursor.ItemID = "changed"
+	event.ToolResult.Output[0] = 'x'
+	event.Metadata["list"].([]any)[0].(map[string]any)["k"] = "changed"
+	event.Metadata["strings"].([]string)[0] = "changed"
+	event.Metadata["raw"].(json.RawMessage)[0] = '2'
+	if clone.Audio[0] != 1 || clone.Cursor.ItemID != "i" || string(clone.ToolResult.Output) != `{}` {
+		t.Fatalf("client event aliased: %+v", clone)
+	}
+	if clone.Metadata["list"].([]any)[0].(map[string]any)["k"] != "v" || clone.Metadata["strings"].([]string)[0] != "a" || string(clone.Metadata["raw"].(json.RawMessage)) != "1" {
+		t.Fatalf("metadata aliased: %+v", clone.Metadata)
+	}
+	if cloneAnyMap(nil) != nil {
+		t.Fatal("cloneAnyMap(nil) must stay nil")
+	}
 }
