@@ -452,6 +452,7 @@ type liveConn struct {
 	closing chan struct{}
 
 	closeOnce sync.Once
+	closeErr  error
 
 	errMu sync.Mutex
 	err   error
@@ -486,11 +487,11 @@ func (c *liveConn) Err() error {
 func (c *liveConn) Close() error {
 	c.closeOnce.Do(func() {
 		close(c.closing)
-		_ = c.ws.Close()
+		c.closeErr = c.ws.Close()
 		c.cancel()
 	})
 	<-c.done
-	return nil
+	return c.closeErr
 }
 
 // abort releases a connection whose reader never started.
