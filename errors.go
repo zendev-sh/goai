@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+
+	"github.com/zendev-sh/goai/internal/httpc"
 )
 
 // ContextOverflowError indicates the prompt exceeded the model's context window.
@@ -229,25 +231,12 @@ func ParseHTTPErrorWithHeaders(providerID string, statusCode int, body []byte, h
 		isRetryable = true
 	}
 
-	// Extract retry-related headers for backoff logic.
-	var respHeaders map[string]string
-	if headers != nil {
-		for _, key := range []string{"retry-after", "retry-after-ms"} {
-			if v := headers.Get(key); v != "" {
-				if respHeaders == nil {
-					respHeaders = make(map[string]string)
-				}
-				respHeaders[key] = v
-			}
-		}
-	}
-
 	return &APIError{
 		Message:         message,
 		StatusCode:      statusCode,
 		IsRetryable:     isRetryable,
 		ResponseBody:    string(body),
-		ResponseHeaders: respHeaders,
+		ResponseHeaders: httpc.RetryHeaders(headers), // for backoff logic
 	}
 }
 

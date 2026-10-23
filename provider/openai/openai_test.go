@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -2105,6 +2106,72 @@ func TestStreamResponses_ErrorEventNestedRateLimit(t *testing.T) {
 		}
 	}
 	t.Error("expected retryable APIError for nested rate_limit_exceeded")
+}
+
+// Azure sends the rate limit as an error event inside a 200 stream, with the
+// retry delay on the response headers. The APIError must carry them.
+func TestStreamResponses_ErrorKeepsRetryHeaders(t *testing.T) {
+	tests := []struct {
+		name    string
+		event   string
+		data    string
+		headers map[string]string
+		want    map[string]string
+	}{
+		{
+			name:    "error event with retry-after-ms",
+			event:   "error",
+			data:    `{"type":"error","error":{"type":"too_many_requests","code":"rate_limit_exceeded","message":"Model deployment rate limit exceeded."},"sequence_number":1}`,
+			headers: map[string]string{"Retry-After-Ms": "14821", "Retry-After": "15"},
+			want:    map[string]string{"retry-after-ms": "14821", "retry-after": "15"},
+		},
+		{
+			name:    "response.failed with retry-after",
+			event:   "response.failed",
+			data:    `{"type":"response.failed","response":{"error":{"code":"server_error","message":"overloaded"}}}`,
+			headers: map[string]string{"Retry-After": "5"},
+			want:    map[string]string{"retry-after": "5"},
+		},
+		{
+			name:  "no retry headers",
+			event: "error",
+			data:  `{"type":"error","error":{"code":"rate_limit_exceeded","message":"rate limited"}}`,
+			want:  nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				for k, v := range tt.headers {
+					w.Header().Set(k, v)
+				}
+				_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", tt.event, tt.data)
+			}))
+			defer server.Close()
+
+			model := Chat("o3", WithAPIKey("key"), WithBaseURL(server.URL))
+			result, err := model.DoStream(t.Context(), provider.GenerateParams{
+				Messages: []provider.Message{
+					{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for chunk := range result.Stream {
+				var apiErr *goai.APIError
+				if chunk.Type == provider.ChunkError && errors.As(chunk.Error, &apiErr) {
+					if !reflect.DeepEqual(apiErr.ResponseHeaders, tt.want) {
+						t.Errorf("ResponseHeaders = %v, want %v", apiErr.ResponseHeaders, tt.want)
+					}
+					return
+				}
+			}
+			t.Error("expected APIError chunk")
+		})
+	}
 }
 
 func TestStreamResponses_ErrorEventFlatRateLimit(t *testing.T) {

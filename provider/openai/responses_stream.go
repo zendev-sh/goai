@@ -83,6 +83,9 @@ func (e *StreamProtocolError) Unwrap() error { return e.cause }
 type responsesStreamConfig struct {
 	idleTimeout time.Duration
 	allowDone   bool
+	// retryHeaders of the 200 response, attached to stream errors so callers
+	// can honor the delay (Azure sends its rate limit as an error event).
+	retryHeaders map[string]string
 }
 
 func defaultResponsesStreamConfig() responsesStreamConfig {

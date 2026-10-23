@@ -492,3 +492,20 @@ func containsImpl(s, substr string) bool {
 	}
 	return false
 }
+
+func TestRetryHeaders(t *testing.T) {
+	h := http.Header{}
+	h.Set("Retry-After", "15")
+	h.Set("Retry-After-Ms", "14821")
+	h.Set("Content-Type", "text/event-stream")
+	want := map[string]string{"retry-after": "15", "retry-after-ms": "14821"}
+	if got := RetryHeaders(h); !reflect.DeepEqual(got, want) {
+		t.Errorf("RetryHeaders = %v, want %v", got, want)
+	}
+	if got := RetryHeaders(http.Header{"Content-Type": {"application/json"}}); got != nil {
+		t.Errorf("RetryHeaders without retry headers = %v, want nil", got)
+	}
+	if got := RetryHeaders(nil); got != nil {
+		t.Errorf("RetryHeaders(nil) = %v, want nil", got)
+	}
+}

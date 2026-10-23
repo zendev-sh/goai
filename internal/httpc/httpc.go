@@ -127,3 +127,18 @@ func ParseDataURL(url string) (mediaType, data string, ok bool) {
 	}
 	return mediaType, data, true
 }
+
+// RetryHeaders returns the retry hints of a response (retry-after,
+// retry-after-ms) keyed in lowercase, or nil when it has none.
+func RetryHeaders(h http.Header) map[string]string {
+	var out map[string]string
+	for _, key := range []string{"retry-after", "retry-after-ms"} {
+		if v := h.Get(key); v != "" {
+			if out == nil {
+				out = make(map[string]string)
+			}
+			out[key] = v
+		}
+	}
+	return out
+}

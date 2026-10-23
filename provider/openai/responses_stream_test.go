@@ -1121,3 +1121,30 @@ func TestStreamResponses_ReasoningTextCancelledWhileSending(t *testing.T) {
 		}
 	}
 }
+
+func TestStreamResponses_ErrorEventCancelledWhileSending(t *testing.T) {
+	// A terminal error waiting to be received when the caller cancels is
+	// dropped, and the stream ends without delivering it.
+	for _, input := range []string{
+		sseLine("error", `{"type":"error","error":{"code":"rate_limit_exceeded","message":"rate limited"}}`),
+		sseLine("response.failed", `{"type":"response.failed","response":{"error":{"code":"server_error","message":"overloaded"}}}`),
+	} {
+		ctx, cancel := context.WithCancel(t.Context())
+		out := make(chan provider.StreamChunk) // unbuffered, and not received from yet
+		done := make(chan struct{})
+		go func() {
+			streamResponses(ctx, io.NopCloser(strings.NewReader(input)), out)
+			close(done)
+		}()
+		time.Sleep(50 * time.Millisecond) // let the error reach the send
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("stream did not stop after cancellation")
+		}
+		for chunk := range out {
+			t.Fatalf("chunk delivered after cancellation: %#v", chunk)
+		}
+	}
+}

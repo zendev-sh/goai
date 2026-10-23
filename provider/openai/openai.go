@@ -234,12 +234,14 @@ func (m *chatModel) doStreamResponses(ctx context.Context, params provider.Gener
 	}
 	// Keep resp.Request and its serialized request body out of the stream closure.
 	responseBody := resp.Body
+	retryHeaders := httpc.RetryHeaders(resp.Header)
 
 	out := make(chan provider.StreamChunk, 64)
 	go func() {
 		streamResponsesWithConfig(ctx, responseBody, out, responsesStreamConfig{
-			idleTimeout: m.opts.responsesStreamIdleTimeout,
-			allowDone:   m.opts.responsesStreamAllowDone,
+			idleTimeout:  m.opts.responsesStreamIdleTimeout,
+			allowDone:    m.opts.responsesStreamAllowDone,
+			retryHeaders: retryHeaders,
 		})
 	}()
 

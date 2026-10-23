@@ -1223,7 +1223,7 @@ func streamResponsesWithConfig(
 				trySendResponsesError(ctx, out, newStreamProtocolError(eventType, "terminal event is missing response", nil))
 				return
 			}
-			if !provider.TrySend(ctx, out, responsesStreamError(data, ev.Response.Error.Message, ev.Response.Error.Code, "response failed")) {
+			if !provider.TrySend(ctx, out, responsesStreamError(data, ev.Response.Error.Message, ev.Response.Error.Code, "response failed", config.retryHeaders)) {
 				return
 			}
 			return
@@ -1255,7 +1255,7 @@ func streamResponsesWithConfig(
 				trySendResponsesError(ctx, out, newStreamProtocolError(eventType, "terminal error event is missing error details", nil))
 				return
 			}
-			if !provider.TrySend(ctx, out, responsesStreamError(data, msg, code, "stream error")) {
+			if !provider.TrySend(ctx, out, responsesStreamError(data, msg, code, "stream error", config.retryHeaders)) {
 				return
 			}
 			return
@@ -1268,24 +1268,22 @@ func streamResponsesWithConfig(
 	}
 }
 
-func responsesStreamError(data, msg, code, defaultMsg string) provider.StreamChunk {
+func responsesStreamError(data, msg, code, defaultMsg string, headers map[string]string) provider.StreamChunk {
 	msg = cmp.Or(msg, defaultMsg)
+	apiErr := &goai.APIError{Message: msg, ResponseHeaders: headers}
 	switch code {
 	case "context_length_exceeded", "context_overflow", "max_tokens":
 		return provider.StreamChunk{Type: provider.ChunkError, Error: &goai.ContextOverflowError{Message: msg, ResponseBody: data}}
 	case "insufficient_quota":
-		return provider.StreamChunk{Type: provider.ChunkError, Error: &goai.APIError{Message: "Quota exceeded. Check your plan and billing details.", IsRetryable: false}}
+		apiErr.Message = "Quota exceeded. Check your plan and billing details."
 	case "usage_not_included":
-		return provider.StreamChunk{Type: provider.ChunkError, Error: &goai.APIError{Message: "Usage not included in response. Check your plan supports usage reporting for this model.", IsRetryable: false}}
-	case "invalid_prompt":
-		return provider.StreamChunk{Type: provider.ChunkError, Error: &goai.APIError{Message: msg, IsRetryable: false}}
+		apiErr.Message = "Usage not included in response. Check your plan supports usage reporting for this model."
 	case "rate_limit_exceeded", "429":
-		return provider.StreamChunk{Type: provider.ChunkError, Error: &goai.APIError{Message: msg, StatusCode: 429, IsRetryable: true}}
+		apiErr.StatusCode, apiErr.IsRetryable = 429, true
 	case "server_error", "503", "502", "500":
-		return provider.StreamChunk{Type: provider.ChunkError, Error: &goai.APIError{Message: msg, IsRetryable: true}}
-	default:
-		return provider.StreamChunk{Type: provider.ChunkError, Error: &goai.APIError{Message: msg}}
+		apiErr.IsRetryable = true
 	}
+	return provider.StreamChunk{Type: provider.ChunkError, Error: apiErr}
 }
 
 // mapResponsesFinishReason maps Responses API completion status to a FinishReason.
