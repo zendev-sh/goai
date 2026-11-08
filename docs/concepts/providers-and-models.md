@@ -159,6 +159,7 @@ Many providers read credentials from environment variables when explicit auth op
 | Opper      | `github.com/zendev-sh/goai/provider/opper`      | `Chat`                       |
 | Runcrate   | `github.com/zendev-sh/goai/provider/runcrate`   | `Chat`                       |
 | Cheaper Inference | `github.com/zendev-sh/goai/provider/cheaperinference` | `Chat`               |
+| CloudGPU   | `github.com/zendev-sh/goai/provider/cloudgpu`   | `Chat`                       |
 | llama.cpp  | `github.com/zendev-sh/goai/provider/llamacpp`   | `Chat`, `Embedding`          |
 
 The `compat` provider works with any OpenAI-compatible API. Pass a custom base URL:
