@@ -79,6 +79,9 @@ func buildResponsesRequest(params provider.GenerateParams, modelID string, strea
 					"description": t.Description,
 					"parameters":  schema,
 				}
+				if strict, ok := params.ProviderOptions["strict"].(bool); ok {
+					tools[i]["strict"] = strict
+				}
 			}
 		}
 		body["tools"] = tools
@@ -171,6 +174,7 @@ func applyResponsesProviderOptions(body map[string]any, opts map[string]any) {
 
 	// Known options that should NOT be passed through to the body directly.
 	consumed := map[string]bool{
+		"strict":                     true,
 		"structuredOutputs":          true,
 		"strictJsonSchema":           true,
 		"useResponsesAPI":            true,
