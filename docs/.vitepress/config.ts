@@ -175,6 +175,7 @@ export default defineConfig({
                 { text: 'Runcrate', link: '/providers/runcrate' },
                 { text: 'Cheaper Inference', link: '/providers/cheaperinference' },
                 { text: 'CloudGPU', link: '/providers/cloudgpu' },
+                { text: 'Standard Compute', link: '/providers/standardcompute' },
               ],
             },
             {

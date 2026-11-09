@@ -55,6 +55,7 @@ Most use the shared `internal/openaicompat` codec (some wrappers delegate via `p
 | [Runcrate](runcrate.md)     | `api.runcrate.ai`   | `RUNCRATE_API_KEY`, `RUNCRATE_BASE_URL`       |
 | [Cheaper Inference](cheaperinference.md) | `api.cheaperinference.com/v1` | `CHEAPER_INFERENCE_API_KEY`, `CHEAPER_INFERENCE_BASE_URL` |
 | [CloudGPU](cloudgpu.md)     | `cloudgpu.app/v1`   | `CLOUDGPU_API_KEY`, `CLOUDGPU_BASE_URL`       |
+| [Standard Compute](standardcompute.md) | `api.stdcmpt.com/v1` | `STANDARDCOMPUTE_API_KEY`, `STANDARDCOMPUTE_BASE_URL` |
 
 ## Local / Custom
 
