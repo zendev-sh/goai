@@ -1469,19 +1469,36 @@ func (c *orderedContent) finish() []provider.Part {
 	return out
 }
 
+// anthropicToolBlock is one open tool_use / server_tool_use content block's
+// streaming state. The parser keeps one entry per open block id so a stream
+// that opens several tool blocks before stopping any of them still resolves
+// every call (see the toolBlocks comment in parseSSE).
+type anthropicToolBlock struct {
+	id           string
+	name         string
+	args         strings.Builder
+	isRF         bool // synthetic response-format tool: input rides text chunks
+	isServerTool bool
+	firstDelta   bool // first input_json_delta of this block (code-execution wrapping)
+}
+
 func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChunk, isRFMode bool) {
 	defer close(out)
 
 	sseScanner := sse.NewScanner(body)
 	var content orderedContent
 
-	var currentToolCallID string
-	var currentToolName string
-	var currentToolArgs strings.Builder // accumulate partial JSON fragments
-	var isRFBlock bool                  // true when current tool_use block is the synthetic response format tool
-	var isFirstDelta bool               // true for first input_json_delta of a tool_use block
-	var isServerTool bool               // true when current block is server_tool_use
-	var isResultBlock bool              // true when current block is a server tool result (e.g. web_search_tool_result)
+	// Tool-call blocks are tracked PER CONTENT BLOCK ID, not in one shared
+	// slot. A gateway that batches content_block_stop events (every tool_use
+	// block opened before any of them is stopped — observed live in Bifrost's
+	// Anthropic ingress for parallel tool calls) would otherwise overwrite the
+	// earlier blocks: one ChunkToolCall is emitted at the first stop, carrying
+	// the LAST block's id with every block's arguments concatenated, and the
+	// remaining stops find an empty slot. Keying the state by block id keeps
+	// each block's id, name and arguments independent, so a batched-stop
+	// stream still resolves one call per block.
+	toolBlocks := map[string]*anthropicToolBlock{}
+	var isResultBlock bool // true when current block is a server tool result (e.g. web_search_tool_result)
 	var usage provider.Usage
 	var responseMeta provider.ResponseMetadata
 	var finishMeta map[string]any // metadata accumulated for ChunkFinish
@@ -1608,35 +1625,28 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 					}
 				}
 				switch cbType {
-				case "tool_use":
-					currentToolCallID, _ = cb["id"].(string)
-					currentToolName, _ = cb["name"].(string)
-					isRFBlock = isRFMode && currentToolName == responseFormatToolName
-					isFirstDelta = true
-					isServerTool = false
-					if !isRFBlock {
-						track(provider.Part{Type: provider.PartToolCall, ToolCallID: currentToolCallID, ToolName: currentToolName})
+				case "tool_use", "server_tool_use":
+					id, _ := cb["id"].(string)
+					name, _ := cb["name"].(string)
+					isServerToolBlock := cbType == "server_tool_use"
+					st := &anthropicToolBlock{
+						id:           id,
+						name:         name,
+						isServerTool: isServerToolBlock,
+						// RF mode only ever applies to the synthetic client tool_use.
+						isRF:       !isServerToolBlock && isRFMode && name == responseFormatToolName,
+						firstDelta: true,
+					}
+					toolBlocks[blockID] = st
+					track(provider.Part{Type: provider.PartToolCall, ToolCallID: st.id, ToolName: st.name})
+					if !st.isRF {
 						if !provider.TrySend(ctx, out, provider.StreamChunk{
 							Type:       provider.ChunkToolCallStreamStart,
-							ToolCallID: currentToolCallID,
-							ToolName:   currentToolName,
+							ToolCallID: st.id,
+							ToolName:   st.name,
 						}) {
 							return
 						}
-					}
-				case "server_tool_use":
-					currentToolCallID, _ = cb["id"].(string)
-					currentToolName, _ = cb["name"].(string)
-					isRFBlock = false
-					isFirstDelta = true
-					isServerTool = true
-					track(provider.Part{Type: provider.PartToolCall, ToolCallID: currentToolCallID, ToolName: currentToolName})
-					if !provider.TrySend(ctx, out, provider.StreamChunk{
-						Type:       provider.ChunkToolCallStreamStart,
-						ToolCallID: currentToolCallID,
-						ToolName:   currentToolName,
-					}) {
-						return
 					}
 				case "thinking":
 					// blockId marks the block boundary on every reasoning
@@ -1735,8 +1745,9 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 					}
 				case "input_json_delta":
 					text, _ := delta["partial_json"].(string)
-					if text != "" {
-						if isRFBlock {
+					st := toolBlocks[blockID]
+					if text != "" && st != nil {
+						if st.isRF {
 							// In response format mode: emit tool input as text chunks.
 							if !provider.TrySend(ctx, out, provider.StreamChunk{Type: provider.ChunkText, Text: text}) {
 								return
@@ -1747,19 +1758,19 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 							// are split out, the API sends input without the "type" field.
 							// We inject it back, matching Vercel's behavior.
 							emitText := text
-							if isFirstDelta && isServerTool {
-								if currentToolName == "bash_code_execution" || currentToolName == "text_editor_code_execution" {
-									emitText = `{"type": "` + currentToolName + `",` + text[1:]
+							if st.firstDelta && st.isServerTool {
+								if st.name == "bash_code_execution" || st.name == "text_editor_code_execution" {
+									emitText = `{"type": "` + st.name + `",` + text[1:]
 								}
 							}
-							isFirstDelta = false
+							st.firstDelta = false
 							// Accumulate partial JSON fragments; emit complete JSON on content_block_stop.
-							currentToolArgs.WriteString(emitText)
+							st.args.WriteString(emitText)
 							// Emit delta for UI streaming progress (matches Vercel's tool-input-delta).
 							if !provider.TrySend(ctx, out, provider.StreamChunk{
 								Type:       provider.ChunkToolCallDelta,
-								ToolCallID: currentToolCallID,
-								ToolName:   currentToolName,
+								ToolCallID: st.id,
+								ToolName:   st.name,
 								ToolInput:  emitText,
 							}) {
 								return
@@ -1770,6 +1781,7 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 			}
 
 		case "content_block_stop":
+			blockID := blockIDOf(event)
 			switch {
 			case isResultBlock:
 				// End of a server tool result block. Flush the deferred
@@ -1779,34 +1791,33 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 				}
 				isResultBlock = false
 				currentResultUseID = ""
-			case isServerTool && currentToolCallID != "":
-				// Defer ChunkToolCall emission so we can attach the matching
-				// result block (next content_block) before flushing.
-				pendingCalls[currentToolCallID] = &pendingServerCall{
-					name: currentToolName,
-					args: currentToolArgs.String(),
+			case toolBlocks[blockID] != nil:
+				// Stop THIS block only: sibling tool_use blocks may still be
+				// open (a batched-stop stream), so the state is per block id.
+				st := toolBlocks[blockID]
+				delete(toolBlocks, blockID)
+				switch {
+				case st.isServerTool:
+					// Defer ChunkToolCall emission so we can attach the matching
+					// result block (next content_block) before flushing.
+					pendingCalls[st.id] = &pendingServerCall{
+						name: st.name,
+						args: st.args.String(),
+					}
+					content.setToolInput(st.id, cmp.Or(st.args.String(), "{}"))
+				case !st.isRF:
+					// Emit accumulated tool call with complete JSON args.
+					args := cmp.Or(st.args.String(), "{}")
+					content.setToolInput(st.id, args)
+					if !provider.TrySend(ctx, out, provider.StreamChunk{
+						Type:       provider.ChunkToolCall,
+						ToolCallID: st.id,
+						ToolName:   st.name,
+						ToolInput:  args,
+					}) {
+						return
+					}
 				}
-				content.setToolInput(currentToolCallID, cmp.Or(currentToolArgs.String(), "{}"))
-				currentToolArgs.Reset()
-			case currentToolCallID != "" && !isRFBlock:
-				// Emit accumulated tool call with complete JSON args.
-				args := cmp.Or(currentToolArgs.String(), "{}")
-				content.setToolInput(currentToolCallID, args)
-				if !provider.TrySend(ctx, out, provider.StreamChunk{
-					Type:       provider.ChunkToolCall,
-					ToolCallID: currentToolCallID,
-					ToolName:   currentToolName,
-					ToolInput:  args,
-				}) {
-					return
-				}
-				currentToolArgs.Reset()
-			}
-			if currentToolCallID != "" {
-				currentToolCallID = ""
-				currentToolName = ""
-				isRFBlock = false
-				isServerTool = false
 			}
 
 		case "message_delta":

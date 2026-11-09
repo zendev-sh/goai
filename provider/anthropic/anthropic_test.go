@@ -5390,3 +5390,63 @@ func TestBuildRequest_ThinkingDowngradesForcedToolChoice(t *testing.T) {
 		t.Errorf("tool_choice = %v, want any (adaptive thinking must not downgrade)", tc)
 	}
 }
+
+// TestChat_Stream_ParallelToolCallsWithBatchedStops pins the per-block
+// tool-call state. Some gateways — Bifrost's Anthropic ingress is the live
+// case — open every tool_use block of a parallel batch before stopping any of
+// them. A single shared tool-call slot collapses such a stream into one call
+// carrying the LAST block's id with every block's arguments concatenated, and
+// the remaining stops find an empty slot, so a three-call batch resolves to
+// one malformed call. Each open block must keep its own id, name and
+// arguments, and its stop must emit that block's call.
+func TestChat_Stream_ParallelToolCallsWithBatchedStops(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
+		f(`data: {"type":"message_start","message":{"id":"msg_parallel","usage":{"input_tokens":10}}}` + "\n\n")
+		// Both blocks OPEN before either is stopped.
+		f(`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_a","name":"read_file"}}` + "\n\n")
+		f(`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\""}}` + "\n\n")
+		f(`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"a.go\"}"}}` + "\n\n")
+		f(`data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_b","name":"read_file"}}` + "\n\n")
+		f(`data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\""}}` + "\n\n")
+		f(`data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":": \"b.go\"}"}}` + "\n\n")
+		f(`data: {"type":"content_block_stop","index":0}` + "\n\n")
+		f(`data: {"type":"content_block_stop","index":1}` + "\n\n")
+		f(`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":12}}` + "\n\n")
+		f(`data: {"type":"message_stop"}` + "\n\n")
+	}))
+	defer server.Close()
+
+	model := Chat("claude-sonnet-4-20250514", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	result, err := model.DoStream(t.Context(), provider.GenerateParams{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "read both"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]string{} // call id -> accumulated arguments
+	var starts []string
+	for chunk := range result.Stream {
+		switch chunk.Type {
+		case provider.ChunkToolCallStreamStart:
+			starts = append(starts, chunk.ToolCallID)
+		case provider.ChunkToolCall:
+			if _, dup := got[chunk.ToolCallID]; dup {
+				t.Errorf("duplicate ChunkToolCall for %s", chunk.ToolCallID)
+			}
+			got[chunk.ToolCallID] = chunk.ToolInput
+		}
+	}
+
+	if len(starts) != 2 {
+		t.Fatalf("ChunkToolCallStreamStart count = %d (%v), want 2", len(starts), starts)
+	}
+	want := map[string]string{"toolu_a": `{"path": "a.go"}`, "toolu_b": `{"path": "b.go"}`}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("tool calls = %v, want %v", got, want)
+	}
+}

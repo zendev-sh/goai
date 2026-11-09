@@ -174,6 +174,7 @@ export default defineConfig({
                 { text: 'Opper', link: '/providers/opper' },
                 { text: 'Runcrate', link: '/providers/runcrate' },
                 { text: 'Cheaper Inference', link: '/providers/cheaperinference' },
+                { text: 'CloudGPU', link: '/providers/cloudgpu' },
                 { text: 'cheapaimodel', link: '/providers/cheapaimodel' },
               ],
             },

@@ -100,7 +100,7 @@ result, _ := goai.GenerateText(ctx, model,
 
 ## Supported Providers
 
-OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Vertex AI, Cohere, Mistral, xAI (Grok), Groq, DeepSeek, MiniMax, Fireworks, Together AI, DeepInfra, OpenRouter, Requesty, Opper, Runcrate, Cheaper Inference, cheapaimodel, Perplexity, Cerebras, Cloudflare Workers AI, FPT Smart Cloud, NVIDIA NIM, Ollama, llama.cpp, vLLM, RunPod, and any OpenAI-compatible endpoint.
+OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, Vertex AI, Cohere, Mistral, xAI (Grok), Groq, DeepSeek, MiniMax, Fireworks, Together AI, DeepInfra, OpenRouter, Requesty, Opper, Runcrate, Cheaper Inference, CloudGPU, cheapaimodel, Perplexity, Cerebras, Cloudflare Workers AI, FPT Smart Cloud, NVIDIA NIM, Ollama, llama.cpp, vLLM, RunPod, and any OpenAI-compatible endpoint.
 
 [View all providers →](/providers/)
 

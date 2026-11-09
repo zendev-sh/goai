@@ -279,6 +279,7 @@ if errors.As(streamErr, &protocolErr) {
 | `store` | `bool` | Persist responses for later retrieval. |
 | `serviceTier` | `string` | Service tier (e.g., `"auto"`, `"flex"`). |
 | `parallelToolCalls` | `bool` | Allow parallel tool calls. |
+| `strict` | `bool` | Set `strict` on regular Responses function tools. Explicit `false` preserves optional parameters; omitted by default. Does not affect provider-defined tools or structured output (`strictJsonSchema`). |
 | `reasoning_effort` | `string` | Reasoning effort level (`"low"`, `"medium"`, `"high"`). |
 | `reasoning_summary` | `string` | Reasoning summary mode. |
 | `text_verbosity` | `string` | Text verbosity level. |

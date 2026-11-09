@@ -122,6 +122,7 @@ type ollamaToolFunction struct {
 
 // ollamaChatResponse is one NDJSON line in the /api/chat streaming response.
 type ollamaChatResponse struct {
+	Error           string        `json:"error,omitempty"`
 	Model           string        `json:"model"`
 	Message         ollamaMessage `json:"message"`
 	Done            bool          `json:"done"`
@@ -281,6 +282,9 @@ func (m *Model) DoGenerate(ctx context.Context, params provider.GenerateParams) 
 		if decErr := json.Unmarshal([]byte(trimmed), &chunk); decErr != nil {
 			return nil, fmt.Errorf("ollama: decode response: %w", decErr)
 		}
+		if chunk.Error != "" {
+			return nil, fmt.Errorf("ollama: %s", chunk.Error)
+		}
 		lastResp = chunk
 
 		if chunk.Message.Content != "" {
@@ -367,6 +371,13 @@ func (m *Model) DoStream(ctx context.Context, params provider.GenerateParams) (*
 				provider.TrySend(ctx, ch, provider.StreamChunk{
 					Type:  provider.ChunkError,
 					Error: fmt.Errorf("ollama: decode stream chunk: %w", decErr),
+				})
+				return
+			}
+			if chunk.Error != "" {
+				provider.TrySend(ctx, ch, provider.StreamChunk{
+					Type:  provider.ChunkError,
+					Error: fmt.Errorf("ollama: %s", chunk.Error),
 				})
 				return
 			}
