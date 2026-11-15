@@ -4777,3 +4777,324 @@ func TestChat_Generate_SerializesIncludeServerSideToolInvocations(t *testing.T) 
 		t.Error("snake_case include_server_side_tool_invocations must not be serialized")
 	}
 }
+
+func TestParseSSE_ServerSideToolCallAndResponsePreserveThoughtSignatureAndOrder(t *testing.T) {
+	input := strings.Join([]string{
+		`data: {"candidates":[{"content":{"parts":[{"text":"Thinking...","thought":true}]}}]}`,
+		`data: {"candidates":[{"content":{"parts":[{"thoughtSignature":"sig-tc","toolCall":{"id":"call_ws_1","toolType":"GOOGLE_SEARCH_WEB","args":{"queries":["zed title"]}}},{"functionCall":{"id":"call_fc_1","name":"spawn_agent","args":{"prompt":"hi"}}}]}}]}`,
+		`data: {"candidates":[{"content":{"parts":[{"thoughtSignature":"sig-tr","toolResponse":{"id":"call_ws_1","toolType":"GOOGLE_SEARCH_WEB"}}]},"finishReason":"STOP"}]}`,
+		"",
+	}, "\n\n")
+
+	out := make(chan provider.StreamChunk, 16)
+	parseSSE(t.Context(), strings.NewReader(input), out)
+
+	var toolCalls []provider.StreamChunk
+	var streamStarts []string
+	var stepFinishReason provider.FinishReason
+	for ch := range out {
+		switch ch.Type {
+		case provider.ChunkToolCallStreamStart:
+			streamStarts = append(streamStarts, ch.ToolName)
+		case provider.ChunkToolCall:
+			toolCalls = append(toolCalls, ch)
+		case provider.ChunkStepFinish:
+			stepFinishReason = ch.FinishReason
+		}
+	}
+
+	if !reflect.DeepEqual(streamStarts, []string{"spawn_agent"}) {
+		t.Fatalf("streamStarts = %v, want [spawn_agent] (server toolCall/toolResponse must not emit start)", streamStarts)
+	}
+	if stepFinishReason != provider.FinishToolCalls {
+		t.Fatalf("stepFinishReason = %v, want %v", stepFinishReason, provider.FinishToolCalls)
+	}
+	if len(toolCalls) != 3 {
+		t.Fatalf("got %d ChunkToolCall chunks, want 3 (toolCall, functionCall, toolResponse): %+v", len(toolCalls), toolCalls)
+	}
+	if toolCalls[0].ToolName != "GOOGLE_SEARCH_WEB" || toolCalls[0].ToolCallID != "call_ws_1" {
+		t.Fatalf("chunk[0] = %+v, want GOOGLE_SEARCH_WEB", toolCalls[0])
+	}
+	if exec, _ := toolCalls[0].Metadata["providerExecuted"].(bool); !exec {
+		t.Fatalf("chunk[0] must mark providerExecuted=true: %+v", toolCalls[0].Metadata)
+	}
+	gm0, _ := toolCalls[0].Metadata["google"].(map[string]any)
+	if gm0["thoughtSignature"] != "sig-tc" || gm0["rawPart"] == nil {
+		t.Fatalf("chunk[0] metadata.google = %#v, want thoughtSignature+rawPart", gm0)
+	}
+	if toolCalls[1].ToolName != "spawn_agent" || toolCalls[1].ToolCallID != "call_fc_1" {
+		t.Fatalf("chunk[1] = %+v, want spawn_agent", toolCalls[1])
+	}
+	if toolCalls[2].ToolName != "GOOGLE_SEARCH_WEB" || toolCalls[2].ToolCallID != "call_ws_1" {
+		t.Fatalf("chunk[2] = %+v, want GOOGLE_SEARCH_WEB toolResponse", toolCalls[2])
+	}
+	if exec, _ := toolCalls[2].Metadata["providerExecuted"].(bool); !exec {
+		t.Fatalf("chunk[2] must mark providerExecuted=true: %+v", toolCalls[2].Metadata)
+	}
+	gm2, _ := toolCalls[2].Metadata["google"].(map[string]any)
+	if gm2["thoughtSignature"] != "sig-tr" || gm2["rawPart"] == nil {
+		t.Fatalf("chunk[2] metadata.google = %#v, want thoughtSignature+rawPart", gm2)
+	}
+}
+
+func TestParseResponse_ServerSideToolCallAndResponse(t *testing.T) {
+	t.Run("server only keeps FinishStop", func(t *testing.T) {
+		body := `{
+			"candidates":[{"content":{"parts":[
+				{"thoughtSignature":"sig-tc","toolCall":{"id":"ws1","toolType":"GOOGLE_SEARCH_WEB","args":{"queries":["q"]}}},
+				{"thoughtSignature":"sig-tr","toolResponse":{"id":"ws1","toolType":"GOOGLE_SEARCH_WEB"}},
+				{"text":"done"}
+			]},"finishReason":"STOP"}]
+		}`
+		res, err := parseResponse([]byte(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.FinishReason != provider.FinishStop {
+			t.Fatalf("FinishReason = %v, want %v", res.FinishReason, provider.FinishStop)
+		}
+		if len(res.ToolCalls) != 2 {
+			t.Fatalf("ToolCalls = %d, want 2", len(res.ToolCalls))
+		}
+		for i, tc := range res.ToolCalls {
+			if exec, _ := tc.Metadata["providerExecuted"].(bool); !exec {
+				t.Fatalf("ToolCalls[%d] must mark providerExecuted=true", i)
+			}
+		}
+	})
+
+	t.Run("mixed server and client keeps FinishToolCalls and order", func(t *testing.T) {
+		body := `{
+			"candidates":[{"content":{"parts":[
+				{"thoughtSignature":"sig-tc","toolCall":{"id":"ws1","toolType":"GOOGLE_SEARCH_WEB","args":{"queries":["q"]}}},
+				{"functionCall":{"id":"fc1","name":"read_file","args":{"path":"a.go"}}},
+				{"thoughtSignature":"sig-tr","toolResponse":{"id":"ws1","toolType":"GOOGLE_SEARCH_WEB"}}
+			]},"finishReason":"STOP"}]
+		}`
+		res, err := parseResponse([]byte(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.FinishReason != provider.FinishToolCalls {
+			t.Fatalf("FinishReason = %v, want %v", res.FinishReason, provider.FinishToolCalls)
+		}
+		if len(res.ToolCalls) != 3 || res.ToolCalls[1].Name != "read_file" {
+			t.Fatalf("ToolCalls = %+v, want [toolCall, read_file, toolResponse]", res.ToolCalls)
+		}
+	})
+}
+
+func TestParseSSE_EmptyPartWithThoughtSignatureNotDropped(t *testing.T) {
+	input := "data: " + `{"candidates":[{"content":{"parts":[{"functionCall":{"id":"fc1","name":"spawn_agent","args":{}}},{"text":"","thoughtSignature":"sig-trailing"}]},"finishReason":"STOP"}]}` + "\n\n"
+	out := make(chan provider.StreamChunk, 8)
+	parseSSE(t.Context(), strings.NewReader(input), out)
+
+	var got []provider.StreamChunk
+	for ch := range out {
+		if ch.Type == provider.ChunkToolCall {
+			got = append(got, ch)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d ChunkToolCall chunks, want 2 (functionCall + trailing signed empty part): %+v", len(got), got)
+	}
+	gm, _ := got[1].Metadata["google"].(map[string]any)
+	if gm["thoughtSignature"] != "sig-trailing" || gm["rawPart"] == nil {
+		t.Fatalf("trailing empty part lost signature/rawPart: %#v", gm)
+	}
+}
+
+func TestConvertMessages_ServerSideRawPartRoundTripsVerbatim(t *testing.T) {
+	rawCall := json.RawMessage(`{"thoughtSignature":"sig-tc","toolCall":{"id":"ws1","toolType":"GOOGLE_SEARCH_WEB","args":{"queries":["q"]}}}`)
+	rawResp := json.RawMessage(`{"thoughtSignature":"sig-tr","toolResponse":{"id":"ws1","toolType":"GOOGLE_SEARCH_WEB"}}`)
+
+	msgs := convertMessages([]provider.Message{
+		{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}},
+		{Role: provider.RoleAssistant, Content: []provider.Part{
+			{Type: provider.PartToolCall, ToolCallID: "ws1", ToolName: "GOOGLE_SEARCH_WEB", ProviderOptions: map[string]any{
+				"providerExecuted": true,
+				"google":           map[string]any{"rawPart": rawCall, "thoughtSignature": "sig-tc"},
+			}},
+			{Type: provider.PartToolCall, ToolCallID: "fc1", ToolName: "spawn_agent", ToolInput: json.RawMessage(`{"prompt":"x"}`)},
+			{Type: provider.PartToolCall, ToolCallID: "ws1", ToolName: "GOOGLE_SEARCH_WEB", ProviderOptions: map[string]any{
+				"providerExecuted": true,
+				"google":           map[string]any{"rawPart": rawResp, "thoughtSignature": "sig-tr"},
+			}},
+		}},
+	})
+
+	parts := msgs[1]["parts"].([]map[string]any)
+	if len(parts) != 3 {
+		t.Fatalf("len(parts) = %d, want 3: %#v", len(parts), parts)
+	}
+	if parts[0]["toolCall"] == nil || parts[0]["thoughtSignature"] != "sig-tc" || parts[0]["functionCall"] != nil {
+		t.Fatalf("parts[0] = %#v, want verbatim toolCall with thoughtSignature", parts[0])
+	}
+	if parts[1]["functionCall"] == nil {
+		t.Fatalf("parts[1] = %#v, want functionCall", parts[1])
+	}
+	if parts[2]["toolResponse"] == nil || parts[2]["thoughtSignature"] != "sig-tr" || parts[2]["functionCall"] != nil {
+		t.Fatalf("parts[2] = %#v, want verbatim toolResponse with thoughtSignature", parts[2])
+	}
+}
+
+func TestChat_StreamText_MultiStepServerToolBeforeFunctionCall(t *testing.T) {
+	var step atomic.Int32
+	var step2Contents []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := step.Add(1)
+		var req struct {
+			Contents []map[string]any `json:"contents"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode step %d: %v", n, err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		if n == 1 {
+			_, _ = fmt.Fprint(w, strings.Join([]string{
+				`data: {"candidates":[{"content":{"parts":[{"text":"Thinking","thought":true}]}}]}`,
+				`data: {"candidates":[{"content":{"parts":[{"thoughtSignature":"sig-tc","toolCall":{"id":"ws1","toolType":"GOOGLE_SEARCH_WEB","args":{"queries":["q"]}}},{"functionCall":{"id":"fc1","name":"spawn_agent","args":{"prompt":"x"}}}]}}]}`,
+				`data: {"candidates":[{"content":{"parts":[{"thoughtSignature":"sig-tr","toolResponse":{"id":"ws1","toolType":"GOOGLE_SEARCH_WEB"}}]},"finishReason":"STOP"}]}`,
+				"",
+			}, "\n\n"))
+			return
+		}
+		step2Contents = req.Contents
+		_, _ = fmt.Fprint(w, `data: {"candidates":[{"content":{"parts":[{"text":"all done"}]},"finishReason":"STOP"}]}`+"\n\n")
+	}))
+	defer server.Close()
+
+	model := Chat("gemini-2.5-flash", WithAPIKey("test-key"), WithBaseURL(server.URL))
+	spawnTool := goai.Tool{
+		Name:        "spawn_agent",
+		Description: "spawn",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+		Execute: func(_ context.Context, _ json.RawMessage) (string, error) {
+			return "launched", nil
+		},
+	}
+	gs := Tools.GoogleSearch()
+	serverTool := goai.Tool{
+		Name:                   gs.Name,
+		ProviderDefinedType:    gs.ProviderDefinedType,
+		ProviderDefinedOptions: gs.ProviderDefinedOptions,
+	}
+
+	stream, err := goai.StreamText(t.Context(), model,
+		goai.WithPrompt("do task"),
+		goai.WithTools(spawnTool, serverTool),
+		goai.WithMaxSteps(3),
+		goai.WithProviderOptions(map[string]any{
+			"google": map[string]any{
+				"toolConfig": map[string]any{"includeServerSideToolInvocations": true},
+			},
+		}),
+	)
+	if err != nil {
+		t.Fatalf("StreamText: %v", err)
+	}
+	res := stream.Result()
+	if err := stream.Err(); err != nil {
+		t.Fatalf("stream.Err: %v", err)
+	}
+	if len(res.Steps) != 2 || res.Steps[1].Text != "all done" {
+		t.Fatalf("res.Steps = %+v, want step 2 text 'all done'", res.Steps)
+	}
+	if len(step2Contents) != 3 {
+		t.Fatalf("step2Contents = %d, want 3: %#v", len(step2Contents), step2Contents)
+	}
+	modelParts := step2Contents[1]["parts"].([]any)
+	if len(modelParts) != 4 {
+		t.Fatalf("step2 model parts = %d, want 4 ([thought, toolCall, functionCall, toolResponse]): %#v", len(modelParts), modelParts)
+	}
+	p1 := modelParts[1].(map[string]any)
+	p2 := modelParts[2].(map[string]any)
+	p3 := modelParts[3].(map[string]any)
+	if p1["toolCall"] == nil || p1["thoughtSignature"] != "sig-tc" {
+		t.Fatalf("step2 model parts[1] = %#v, want toolCall+sig-tc", p1)
+	}
+	if p2["functionCall"] == nil {
+		t.Fatalf("step2 model parts[2] = %#v, want functionCall", p2)
+	}
+	if p3["toolResponse"] == nil || p3["thoughtSignature"] != "sig-tr" {
+		t.Fatalf("step2 model parts[3] = %#v, want toolResponse+sig-tr", p3)
+	}
+}
+
+func TestDecodeGoogleRawPart_VariantsAndFallbacks(t *testing.T) {
+	validJSON := `{"thoughtSignature":"sig-1","toolCall":{"id":"ws1","toolType":"GOOGLE_SEARCH_WEB"}}`
+	validCases := []struct {
+		name string
+		val  any
+	}{
+		{"map", map[string]any{"thoughtSignature": "sig-1", "toolCall": map[string]any{"id": "ws1"}}},
+		{"json.RawMessage", json.RawMessage(validJSON)},
+		{"bytes", []byte(validJSON)},
+		{"string", validJSON},
+	}
+	for _, tc := range validCases {
+		t.Run("valid/"+tc.name, func(t *testing.T) {
+			got, ok := decodeGoogleRawPart(tc.val)
+			if !ok || got["thoughtSignature"] != "sig-1" || got["toolCall"] == nil {
+				t.Fatalf("decodeGoogleRawPart(%s) = (%#v, %v), want valid map", tc.name, got, ok)
+			}
+		})
+	}
+
+	invalidCases := []struct {
+		name string
+		val  any
+	}{
+		{"nil", nil},
+		{"empty map", map[string]any{}},
+		{"empty raw", json.RawMessage(nil)},
+		{"invalid raw", json.RawMessage(`{`)},
+		{"empty json raw", json.RawMessage(`{}`)},
+		{"empty bytes", []byte(nil)},
+		{"invalid bytes", []byte(`{`)},
+		{"empty string", ""},
+		{"invalid string", "{"},
+		{"empty object string", "{}"},
+		{"unsupported type", 42},
+	}
+	for _, tc := range invalidCases {
+		t.Run("invalid/"+tc.name, func(t *testing.T) {
+			if got, ok := decodeGoogleRawPart(tc.val); ok || got != nil {
+				t.Fatalf("decodeGoogleRawPart(%s) = (%#v, %v), want (nil, false)", tc.name, got, ok)
+			}
+		})
+	}
+}
+
+func TestGeminiPart_RawJSONFallbackAndUnmarshalError(t *testing.T) {
+	var bad geminiPart
+	if err := json.Unmarshal([]byte(`{"text":123}`), &bad); err == nil {
+		t.Fatal("expected UnmarshalJSON error for wrong field type")
+	}
+
+	direct := geminiPart{ThoughtSignature: "sig-direct"}
+	raw := direct.rawJSON()
+	if !strings.Contains(string(raw), `"thoughtSignature":"sig-direct"`) {
+		t.Fatalf("rawJSON() = %s, want marshaled thoughtSignature", raw)
+	}
+	_, _, _, meta, ok := direct.serverSidePart()
+	if !ok || meta["providerExecuted"] != true {
+		t.Fatalf("serverSidePart() on direct struct = (%#v, %v), want ok", meta, ok)
+	}
+
+	unmarshalable := geminiPart{ToolCall: json.RawMessage(`{invalid`)}
+	if raw := unmarshalable.rawJSON(); raw != nil {
+		t.Fatalf("rawJSON() on invalid ToolCall = %s, want nil", raw)
+	}
+	if _, _, _, _, ok := unmarshalable.serverSidePart(); ok {
+		t.Fatal("serverSidePart() on invalid ToolCall should return false")
+	}
+}
+
+func TestParseSSE_CancelOnServerSidePart(t *testing.T) {
+	input := "data: " + `{"candidates":[{"content":{"parts":[{"thoughtSignature":"sig-tc","toolCall":{"id":"ws1","toolType":"GOOGLE_SEARCH_WEB","args":{"queries":["q"]}}}]}}]}` + "\n\n"
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	out := make(chan provider.StreamChunk)
+	parseSSE(ctx, strings.NewReader(input), out)
+}

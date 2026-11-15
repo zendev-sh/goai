@@ -9,6 +9,7 @@
 package google
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/base64"
@@ -16,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -642,6 +644,12 @@ func convertMessages(msgs []provider.Message) []map[string]any {
 				parts = append(parts, reasoningPart)
 
 			case provider.PartToolCall:
+				if google, ok := part.ProviderOptions["google"].(map[string]any); ok {
+					if rawPart, ok := decodeGoogleRawPart(google["rawPart"]); ok {
+						parts = append(parts, rawPart)
+						break
+					}
+				}
 				var args any
 				if len(part.ToolInput) > 0 {
 					_ = json.Unmarshal(part.ToolInput, &args) // nil on error → fallback below
@@ -761,7 +769,9 @@ type geminiPart struct {
 		Name string          `json:"name"`
 		Args json.RawMessage `json:"args"`
 	} `json:"functionCall,omitempty"`
-	InlineData *struct {
+	ToolCall     json.RawMessage `json:"toolCall,omitempty"`
+	ToolResponse json.RawMessage `json:"toolResponse,omitempty"`
+	InlineData   *struct {
 		MimeType string `json:"mimeType"`
 		Data     string `json:"data"`
 	} `json:"inlineData,omitempty"`
@@ -779,6 +789,110 @@ type geminiPart struct {
 	VideoMetadata *struct {
 		VideoDuration string `json:"videoDuration"`
 	} `json:"videoMetadata,omitempty"`
+	raw json.RawMessage
+}
+
+func (p *geminiPart) UnmarshalJSON(data []byte) error {
+	type alias geminiPart
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*p = geminiPart(a)
+	p.raw = bytes.Clone(bytes.TrimSpace(data))
+	return nil
+}
+
+func (p geminiPart) rawJSON() json.RawMessage {
+	if len(p.raw) > 0 {
+		return bytes.Clone(p.raw)
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+func (p geminiPart) serverSidePart() (id, name, input string, meta map[string]any, ok bool) {
+	var toolType string
+	switch {
+	case len(p.ToolCall) > 0:
+		var tc struct {
+			ID       string          `json:"id"`
+			ToolType string          `json:"toolType"`
+			Args     json.RawMessage `json:"args"`
+		}
+		_ = json.Unmarshal(p.ToolCall, &tc)
+		id = tc.ID
+		toolType = cmp.Or(tc.ToolType, "google_server_tool")
+		input = cmp.Or(strings.TrimSpace(string(tc.Args)), "{}")
+	case len(p.ToolResponse) > 0:
+		var tr struct {
+			ID       string `json:"id"`
+			ToolType string `json:"toolType"`
+		}
+		_ = json.Unmarshal(p.ToolResponse, &tr)
+		id = tr.ID
+		toolType = cmp.Or(tr.ToolType, "google_server_tool")
+		input = cmp.Or(strings.TrimSpace(string(p.ToolResponse)), "{}")
+	case p.FunctionCall == nil && !p.Thought && p.Text == "" && p.extraPart() == nil && p.ThoughtSignature != "":
+		input = "{}"
+	default:
+		return "", "", "", nil, false
+	}
+	raw := p.rawJSON()
+	if len(raw) == 0 {
+		return "", "", "", nil, false
+	}
+	googleMeta := map[string]any{
+		"rawPart": raw,
+	}
+	if p.ThoughtSignature != "" {
+		googleMeta["thoughtSignature"] = p.ThoughtSignature
+	}
+	return id, toolType, input, map[string]any{
+		"providerExecuted": true,
+		"google":           googleMeta,
+	}, true
+}
+
+func decodeGoogleRawPart(v any) (map[string]any, bool) {
+	switch raw := v.(type) {
+	case map[string]any:
+		if len(raw) == 0 {
+			return nil, false
+		}
+		return maps.Clone(raw), true
+	case json.RawMessage:
+		if len(raw) == 0 {
+			return nil, false
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil || len(m) == 0 {
+			return nil, false
+		}
+		return m, true
+	case []byte:
+		if len(raw) == 0 {
+			return nil, false
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil || len(m) == 0 {
+			return nil, false
+		}
+		return m, true
+	case string:
+		if raw == "" {
+			return nil, false
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(raw), &m); err != nil || len(m) == 0 {
+			return nil, false
+		}
+		return m, true
+	}
+	return nil, false
 }
 
 // extraPart returns a structured map for the non-text, non-function parts
@@ -894,6 +1008,16 @@ func parseSSE(ctx context.Context, body io.Reader, out chan<- provider.StreamChu
 					ToolName:   part.FunctionCall.Name,
 					ToolInput:  argsStr,
 					Metadata:   meta,
+				}) {
+					return
+				}
+			} else if sid, sname, sinput, smeta, ok := part.serverSidePart(); ok {
+				if !provider.TrySend(ctx, out, provider.StreamChunk{
+					Type:       provider.ChunkToolCall,
+					ToolCallID: sid,
+					ToolName:   sname,
+					ToolInput:  sinput,
+					Metadata:   smeta,
 				}) {
 					return
 				}
@@ -1081,6 +1205,13 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 				}
 			}
 			result.ToolCalls = append(result.ToolCalls, tc)
+		} else if sid, sname, sinput, smeta, ok := part.serverSidePart(); ok {
+			result.ToolCalls = append(result.ToolCalls, provider.ToolCall{
+				ID:       sid,
+				Name:     sname,
+				Input:    json.RawMessage(sinput),
+				Metadata: smeta,
+			})
 		} else if part.Thought && part.Text != "" {
 			reasoningParts = append(reasoningParts, part.Text)
 		} else if !part.Thought && part.Text != "" {
@@ -1126,7 +1257,7 @@ func parseResponse(body []byte) (*provider.GenerateResult, error) {
 	// Extract grounding sources from groundingMetadata.
 	result.Sources = extractGroundingSources(candidate.GroundingMetadata)
 
-	if len(result.ToolCalls) > 0 {
+	if callIndex > 0 {
 		result.FinishReason = provider.FinishToolCalls
 	}
 
