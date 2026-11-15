@@ -20,8 +20,132 @@ type client struct {
 	auth       string // base64(publicKey:secretKey)
 	httpClient *http.Client
 
-	mu     sync.Mutex
-	events []ingestionEvent
+	mu        sync.Mutex
+	events    []ingestionEvent
+	queue     []flushBatch
+	running   bool
+	reporting bool
+}
+
+type flushBatch struct {
+	payload []byte
+	onError func(error)
+}
+
+const maxPendingBatches = 64
+
+var activeSenders = make(chan struct{}, 64)
+var activeCallbacks = make(chan struct{}, 64)
+var senderState struct {
+	sync.Mutex
+	count int
+	done  chan struct{}
+}
+
+// Flush waits for trace batches submitted before it is called. It returns when
+// their senders have stopped, or when ctx is cancelled. New submissions made
+// concurrently with Flush may require a subsequent call. Delivery is best-effort;
+// individual send errors are reported through OnFlushError, whose callbacks may
+// still be running after Flush returns.
+func Flush(ctx context.Context) error {
+	senderState.Lock()
+	if senderState.count == 0 {
+		senderState.Unlock()
+		return nil
+	}
+	done := senderState.done
+	senderState.Unlock()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// submit sends batches in order without holding up the generation call.
+func (c *client) submit(events []ingestionEvent, onError func(error)) {
+	payload, err := json.Marshal(map[string]any{"batch": events})
+	if err != nil {
+		c.report(onError, fmt.Errorf("langfuse: marshal batch: %w", err))
+		return
+	}
+	c.mu.Lock()
+	if len(c.queue) >= maxPendingBatches {
+		c.mu.Unlock()
+		c.report(onError, fmt.Errorf("langfuse: trace queue is full"))
+		return
+	}
+	if !c.running {
+		select {
+		case activeSenders <- struct{}{}:
+		default:
+			c.mu.Unlock()
+			c.report(onError, fmt.Errorf("langfuse: trace sender limit reached"))
+			return
+		}
+		senderState.Lock()
+		if senderState.count == 0 {
+			senderState.done = make(chan struct{})
+		}
+		senderState.count++
+		senderState.Unlock()
+		c.running = true
+		go c.drain()
+	}
+	c.queue = append(c.queue, flushBatch{payload: payload, onError: onError})
+	c.mu.Unlock()
+}
+
+func (c *client) report(onError func(error), err error) {
+	if onError == nil {
+		return
+	}
+	c.mu.Lock()
+	if c.reporting {
+		c.mu.Unlock()
+		return
+	}
+	select {
+	case activeCallbacks <- struct{}{}:
+	default:
+		c.mu.Unlock()
+		return
+	}
+	c.reporting = true
+	c.mu.Unlock()
+	go func() {
+		defer func() { <-activeCallbacks }()
+		defer func() { c.mu.Lock(); c.reporting = false; c.mu.Unlock() }()
+		onError(err)
+	}()
+}
+
+func (c *client) drain() {
+	defer func() { <-activeSenders }()
+	defer func() {
+		senderState.Lock()
+		senderState.count--
+		if senderState.count == 0 {
+			close(senderState.done)
+		}
+		senderState.Unlock()
+	}()
+	for {
+		c.mu.Lock()
+		if len(c.queue) == 0 {
+			c.running = false
+			c.mu.Unlock()
+			return
+		}
+		batch := c.queue[0]
+		c.queue[0] = flushBatch{}
+		c.queue = c.queue[1:]
+		c.mu.Unlock()
+		if err := c.send(context.Background(), batch.payload); err != nil {
+			c.report(batch.onError, err)
+		}
+	}
 }
 
 type ingestionEvent struct {
@@ -69,6 +193,10 @@ func (c *client) flush(ctx context.Context) error {
 		return fmt.Errorf("langfuse: marshal batch: %w", err)
 	}
 
+	return c.send(ctx, payload)
+}
+
+func (c *client) send(ctx context.Context, payload []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.host+"/api/public/ingestion", bytes.NewReader(payload))
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -61,6 +62,152 @@ func TestFlush_Empty(t *testing.T) {
 	}
 	if called {
 		t.Error("flush(empty) should not make any HTTP request")
+	}
+}
+
+func TestSubmitQueueFullAndRecovery(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			started <- struct{}{}
+			<-release
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := newClient(srv.URL, "pub", "sec")
+	event := []ingestionEvent{{ID: "event", Body: "value"}}
+	c.submit(event, nil)
+	<-started
+	for i := 0; i < maxPendingBatches; i++ {
+		c.submit(event, nil)
+	}
+	errs := make(chan error, 1)
+	c.submit(event, func(err error) { errs <- err })
+	select {
+	case err := <-errs:
+		if !strings.Contains(err.Error(), "queue is full") {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("missing queue-full error")
+	}
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for calls.Load() != maxPendingBatches+1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := calls.Load(); got != maxPendingBatches+1 {
+		t.Fatalf("delivered %d batches", got)
+	}
+}
+
+func TestSubmitSnapshotsAndContinuesWhileErrorCallbackBlocks(t *testing.T) {
+	callbackStarted := make(chan struct{})
+	callbackRelease := make(chan struct{})
+	secondRequest := make(chan string, 1)
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var payload struct {
+			Batch []struct {
+				Body map[string]string `json:"body"`
+			} `json:"batch"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+			return
+		}
+		secondRequest <- payload.Batch[0].Body["value"]
+	}))
+	defer srv.Close()
+	defer close(callbackRelease)
+	c := newClient(srv.URL, "pub", "sec")
+	c.submit([]ingestionEvent{{ID: "first"}}, func(error) { close(callbackStarted); <-callbackRelease })
+	select {
+	case <-callbackStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("callback did not start")
+	}
+	body := map[string]string{"value": "before"}
+	c.submit([]ingestionEvent{{ID: "second", Body: body}}, nil)
+	body["value"] = "after"
+	select {
+	case value := <-secondRequest:
+		if value != "before" {
+			t.Fatalf("body = %q", value)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("callback blocked subsequent delivery")
+	}
+}
+
+func TestSubmitSenderLimit(t *testing.T) {
+	started := make(chan struct{}, cap(activeSenders))
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		started <- struct{}{}
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	defer releaseOnce.Do(func() { close(release) })
+	event := []ingestionEvent{{ID: "event"}}
+	for i := 0; i < cap(activeSenders); i++ {
+		newClient(srv.URL, "pub", "sec").submit(event, nil)
+	}
+	for i := 0; i < cap(activeSenders); i++ {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("senders did not start")
+		}
+	}
+	errs := make(chan error, 1)
+	newClient(srv.URL, "pub", "sec").submit(event, func(err error) { errs <- err })
+	select {
+	case err := <-errs:
+		if !strings.Contains(err.Error(), "sender limit") {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("missing sender-limit error")
+	}
+	releaseOnce.Do(func() { close(release) })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFlushWaitsForBackgroundDeliveryAndHonorsContext(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	newClient(srv.URL, "pub", "sec").submit([]ingestionEvent{{ID: "event"}}, nil)
+	<-started
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := Flush(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Flush error = %v", err)
+	}
+	close(release)
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
 	}
 }
 
