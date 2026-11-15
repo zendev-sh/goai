@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/provider"
@@ -50,10 +51,15 @@ func streamFromChunks(chunks ...provider.StreamChunk) *provider.StreamResult {
 
 // newCaptureServer starts an httptest.Server that captures all ingestion events.
 // The returned function can be called to retrieve all captured events (decoded).
-func newCaptureServer(t *testing.T) (*httptest.Server, func() []map[string]any) {
+func newCaptureServer(t *testing.T, expected ...int) (*httptest.Server, func() []map[string]any) {
 	t.Helper()
 	var mu sync.Mutex
 	var allEvents []map[string]any
+	want := 1
+	if len(expected) != 0 {
+		want = expected[0]
+	}
+	notify := make(chan struct{}, 100)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -73,10 +79,35 @@ func newCaptureServer(t *testing.T) (*httptest.Server, func() []map[string]any) 
 		mu.Lock()
 		allEvents = append(allEvents, payload.Batch...)
 		mu.Unlock()
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 
 	getEvents := func() []map[string]any {
+		deadline := time.NewTimer(5 * time.Second)
+		defer deadline.Stop()
+		for {
+			mu.Lock()
+			count := 0
+			for _, event := range allEvents {
+				if event["type"] == eventTrace {
+					count++
+				}
+			}
+			mu.Unlock()
+			if count >= want {
+				break
+			}
+			select {
+			case <-notify:
+			case <-deadline.C:
+				t.Error("timed out waiting for traces")
+				return nil
+			}
+		}
 		mu.Lock()
 		defer mu.Unlock()
 		out := make([]map[string]any, len(allEvents))
@@ -121,6 +152,129 @@ func bodyOf(t *testing.T, events []map[string]any, eventType string) map[string]
 }
 
 // --- Tests ------------------------------------------------------------------
+
+func TestTracingDoesNotBlockGenerationOnSlowIngestion(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		started <- struct{}{}
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	model := &mockModel{id: "stub", generateFn: func(context.Context, provider.GenerateParams) (*provider.GenerateResult, error) {
+		return &provider.GenerateResult{Text: "ready", FinishReason: provider.FinishStop}, nil
+	}}
+	done := make(chan error, 1)
+	go func() {
+		_, err := goai.GenerateText(context.Background(), model, goai.WithPrompt("hi"),
+			WithTracing(Host(srv.URL), PublicKey("pub"), SecretKey("sec")))
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-started:
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("generation blocked on trace ingestion")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("generation and trace ingestion did not start")
+	}
+}
+
+func TestTracingDoesNotBlockStreamCompletion(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		started <- struct{}{}
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	defer close(release)
+	model := &mockModel{id: "stub", streamFn: func(context.Context, provider.GenerateParams) (*provider.StreamResult, error) {
+		return streamFromChunks(provider.StreamChunk{Type: provider.ChunkText, Text: "ready"}, provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop}), nil
+	}}
+	stream, err := goai.StreamText(t.Context(), model, goai.WithPrompt("hi"), WithTracing(Host(srv.URL), PublicKey("pub"), SecretKey("sec")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		for range stream.TextStream() {
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-started:
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("stream completion blocked on trace ingestion")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("stream and ingestion did not start")
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTracingDoesNotBlockCancelledGeneration(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		started <- struct{}{}
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	defer close(release)
+	modelStarted := make(chan struct{})
+	model := &mockModel{id: "stub", generateFn: func(ctx context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+		close(modelStarted)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := goai.GenerateText(ctx, model, goai.WithPrompt("hi"), goai.WithMaxRetries(0), WithTracing(Host(srv.URL), PublicKey("pub"), SecretKey("sec")))
+		done <- err
+	}()
+	<-modelStarted
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("cancelled generation returned no error")
+		}
+	case <-started:
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Fatal("cancelled generation returned no error")
+			}
+		case <-time.After(time.Second):
+			t.Fatal("cancellation blocked on trace ingestion")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelled generation did not return")
+	}
+}
 
 func TestNew_DefaultTraceName(t *testing.T) {
 	h := New(Config{})
@@ -281,7 +435,7 @@ func TestRun_MultiStep_WithToolCalls(t *testing.T) {
 }
 
 func TestRun_ConcurrentRuns(t *testing.T) {
-	srv, getEvents := newCaptureServer(t)
+	srv, getEvents := newCaptureServer(t, 5)
 	defer srv.Close()
 
 	h := newHooks(t, srv, Config{TraceName: "concurrent"})
@@ -438,7 +592,7 @@ func TestRun_ToolError(t *testing.T) {
 }
 
 func TestWith_CallsRunPerInvocation(t *testing.T) {
-	srv, getEvents := newCaptureServer(t)
+	srv, getEvents := newCaptureServer(t, 2)
 	defer srv.Close()
 
 	h := newHooks(t, srv, Config{})
@@ -764,12 +918,12 @@ func TestRun_FlushError_OnFlushErrorCalled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	var flushErr error
+	flushErr := make(chan error, 1)
 	h := New(Config{
 		Host:         srv.URL,
 		PublicKey:    "bad",
 		SecretKey:    "creds",
-		OnFlushError: func(err error) { flushErr = err },
+		OnFlushError: func(err error) { flushErr <- err },
 	})
 
 	model := &mockModel{
@@ -784,8 +938,13 @@ func TestRun_FlushError_OnFlushErrorCalled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if flushErr == nil {
-		t.Error("OnFlushError should have been called with a non-nil error")
+	select {
+	case err := <-flushErr:
+		if err == nil {
+			t.Error("nil flush error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("OnFlushError was not called")
 	}
 }
 
@@ -1461,7 +1620,7 @@ func TestWithTracing_MultiStep_WithToolCalls(t *testing.T) {
 }
 
 func TestWithTracing_ConcurrentRuns(t *testing.T) {
-	srv, getEvents := newCaptureServer(t)
+	srv, getEvents := newCaptureServer(t, 5)
 	defer srv.Close()
 
 	model := &mockModel{
@@ -1619,7 +1778,7 @@ func TestWithTracing_OnFlushError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	var flushErr error
+	flushErr := make(chan error, 1)
 	model := &mockModel{
 		id: "test",
 		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
@@ -1632,7 +1791,7 @@ func TestWithTracing_OnFlushError(t *testing.T) {
 			PublicKey("bad"),
 			SecretKey("creds"),
 			Host(srv.URL),
-			OnFlushError(func(err error) { flushErr = err }),
+			OnFlushError(func(err error) { flushErr <- err }),
 		),
 		goai.WithPrompt("hi"),
 	)
@@ -1640,8 +1799,13 @@ func TestWithTracing_OnFlushError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if flushErr == nil {
-		t.Error("OnFlushError should have been called with a non-nil error via WithTracing")
+	select {
+	case err := <-flushErr:
+		if err == nil {
+			t.Error("nil flush error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("OnFlushError was not called")
 	}
 }
 
@@ -2267,6 +2431,7 @@ func TestWithTracing_E1_EagerToolSpans(t *testing.T) {
 	var mu sync.Mutex
 	var flushCount int
 	var allEvents []map[string]any
+	delivered := make(chan struct{}, 2)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -2285,6 +2450,7 @@ func TestWithTracing_E1_EagerToolSpans(t *testing.T) {
 		flushCount++
 		allEvents = append(allEvents, payload.Batch...)
 		mu.Unlock()
+		delivered <- struct{}{}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -2306,6 +2472,13 @@ func TestWithTracing_E1_EagerToolSpans(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	for i := 0; i < 2; i++ {
+		select {
+		case <-delivered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for flush")
+		}
+	}
 	mu.Lock()
 	defer mu.Unlock()
 

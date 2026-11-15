@@ -31,7 +31,6 @@
 package langfuse
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -76,6 +75,9 @@ func PromptName(name string) TracingOption { return func(c *Config) { c.PromptNa
 func PromptVersion(v int) TracingOption { return func(c *Config) { c.PromptVersion = v } }
 
 // OnFlushError sets a callback for flush errors (default: silently discard).
+// The callback runs asynchronously and may run concurrently for different clients.
+// Further errors from one client are coalesced while its callback is running;
+// callback concurrency is bounded, so notifications may be dropped under load.
 func OnFlushError(fn func(error)) TracingOption { return func(c *Config) { c.OnFlushError = fn } }
 
 // EagerToolSpans enables creating tool spans in OnToolCallStart (before execution)
@@ -97,6 +99,9 @@ func Host(host string) TracingOption { return func(c *Config) { c.Host = host } 
 // WithTracing returns a goai.Option that enables Langfuse tracing for a single call.
 // Credentials are read from env vars unless overridden via PublicKey/SecretKey/Host options.
 // Each invocation creates a fresh trace -- safe for concurrent use.
+// Events are sent in the background on a best-effort basis; process exit may
+// interrupt delivery; call Flush before exit to wait for in-flight batches.
+// Bounded queues and a sender limit drop new batches when full.
 //
 // Ordering: WithTracing wraps the singleton hooks (OnBeforeToolExecute, OnAfterToolExecute,
 // OnBeforeStep) to add observability without replacing user hooks. For this to work,
@@ -260,7 +265,7 @@ func (h *Hooks) Run() []goai.Option {
 
 		// Per-tool state for C1-C2 (keyed by toolCallID).
 		// Written by OnAfterToolExecute, read by OnToolCall.
-		toolOutputModified = make(map[string]bool) // C1: output was modified
+		toolOutputModified = make(map[string]bool)   // C1: output was modified
 		toolErrorModified  = make(map[string]string) // C2: "injected" or "replaced"
 
 		// D1-D2: termination tracking.
@@ -599,10 +604,7 @@ func (h *Hooks) Run() []goai.Option {
 				},
 			}
 
-			lc.appendEvents([]ingestionEvent{partial})
-			if err := lc.flush(context.Background()); err != nil && cfg.OnFlushError != nil {
-				cfg.OnFlushError(err)
-			}
+			lc.submit([]ingestionEvent{partial}, cfg.OnFlushError)
 		}))
 	}
 
@@ -799,10 +801,7 @@ func (h *Hooks) Run() []goai.Option {
 		agentSpanID = ""
 		obs = nil
 
-		lc.appendEvents(batch)
-		if err := lc.flush(context.Background()); err != nil && cfg.OnFlushError != nil {
-			cfg.OnFlushError(err)
-		}
+		lc.submit(batch, cfg.OnFlushError)
 	}
 
 	return opts
