@@ -414,6 +414,24 @@ type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
+func TestBedrockAnthropicTransportCanReleaseReplay(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		base http.RoundTripper
+		want bool
+	}{
+		{"standard", &http.Transport{}, true},
+		{"custom", roundTripperFunc(http.DefaultTransport.RoundTrip), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wrapper := &bedrockAnthropicTransport{base: tc.base}
+			if got := httpc.CanReleaseReplay(wrapper); got != tc.want {
+				t.Errorf("CanReleaseReplay = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBedrockAnthropicTransport_ReplayRewrittenBody(t *testing.T) {
 	const original = `{"stream":true,"prompt":"hello"}`
 	const rewritten = `{"prompt":"hello"}`

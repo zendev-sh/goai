@@ -58,6 +58,54 @@ func TestDoJSONRequest_ReleasesUploadDuringStream(t *testing.T) {
 	runtime.KeepAlive(resp)
 }
 
+func TestEmptyUploadReplaysAsNoBody(t *testing.T) {
+	req := MustNewRequest(t.Context(), http.MethodPost, "https://example.test", []byte{})
+	if req.ContentLength != 0 || req.Body != http.NoBody || req.GetBody == nil {
+		t.Fatal("expected an explicitly empty, replayable upload")
+	}
+	body, err := req.GetBody()
+	if err != nil || body != http.NoBody {
+		t.Fatalf("empty replay = %v, err = %v", body, err)
+	}
+}
+
+type replayAwareTransport struct{ http.RoundTripper }
+
+func (t replayAwareTransport) CanReleaseReplay() bool { return CanReleaseReplay(t.RoundTripper) }
+
+func TestLargeUploadReplayExpiresAfterHeaders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("read upload: %v", err)
+		}
+		fmt.Fprint(w, "ok")
+	}))
+	defer srv.Close()
+	for name, send := range map[string]func(*http.Request) (*http.Response, error){
+		"default client": func(req *http.Request) (*http.Response, error) { return Do(http.DefaultClient, req) },
+		"adapter": func(req *http.Request) (*http.Response, error) {
+			return DoRoundTrip(replayAwareTransport{srv.Client().Transport}, req)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := MustNewRequest(t.Context(), http.MethodPost, srv.URL, make([]byte, 8<<10))
+			resp, err := send(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if body, err := req.GetBody(); err == nil {
+				body.Close()
+				t.Error("upload is still replayable after response headers")
+			}
+			got, err := io.ReadAll(resp.Body)
+			if err != nil || string(got) != "ok" {
+				t.Fatalf("response = %q, err = %v", got, err)
+			}
+		})
+	}
+}
+
 func TestDoJSONRequest_ReplaysUploadOnRedirect(t *testing.T) {
 	// Two hops exercise net/http's replay of the original request more than once.
 	const want = `{"data":"redirect"}`
@@ -89,7 +137,8 @@ func TestDoJSONRequest_ReplaysUploadOnRedirect(t *testing.T) {
 
 func TestDoJSONRequest_ReplaysUploadOnTransportRetry(t *testing.T) {
 	var attempts atomic.Int32
-	const want = `{"data":"retry"}`
+	data := strings.Repeat("r", 8<<10) // Exercise replay of a releasable upload, not a small snapshot.
+	want := `{"data":"` + data + `"}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			w.WriteHeader(http.StatusNoContent)
@@ -121,7 +170,7 @@ func TestDoJSONRequest_ReplaysUploadOnTransportRetry(t *testing.T) {
 	resp, err := DoJSONRequest(t.Context(), RequestConfig{
 		URL: srv.URL, HTTPClient: client,
 		Headers: map[string]string{"Idempotency-Key": "retry-test"},
-		Body:    map[string]any{"data": "retry"},
+		Body:    map[string]any{"data": data},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
