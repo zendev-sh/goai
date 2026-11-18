@@ -1,7 +1,6 @@
 package google
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -110,7 +109,7 @@ func (u *fileUploader) UploadFile(ctx context.Context, upload provider.FileUploa
 	client := u.startHTTPClient()
 
 	// Phase 1: start a resumable upload session.
-	initReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u.opts.baseURL+"/upload/v1beta/files", bytes.NewReader(metaJSON))
+	initReq, err := httpc.NewRequest(ctx, http.MethodPost, u.opts.baseURL+"/upload/v1beta/files", metaJSON)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
@@ -125,7 +124,7 @@ func (u *fileUploader) UploadFile(ctx context.Context, upload provider.FileUploa
 	}
 	initReq.Header.Set("x-goog-api-key", token)
 
-	initResp, err := client.Do(initReq)
+	initResp, err := httpc.Do(client, initReq)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}
@@ -149,7 +148,7 @@ func (u *fileUploader) UploadFile(ctx context.Context, upload provider.FileUploa
 	// Phase 2: upload the raw bytes and finalize in one shot. The URL has
 	// already been parsed and validated by sameOrigin above, so
 	// NewRequestWithContext cannot fail here.
-	uploadReq, _ := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(data))
+	uploadReq, _ := httpc.NewRequest(ctx, http.MethodPut, uploadURL, data)
 	uploadReq.Header.Set("Content-Type", mediaType)
 	uploadReq.Header.Set("Content-Length", strconv.FormatInt(int64(len(data)), 10))
 	uploadReq.Header.Set("X-Goog-Upload-Protocol", "resumable")
@@ -161,7 +160,7 @@ func (u *fileUploader) UploadFile(ctx context.Context, upload provider.FileUploa
 	}
 	uploadReq.Header.Set("x-goog-api-key", token)
 
-	uploadResp, err := u.uploadHTTPClient().Do(uploadReq)
+	uploadResp, err := httpc.Do(u.uploadHTTPClient(), uploadReq)
 	if err != nil {
 		return nil, fmt.Errorf("sending upload request: %w", err)
 	}

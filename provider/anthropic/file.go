@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/zendev-sh/goai"
+	"github.com/zendev-sh/goai/internal/httpc"
 	"github.com/zendev-sh/goai/provider"
 )
 
@@ -61,7 +62,7 @@ func (u *fileUploader) UploadFile(ctx context.Context, upload provider.FileUploa
 		return nil, fmt.Errorf("resolving auth token: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", u.opts.baseURL+"/v1/files", &buf)
+	req, err := httpc.NewRequest(ctx, "POST", u.opts.baseURL+"/v1/files", buf.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
@@ -79,7 +80,7 @@ func (u *fileUploader) UploadFile(ctx context.Context, upload provider.FileUploa
 	if client == nil {
 		client = http.DefaultClient
 	}
-	resp, err := client.Do(req)
+	resp, err := httpc.Do(client, req)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}

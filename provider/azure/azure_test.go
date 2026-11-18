@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zendev-sh/goai/internal/httpc"
 	"github.com/zendev-sh/goai/provider"
 	"github.com/zendev-sh/goai/provider/openai"
 )
@@ -573,6 +574,29 @@ type headerTransport struct {
 func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	req.Header.Set(t.header, t.value)
 	return t.base.RoundTrip(req)
+}
+
+func TestAzureTransportsCanReleaseReplay(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		base http.RoundTripper
+		want bool
+	}{
+		{"standard", &http.Transport{}, true},
+		{"custom", &headerTransport{base: http.DefaultTransport}, false},
+	} {
+		for name, wrapper := range map[string]http.RoundTripper{
+			"azure":     &azureRoundTripper{base: tc.base},
+			"anthropic": &anthropicAuthRoundTripper{base: tc.base},
+			"services":  &aiServicesRoundTripper{base: tc.base},
+		} {
+			t.Run(name+"/"+tc.name, func(t *testing.T) {
+				if got := httpc.CanReleaseReplay(wrapper); got != tc.want {
+					t.Errorf("CanReleaseReplay = %v, want %v", got, tc.want)
+				}
+			})
+		}
+	}
 }
 
 func TestRoundTrip_InvalidURL(t *testing.T) {

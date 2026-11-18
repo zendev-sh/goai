@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/zendev-sh/goai/internal/httpc"
 	"github.com/zendev-sh/goai/provider"
 	"github.com/zendev-sh/goai/provider/anthropic"
 )
@@ -139,7 +140,11 @@ type bedrockAnthropicTransport struct {
 	region, accessKey, secretKey, sessionToken, bearerToken string
 }
 
+func (t *bedrockAnthropicTransport) CanReleaseReplay() bool { return httpc.CanReleaseReplay(t.base) }
+
 func (t *bedrockAnthropicTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Keep the original headers and replay body intact for client redirects.
+	req = req.Clone(req.Context())
 	// Strip Anthropic-specific auth/version headers and capture the beta
 	// header so we can fold it into the JSON body (Bedrock requires that).
 	beta := req.Header.Get("anthropic-beta")
@@ -180,10 +185,9 @@ func (t *bedrockAnthropicTransport) RoundTrip(req *http.Request) (*http.Response
 			}
 			if reBody, err := json.Marshal(bodyMap); err == nil {
 				body = reBody
-				req.ContentLength = int64(len(body))
 			}
 		}
-		req.Body = io.NopCloser(bytes.NewReader(body))
+		httpc.SetBody(req, body)
 	}
 
 	if t.bearerToken != "" {
@@ -192,7 +196,7 @@ func (t *bedrockAnthropicTransport) RoundTrip(req *http.Request) (*http.Response
 		signAWSSigV4(req, body, t.accessKey, t.secretKey, t.sessionToken, t.region, "bedrock")
 	}
 
-	resp, err := t.base.RoundTrip(req)
+	resp, err := httpc.DoRoundTrip(t.base, req)
 	if err != nil {
 		return resp, err
 	}
