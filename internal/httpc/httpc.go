@@ -2,9 +2,7 @@
 package httpc
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -61,7 +59,7 @@ func DoJSONRequest(ctx context.Context, cfg RequestConfig, parseError ErrorParse
 		client = http.DefaultClient
 	}
 
-	resp, err := client.Do(req)
+	resp, err := Do(client, req)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}
@@ -92,11 +90,7 @@ func MustMarshalJSON(v any) []byte {
 // errors detectable at development time, not runtime conditions. All call
 // sites pass a valid context and a constant HTTP method string.
 func MustNewRequest(ctx context.Context, method, url string, body []byte) *http.Request {
-	var bodyReader io.Reader
-	if body != nil {
-		bodyReader = bytes.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	req, err := NewRequest(ctx, method, url, body)
 	if err != nil {
 		panic("httpc: http.NewRequestWithContext failed: " + err.Error())
 	}
@@ -120,9 +114,8 @@ func ParseDataURL(url string) (mediaType, data string, ok bool) {
 	if mediaType == "" || data == "" {
 		return "", "", false
 	}
-	// Callers forward the raw string to the API, so decoding here is a
-	// validation only; it rejects malformed base64 payloads.
-	if _, err := base64.StdEncoding.DecodeString(data); err != nil {
+	// Callers forward the raw string to the API, so this only validates it.
+	if !validStdBase64(data) {
 		return "", "", false
 	}
 	return mediaType, data, true

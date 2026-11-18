@@ -280,7 +280,7 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 	if client == nil {
 		client = http.DefaultClient
 	}
-	resp, err := client.Do(req)
+	resp, err := httpc.Do(client, req)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}

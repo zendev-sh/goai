@@ -342,7 +342,7 @@ func (m *videoModel) requestOperation(ctx context.Context, token, method, reqURL
 	}
 	m.setHeaders(req, token)
 
-	resp, err := m.operationHTTPClient().Do(req)
+	resp, err := httpc.Do(m.operationHTTPClient(), req)
 	if err != nil {
 		return googleVideoOperation{}, fmt.Errorf("sending video request: %w", err)
 	}

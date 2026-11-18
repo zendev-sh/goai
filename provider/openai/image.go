@@ -131,7 +131,7 @@ func (m *imageModel) DoGenerate(ctx context.Context, params provider.ImageParams
 	// cannot override the real credential.
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := m.httpClient().Do(req)
+	resp, err := httpc.Do(m.httpClient(), req)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}

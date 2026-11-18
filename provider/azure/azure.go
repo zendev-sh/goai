@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zendev-sh/goai/internal/httpc"
 	"github.com/zendev-sh/goai/provider"
 	"github.com/zendev-sh/goai/provider/anthropic"
 	"github.com/zendev-sh/goai/provider/openai"
@@ -488,6 +489,8 @@ type anthropicAuthRoundTripper struct {
 	tokenSource provider.TokenSource
 }
 
+func (t *anthropicAuthRoundTripper) CanReleaseReplay() bool { return httpc.CanReleaseReplay(t.base) }
+
 func (t *anthropicAuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	newReq := req.Clone(req.Context())
 
@@ -519,6 +522,8 @@ type aiServicesRoundTripper struct {
 	headers     map[string]string
 	apiVersion  string
 }
+
+func (t *aiServicesRoundTripper) CanReleaseReplay() bool { return httpc.CanReleaseReplay(t.base) }
 
 func (t *aiServicesRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	newReq := req.Clone(req.Context())
@@ -594,6 +599,8 @@ type azureRoundTripper struct {
 	apiVersion             string
 	useDeploymentBasedURLs bool
 }
+
+func (t *azureRoundTripper) CanReleaseReplay() bool { return httpc.CanReleaseReplay(t.base) }
 
 func (t *azureRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Extract the API path suffix from the OpenAI URL.
