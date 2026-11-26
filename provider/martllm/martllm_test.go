@@ -1,4 +1,4 @@
-package uberllm
+package martllm
 
 import (
 	"encoding/json"
@@ -89,7 +89,7 @@ func TestChat_HTTPError(t *testing.T) {
 }
 
 func TestNoTokenSource(t *testing.T) {
-	t.Setenv("UBERLLM_API_KEY", "")
+	t.Setenv("MARTLLM_API_KEY", "")
 	model := Chat("model")
 	_, err := model.DoGenerate(t.Context(), provider.GenerateParams{
 		Messages: []provider.Message{
@@ -297,7 +297,7 @@ func TestChat_EnvVarResolution(t *testing.T) {
 	}))
 	defer server.Close()
 
-	t.Setenv("UBERLLM_API_KEY", "env-key")
+	t.Setenv("MARTLLM_API_KEY", "env-key")
 	m := Chat("m", WithBaseURL(server.URL))
 	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
 		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
@@ -314,8 +314,8 @@ func TestChat_EnvVarBaseURL(t *testing.T) {
 	}))
 	defer server.Close()
 
-	t.Setenv("UBERLLM_API_KEY", "env-key")
-	t.Setenv("UBERLLM_BASE_URL", server.URL)
+	t.Setenv("MARTLLM_API_KEY", "env-key")
+	t.Setenv("MARTLLM_BASE_URL", server.URL)
 	m := Chat("m")
 	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
 		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
@@ -339,8 +339,8 @@ func TestChat_EnvVarNotOverrideExplicit(t *testing.T) {
 	}))
 	defer explicitServer.Close()
 
-	t.Setenv("UBERLLM_API_KEY", "env-key")
-	t.Setenv("UBERLLM_BASE_URL", envServer.URL)
+	t.Setenv("MARTLLM_API_KEY", "env-key")
+	t.Setenv("MARTLLM_BASE_URL", envServer.URL)
 	m := Chat("m", WithAPIKey("explicit"), WithBaseURL(explicitServer.URL))
 	_, err := m.DoGenerate(t.Context(), provider.GenerateParams{
 		Messages: []provider.Message{{Role: provider.RoleUser, Content: []provider.Part{{Type: provider.PartText, Text: "hi"}}}},
@@ -394,7 +394,7 @@ func TestChat_PromptCachingIgnored(t *testing.T) {
 	}
 }
 
-// Item 47: uberllm opts into IncludeReasoningContent, so an assistant message
+// Item 47: martllm opts into IncludeReasoningContent, so an assistant message
 // carrying a reasoning part must serialize reasoning_content on the outgoing
 // request body.
 func TestChat_RoundTripsReasoningContent(t *testing.T) {

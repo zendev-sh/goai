@@ -43,7 +43,7 @@ Inspired by the [Vercel AI SDK](https://sdk.vercel.ai). The same clean abstracti
 ## Features
 
 - **8 core functions**: `GenerateText`, `StreamText`, `GenerateObject[T]`, `StreamObject[T]`, `Embed`, `EmbedMany`, `GenerateImage`, `GenerateVideo`
-- **25+ providers**: OpenAI, Anthropic, Google, Bedrock, Azure, Vertex, Mistral, xAI, Groq, Cohere, DeepSeek, MiniMax, Fireworks, Together, DeepInfra, OpenRouter, Requesty, Perplexity, Cerebras, Ollama, vLLM, RunPod, Runcrate, Cloudflare Workers AI, FPT Smart Cloud, NVIDIA NIM, Heabsy, Opper, Cheaper Inference, CloudGPU, UberLLM, llama.cpp, + generic OpenAI-compatible
+- **25+ providers**: OpenAI, Anthropic, Google, Bedrock, Azure, Vertex, Mistral, xAI, Groq, Cohere, DeepSeek, MiniMax, Fireworks, Together, DeepInfra, OpenRouter, Requesty, Perplexity, Cerebras, Ollama, vLLM, RunPod, Runcrate, Cloudflare Workers AI, FPT Smart Cloud, NVIDIA NIM, Heabsy, Opper, Cheaper Inference, CloudGPU, MartLLM, llama.cpp, + generic OpenAI-compatible
 - **Auto tool loop**: Define tools with `Execute` handlers, set `MaxSteps` for `GenerateText` and `StreamText`
 - **Structured output**: `GenerateObject[T]` auto-generates JSON Schema from Go types via reflection
 - **Streaming**: Real-time text and partial object streaming via channels
@@ -488,7 +488,7 @@ result, err := goai.GenerateText(ctx, model, goai.WithPrompt("Hello"))
 | Opper      | pool names (e.g. `claude-sonnet-4-6`)                        | -                                                          | -             | `OPPER_API_KEY`, `OPPER_BASE_URL`, TokenSource                                                     | Unit | `provider/opper`      |
 | Cheaper Inference | bare model IDs (e.g. `gpt-5.4-mini`)                  | -                                                          | -             | `CHEAPER_INFERENCE_API_KEY`, `CHEAPER_INFERENCE_BASE_URL`, TokenSource                             | Unit | `provider/cheaperinference` |
 | CloudGPU   | bare model IDs (e.g. `deepseek-v4.1-flash`)                  | -                                                          | -             | `CLOUDGPU_API_KEY`, `CLOUDGPU_BASE_URL`, TokenSource                                               | Unit | `provider/cloudgpu`   |
-| UberLLM    | vendor-prefixed IDs (e.g. `deepseek/deepseek-v4.1-flash`)    | -                                                          | -             | `UBERLLM_API_KEY`, `UBERLLM_BASE_URL`, TokenSource                                                 | Unit | `provider/uberllm`    |
+| MartLLM    | vendor-prefixed IDs (e.g. `deepseek/deepseek-v4.1-flash`)    | -                                                          | -             | `MARTLLM_API_KEY`, `MARTLLM_BASE_URL`, TokenSource                                                 | Unit | `provider/martllm`    |
 | Compat     | any OpenAI-compatible                                        | any                                                        | -             | configurable                                                                                       | Unit | `provider/compat`     |
 
 **E2E column**: "Full" = tested with real API calls. "Unit" = tested with mock HTTP servers (100% coverage).

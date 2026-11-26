@@ -1,10 +1,10 @@
-// Package uberllm provides an UberLLM language model implementation for GoAI.
+// Package martllm provides a MartLLM language model implementation for GoAI.
 //
-// UberLLM serves an OpenAI-compatible Chat Completions API at
-// https://api.uberllm.dev/v1 with models from OpenAI, Anthropic, Google,
+// MartLLM serves an OpenAI-compatible Chat Completions API at
+// https://api.martllm.com/v1 with models from OpenAI, Anthropic, Google,
 // DeepSeek, Qwen, GLM, Kimi and others behind one key. See
-// https://uberllm.dev/docs/quickstart.
-package uberllm
+// https://martllm.com/docs/quickstart.
+package martllm
 
 import (
 	"net/http"
@@ -14,9 +14,9 @@ import (
 	"github.com/zendev-sh/goai/provider"
 )
 
-const defaultBaseURL = "https://api.uberllm.dev/v1"
+const defaultBaseURL = "https://api.martllm.com/v1"
 
-// Option configures the UberLLM provider.
+// Option configures the MartLLM provider.
 type Option func(*options)
 
 type options struct {
@@ -51,11 +51,11 @@ func WithHTTPClient(c *http.Client) Option {
 	return func(o *options) { o.httpClient = c }
 }
 
-// Chat creates an UberLLM language model for the given model ID.
+// Chat creates a MartLLM language model for the given model ID.
 //
 // Model IDs carry a vendor prefix, such as "deepseek/deepseek-v4.1-flash",
-// "openai/gpt-5.4-mini" or "anthropic/claude-sonnet-4.6". The API key is read from UBERLLM_API_KEY unless
-// WithAPIKey or WithTokenSource is set, and UBERLLM_BASE_URL overrides the
+// "openai/gpt-5.4-mini" or "anthropic/claude-sonnet-4.6". The API key is read from MARTLLM_API_KEY unless
+// WithAPIKey or WithTokenSource is set, and MARTLLM_BASE_URL overrides the
 // default endpoint unless WithBaseURL is set.
 func Chat(modelID string, opts ...Option) provider.LanguageModel {
 	o := options{baseURL: defaultBaseURL}
@@ -63,17 +63,17 @@ func Chat(modelID string, opts ...Option) provider.LanguageModel {
 		opt(&o)
 	}
 	if o.tokenSource == nil {
-		if key := os.Getenv("UBERLLM_API_KEY"); key != "" {
+		if key := os.Getenv("MARTLLM_API_KEY"); key != "" {
 			o.tokenSource = provider.StaticToken(key)
 		}
 	}
 	if o.baseURL == defaultBaseURL {
-		if base := os.Getenv("UBERLLM_BASE_URL"); base != "" {
+		if base := os.Getenv("MARTLLM_BASE_URL"); base != "" {
 			o.baseURL = base
 		}
 	}
 	return openaicompat.NewChatModel(openaicompat.ChatModelConfig{
-		ProviderID:        "uberllm",
+		ProviderID:        "martllm",
 		ModelID:           modelID,
 		BaseURL:           o.baseURL,
 		TokenSource:       o.tokenSource,
