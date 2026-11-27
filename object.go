@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gatewaytofredom/pjson"
 	"github.com/zendev-sh/goai/provider"
 )
 
@@ -305,19 +306,33 @@ func (os *ObjectStream[T]) consume(partialOut chan<- *T) {
 		}()
 	}
 
+	var (
+		partialParser *pjson.Parser
+		partialSnap   []byte
+	)
+	if partialOut != nil {
+		partialParser = pjson.New(pjson.WithMaxDepth(maxJSONDepth))
+	}
+
 	for chunk := range os.source {
 		switch chunk.Type {
 		case provider.ChunkText:
 			os.text.WriteString(chunk.Text)
 
-			// Try to parse partial JSON.
+			// Try to parse partial JSON incrementally.
 			if partialOut != nil {
-				if partial, err := parsePartialJSON[T](os.text.String()); err == nil {
-					select {
-					case partialOut <- partial:
-					case <-os.ctx.Done():
-						os.streamErr = os.ctx.Err()
-						return
+				if _, err := partialParser.WriteString(chunk.Text); err == nil {
+					partialSnap = partialParser.CompleteJSONAppend(partialSnap[:0])
+					if len(partialSnap) > 0 {
+						var partial T
+						if err := json.Unmarshal(partialSnap, &partial); err == nil {
+							select {
+							case partialOut <- &partial:
+							case <-os.ctx.Done():
+								os.streamErr = os.ctx.Err()
+								return
+							}
+						}
 					}
 				}
 			}
