@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1798,6 +1799,40 @@ func TestWithTracing_OnFlushError(t *testing.T) {
 
 	if flushErr == nil {
 		t.Error("OnFlushError should have been called with a non-nil error via WithTracing")
+	}
+}
+
+func TestWithTracing_UnencodableMetadata(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("unencodable batch reached ingestion endpoint")
+	}))
+	defer srv.Close()
+	model := &mockModel{id: "test", generateFn: func(context.Context, provider.GenerateParams) (*provider.GenerateResult, error) {
+		return &provider.GenerateResult{Text: "ok", FinishReason: provider.FinishStop}, nil
+	}}
+	for _, tc := range []struct {
+		name   string
+		report bool
+	}{{"no_callback", false}, {"with_callback", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := []TracingOption{Metadata(map[string]any{"invalid": make(chan int)})}
+			reported := make(chan error, 1)
+			if tc.report {
+				opts = append(opts, OnFlushError(func(err error) { reported <- err }))
+			}
+			result, err := goai.GenerateText(t.Context(), model, goai.WithPrompt("hi"), tracingToServer(srv.URL, true, opts...))
+			if err != nil || result.Text != "ok" {
+				t.Fatalf("GenerateText = %v, %v", result, err)
+			}
+			flushTracing(t)
+			if tc.report {
+				err := awaitTracing(t, reported, "metadata encoding error")
+				var unsupported *json.UnsupportedTypeError
+				if !errors.As(err, &unsupported) {
+					t.Fatalf("OnFlushError = %v; want unsupported JSON type", err)
+				}
+			}
+		})
 	}
 }
 

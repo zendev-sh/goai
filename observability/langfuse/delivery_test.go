@@ -157,6 +157,34 @@ func TestDeliveryAsyncErrorCallbackPanic(t *testing.T) {
 	})
 }
 
+func TestAsyncCallbackSaturation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var called atomic.Int32
+		release := make(chan struct{})
+		d := delivery{async: true, onError: func(error) {
+			called.Add(1)
+			<-release
+		}}
+		err := errors.New("send failed")
+		for range cap(callbackSlots) {
+			d.report(err)
+		}
+		synctest.Wait()
+		before := called.Load()
+		d.report(err) // Must drop, not block or queue for a later callback.
+		close(release)
+		synctest.Wait()
+		if after := called.Load(); before == 0 || after != before {
+			t.Fatalf("callback count before overflow = %d, after release = %d", before, after)
+		}
+		d.report(err)
+		synctest.Wait()
+		if got := called.Load(); got != before+1 {
+			t.Fatalf("callback count after recovery = %d, want %d", got, before+1)
+		}
+	})
+}
+
 func TestDeliveryOverload(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		c := newClient("https://example.invalid", "pub", "sec")
