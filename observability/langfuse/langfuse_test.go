@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/provider"
@@ -48,9 +50,16 @@ func streamFromChunks(chunks ...provider.StreamChunk) *provider.StreamResult {
 	return &provider.StreamResult{Stream: ch}
 }
 
+const tracingTestTimeout = 5 * time.Second
+
 // newCaptureServer starts an httptest.Server that captures all ingestion events.
-// The returned function can be called to retrieve all captured events (decoded).
+// The returned function retrieves all captured events (decoded).
 func newCaptureServer(t *testing.T) (*httptest.Server, func() []map[string]any) {
+	t.Helper()
+	return newCaptureServerWithGate(t, nil)
+}
+
+func newCaptureServerWithGate(t *testing.T, beforeResponse func(context.Context, []map[string]any)) (*httptest.Server, func() []map[string]any) {
 	t.Helper()
 	var mu sync.Mutex
 	var allEvents []map[string]any
@@ -70,6 +79,9 @@ func newCaptureServer(t *testing.T) (*httptest.Server, func() []map[string]any) 
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+		if beforeResponse != nil {
+			beforeResponse(r.Context(), payload.Batch)
+		}
 		mu.Lock()
 		allEvents = append(allEvents, payload.Batch...)
 		mu.Unlock()
@@ -79,11 +91,74 @@ func newCaptureServer(t *testing.T) (*httptest.Server, func() []map[string]any) 
 	getEvents := func() []map[string]any {
 		mu.Lock()
 		defer mu.Unlock()
-		out := make([]map[string]any, len(allEvents))
-		copy(out, allEvents)
-		return out
+		return slices.Clone(allEvents)
 	}
 	return srv, getEvents
+}
+
+// newBlockedCaptureServer reports the first ingestion batch but withholds HTTP
+// responses until release is called. Cleanup also releases blocked requests.
+func newBlockedCaptureServer(t *testing.T) (url string, firstBatch <-chan []map[string]any, release func(), getEvents func() []map[string]any) {
+	t.Helper()
+	started := make(chan []map[string]any, 1)
+	respond := make(chan struct{})
+	release = sync.OnceFunc(func() { close(respond) })
+	var first sync.Once
+	srv, getEvents := newCaptureServerWithGate(t, func(ctx context.Context, batch []map[string]any) {
+		first.Do(func() { started <- batch })
+		select {
+		case <-respond:
+		case <-ctx.Done():
+		}
+	})
+	t.Cleanup(srv.Close)
+	t.Cleanup(release)
+	return srv.URL, started, release, getEvents
+}
+
+func awaitTracing[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(tracingTestTimeout):
+		t.Fatalf("timed out waiting for %s", what)
+		var zero T
+		return zero
+	}
+}
+
+func assertTracingBlocked[T any](t *testing.T, ch <-chan T, what string) {
+	t.Helper()
+	// Call only once the endpoint has received the request and is holding its reply.
+	select {
+	case <-ch:
+		t.Fatalf("%s before the ingestion endpoint replied", what)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func flushTracing(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), tracingTestTimeout)
+	defer cancel()
+	if err := Flush(ctx); err != nil {
+		t.Fatalf("flush tracing: %v", err)
+	}
+}
+
+func testTracingModes(t *testing.T, check func(t *testing.T, async bool)) {
+	t.Helper()
+	t.Run("DefaultSync", func(t *testing.T) { check(t, false) })
+	t.Run("Async", func(t *testing.T) { check(t, true) })
+}
+
+func tracingToServer(url string, async bool, opts ...TracingOption) goai.Option {
+	options := []TracingOption{PublicKey("pub"), SecretKey("sec"), Host(url)}
+	if async {
+		options = append(options, Async(true))
+	}
+	return WithTracing(append(options, opts...)...)
 }
 
 // newHooks creates a Hooks instance pointing at the given test server.
@@ -1612,6 +1687,87 @@ func TestWithTracing_StreamText_SingleStep(t *testing.T) {
 	}
 }
 
+func TestWithTracing_IngestionCompletion(t *testing.T) {
+	const wantText = "hello world"
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{Text: wantText, FinishReason: provider.FinishStop}, nil
+		},
+		streamFn: func(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+			return streamFromChunks(
+				provider.StreamChunk{Type: provider.ChunkText, Text: "hello"},
+				provider.StreamChunk{Type: provider.ChunkText, Text: " world"},
+				provider.StreamChunk{Type: provider.ChunkFinish, FinishReason: provider.FinishStop},
+			), nil
+		},
+	}
+	tests := []struct {
+		name string
+		run  func(context.Context, ...goai.Option) (string, error)
+	}{
+		{
+			name: "GenerateText",
+			run: func(ctx context.Context, opts ...goai.Option) (string, error) {
+				result, err := goai.GenerateText(ctx, model, opts...)
+				if err != nil {
+					return "", err
+				}
+				return result.Text, nil
+			},
+		},
+		{
+			name: "StreamText",
+			run: func(ctx context.Context, opts ...goai.Option) (string, error) {
+				stream, err := goai.StreamText(ctx, model, opts...)
+				if err != nil {
+					return "", err
+				}
+				var text strings.Builder
+				for chunk := range stream.TextStream() {
+					text.WriteString(chunk)
+				}
+				return text.String(), stream.Err()
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testTracingModes(t, func(t *testing.T, async bool) {
+				url, firstBatch, release, getEvents := newBlockedCaptureServer(t)
+				type outcome struct {
+					text string
+					err  error
+				}
+				finished := make(chan outcome, 1)
+				go func() {
+					text, err := tt.run(t.Context(), goai.WithPrompt("hi"), tracingToServer(url, async))
+					finished <- outcome{text: text, err: err}
+				}()
+
+				awaitTracing(t, firstBatch, "ingestion request")
+				if !async {
+					assertTracingBlocked(t, finished, tt.name+" completed")
+					release()
+				}
+				got := awaitTracing(t, finished, tt.name+" completion")
+				if got.err != nil || got.text != wantText {
+					t.Fatalf("%s returned text %q, error %v; want %q, nil", tt.name, got.text, got.err, wantText)
+				}
+
+				if async {
+					release()
+					flushTracing(t)
+				}
+				wantTypes := []string{eventTrace, eventSpan, eventGeneration}
+				if got := eventTypes(getEvents()); !slices.Equal(got, wantTypes) {
+					t.Errorf("ingestion event types = %v, want %v", got, wantTypes)
+				}
+			})
+		})
+	}
+}
+
 func TestWithTracing_OnFlushError(t *testing.T) {
 	// Server always returns 401 so flush fails.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1643,6 +1799,42 @@ func TestWithTracing_OnFlushError(t *testing.T) {
 	if flushErr == nil {
 		t.Error("OnFlushError should have been called with a non-nil error via WithTracing")
 	}
+}
+
+func TestWithTracing_AsyncOnFlushError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	model := &mockModel{
+		id: "test",
+		generateFn: func(_ context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+			return &provider.GenerateResult{Text: "ok", FinishReason: provider.FinishStop}, nil
+		},
+	}
+	ctx := t.Context()
+	flushErr := make(chan error, 1)
+	finished := make(chan error, 1)
+	go func() {
+		_, err := goai.GenerateText(ctx, model, goai.WithPrompt("hi"),
+			tracingToServer(srv.URL, true, OnFlushError(func(err error) {
+				select {
+				case flushErr <- err:
+				case <-ctx.Done():
+				}
+				// The callback stays in progress until cleanup cancels the context.
+				<-ctx.Done()
+			})))
+		finished <- err
+	}()
+	if err := awaitTracing(t, finished, "generation completion"); err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+	if err := awaitTracing(t, flushErr, "async OnFlushError"); err == nil || !strings.Contains(err.Error(), "status 401") {
+		t.Errorf("OnFlushError received %v, want HTTP 401 error", err)
+	}
+	flushTracing(t)
 }
 
 // --- Enhancement tests (A/B/C/D/E/G categories) ----------------------------
@@ -2263,79 +2455,121 @@ func TestWithTracing_D3_ExtraMessages(t *testing.T) {
 }
 
 func TestWithTracing_E1_EagerToolSpans(t *testing.T) {
-	// Track the number of flushes (HTTP requests) to the capture server.
-	var mu sync.Mutex
-	var flushCount int
-	var allEvents []map[string]any
+	testTracingModes(t, func(t *testing.T, async bool) {
+		url, firstBatch, release, getEvents := newBlockedCaptureServer(t)
+		model, _ := toolModel()
+		toolStarted := make(chan struct{})
+		finishTool := make(chan struct{})
+		tool := defaultTool()
+		tool.Execute = func(ctx context.Context, _ json.RawMessage) (string, error) {
+			close(toolStarted)
+			select {
+			case <-finishTool:
+				return "tool result", nil
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+		finished := make(chan error, 1)
+		go func() {
+			_, err := goai.GenerateText(t.Context(), model,
+				tracingToServer(url, async, EagerToolSpans(true)),
+				goai.WithPrompt("go"),
+				goai.WithMaxSteps(3),
+				goai.WithTools(tool),
+			)
+			finished <- err
+		}()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+		batch := awaitTracing(t, firstBatch, "eager tool span request")
+		eager := bodyOf(t, batch, eventSpan)
+		meta, _ := eager["metadata"].(map[string]any)
+		if meta["status"] != "in_progress" {
+			t.Fatalf("eager tool span status = %v, want in_progress", meta["status"])
 		}
-		var payload struct {
-			Batch []map[string]any `json:"batch"`
+		if !async {
+			assertTracingBlocked(t, toolStarted, "tool execution started")
+			release()
 		}
-		if err := json.Unmarshal(body, &payload); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
+		awaitTracing(t, toolStarted, "tool execution")
+		close(finishTool)
+		if err := awaitTracing(t, finished, "generation completion"); err != nil {
+			t.Fatal(err)
 		}
-		mu.Lock()
-		flushCount++
-		allEvents = append(allEvents, payload.Batch...)
-		mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-	}))
+		if async {
+			release()
+			flushTracing(t)
+		}
+
+		updated := bodyOf(t, getEvents(), eventSpanUpdate)
+		if id, ok := eager["id"].(string); !ok || id == "" || updated["id"] != id || updated["output"] != "tool result" {
+			t.Errorf("tool span update = %v, want eager span %v with output %q", updated, eager["id"], "tool result")
+		}
+	})
+}
+
+func TestWithTracing_DroppedEagerCreateAfterToolPanic(t *testing.T) {
+	busyURL, _, release, _ := newBlockedCaptureServer(t)
+	busy := delivery{client: newClient(busyURL, "pub", "sec"), async: true}
+	srv, getEvents := newCaptureServer(t)
 	defer srv.Close()
-
-	model, _ := toolModel()
-
-	_, err := goai.GenerateText(t.Context(), model,
-		WithTracing(
-			PublicKey("pub"),
-			SecretKey("sec"),
-			Host(srv.URL),
-			EagerToolSpans(true),
-		),
-		goai.WithPrompt("go"),
-		goai.WithMaxSteps(3),
-		goai.WithTools(defaultTool()),
-	)
+	rejected := make(chan error, 1)
+	step := 0
+	model := &mockModel{id: "test", generateFn: func(ctx context.Context, _ provider.GenerateParams) (*provider.GenerateResult, error) {
+		step++
+		if step == 3 {
+			return &provider.GenerateResult{Text: "done", FinishReason: provider.FinishStop}, nil
+		}
+		if step == 2 {
+			// The first eager create reached Langfuse. Reject only the second one.
+			if err := Flush(ctx); err != nil {
+				return nil, err
+			}
+			for range maxPendingBatches {
+				busy.submit(eagerBatch, []ingestionEvent{{ID: "hold"}})
+			}
+		}
+		return &provider.GenerateResult{FinishReason: provider.FinishToolCalls, ToolCalls: []provider.ToolCall{
+			{ID: "call_my_tool_0", Name: "my_tool", Input: json.RawMessage(`{}`)},
+		}}, nil
+	}}
+	tool := defaultTool()
+	tool.Execute = func(ctx context.Context, _ json.RawMessage) (string, error) {
+		if step == 1 {
+			panic("first attempt failed") // OnToolCall will not run for this invocation.
+		}
+		// The eager batch has been refused. Free capacity for the final batch.
+		release()
+		return "tool result", Flush(ctx)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), tracingTestTimeout)
+	defer cancel()
+	_, err := goai.GenerateText(ctx, model, goai.WithOnBeforeToolExecute(func(info goai.BeforeToolExecuteInfo) goai.BeforeToolExecuteResult {
+		if info.Step == 1 {
+			return goai.BeforeToolExecuteResult{Input: json.RawMessage(`{"attempt":1}`)}
+		}
+		return goai.BeforeToolExecuteResult{}
+	}), tracingToServer(srv.URL, true,
+		EagerToolSpans(true), OnFlushError(func(err error) { rejected <- err })),
+		goai.WithPrompt("go"), goai.WithMaxSteps(3), goai.WithTools(tool))
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	// With EagerToolSpans, there should be at least 2 flushes:
-	// one eager flush during tool execution, one final flush.
-	if flushCount < 2 {
-		t.Errorf("flush count = %d, want >= 2 (eager + final)", flushCount)
+	if err := awaitTracing(t, rejected, "eager queue rejection"); !strings.Contains(err.Error(), "queue is full") {
+		t.Fatal(err)
 	}
-
-	// Verify the eager span has "in_progress" status in metadata.
-	var foundEager bool
-	for _, e := range allEvents {
-		if e["type"] != eventSpan {
-			continue
-		}
-		b, ok := e["body"].(map[string]any)
-		if !ok {
-			continue
-		}
-		meta, ok := b["metadata"].(map[string]any)
-		if !ok {
-			continue
-		}
-		if meta["status"] == "in_progress" {
-			foundEager = true
-			break
-		}
+	flushTracing(t)
+	events := getEvents()
+	if slices.Contains(eventTypes(events), eventSpanUpdate) {
+		t.Fatal("second call updated the first call's span after its own eager create was rejected")
 	}
-	if !foundEager {
-		t.Error("expected an eager tool span with metadata.status='in_progress'")
+	spans := toolSpanBodies(t, events)
+	if len(spans) != 2 || spans[0]["id"] == spans[1]["id"] || spans[1]["output"] != "tool result" {
+		t.Fatalf("expected distinct first eager and second complete tool spans, got %v", spans)
+	}
+	meta := spans[1]["metadata"].(map[string]any)
+	if meta["step"] != float64(2) || meta["input_overridden"] != nil {
+		t.Fatalf("second call inherited first call's metadata: %v", meta)
 	}
 }
 

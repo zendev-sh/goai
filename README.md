@@ -406,6 +406,8 @@ result, err := goai.GenerateText(ctx, model,
 )
 ```
 
+Langfuse delivery is synchronous by default; use `langfuse.WithTracing(langfuse.Async(true))` to opt in to asynchronous delivery, and see [delivery and shutdown](https://goai.sh/concepts/observability#delivery-and-shutdown) for its best-effort semantics.
+
 Interceptor hooks let you control tool execution without modifying core code:
 
 ```go
