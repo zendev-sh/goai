@@ -109,6 +109,59 @@ Trace
 
 Generations include model name, token usage (input/output/reasoning/cache), and finish reason. Tool spans include the tool name, input arguments, output, and duration.
 
+### Delivery and Shutdown
+
+Langfuse delivery is synchronous by default, so generation and stream completion can wait for delivery. Opt in to asynchronous delivery with `langfuse.WithTracing(langfuse.Async(true))`. In async mode, generation and stream completion do not wait for Langfuse, and telemetry is dropped when the delivery queue is full.
+
+With `Async(true)` and `EagerToolSpans(true)`, different tools' in-progress spans can be sent concurrently. The final batch waits for this trace's accepted eager send attempts to finish so its updates do not overtake their creates.
+
+Before shutting down a short-lived process in async mode, stop starting new traced calls. Wait for in-flight `GenerateText`/`GenerateObject` calls to return and for streams to finish their tracing hooks, then call `langfuse.Flush` with a fresh, time-limited context before exit:
+
+```go
+flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+if err := langfuse.Flush(flushCtx); err != nil {
+    log.Printf("langfuse flush: %v", err)
+}
+```
+
+`Flush` waits for send attempts of batches accepted when it is called, including in-flight batches, subject to the context deadline. It does not wait for later batches, guarantee successful delivery, or wait for error callbacks to finish. If using `defer` to flush before exiting, return errors to `main` before calling `log.Fatal` or `os.Exit`: those functions skip deferred calls in the current goroutine.
+
+#### Canceling a multi-step text stream
+
+After cancellation, a `StreamText` consumer can finish before the tool loop returns from tool cleanup. A closed output channel, `stream.Err()`, or `stream.Result()` is not enough to know that Langfuse has submitted the final batch. Register a `WithOnFinish` callback **after** `WithTracing`; the callbacks run in registration order, so the signal comes after Langfuse's finish hook:
+
+```go
+runCtx, cancelRun := context.WithCancel(ctx)
+defer cancelRun()
+traceFinished := make(chan struct{})
+stream, startErr := goai.StreamText(runCtx, model,
+    goai.WithPrompt("Run the tool"),
+    goai.WithTools(tool),
+    goai.WithMaxSteps(3),
+    langfuse.WithTracing(langfuse.Async(true)),
+    goai.WithOnFinish(func(goai.FinishInfo) { close(traceFinished) }),
+)
+```
+
+Consume `stream` normally if it started successfully. On shutdown, cancel the run and use a separate context for both waiting on the hook and flushing. If `StreamText` returns a startup error, skip the hook wait: there is no stream completion hook on that path, but Langfuse may already have submitted a partial trace.
+
+```go
+cancelRun()
+shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancelShutdown()
+if startErr == nil {
+    select {
+    case <-traceFinished:
+    case <-shutdownCtx.Done():
+        return shutdownCtx.Err()
+    }
+}
+return errors.Join(startErr, langfuse.Flush(shutdownCtx))
+```
+
+For multiple active streams, wait for each stream's own signal within the shutdown budget before calling `Flush`. The hook may not run if a provider or tool never returns, or if a panic aborts the loop or an earlier finish callback. If the wait expires, the final trace may not have been submitted; calling `Flush` would still only wait for batches already accepted.
+
 ### Usage Patterns
 
 **One-off calls** with `WithTracing()`:
@@ -167,16 +220,17 @@ langfuse.WithTracing(
     langfuse.SecretKey("sk-lf-..."),  // override env var
     langfuse.Host("https://cloud.langfuse.com"), // override env var
     langfuse.OnFlushError(func(err error) { log.Printf("langfuse flush error: %v", err) }),
-    langfuse.EagerToolSpans(true), // opt-in: real-time tool visibility (extra HTTP per tool)
+    langfuse.Async(true), // opt in to background delivery
+    langfuse.EagerToolSpans(true), // opt-in: in-progress tool visibility (may add HTTP requests)
 )
 ```
 
 ### Error Handling
 
-Tracing is best-effort. A Langfuse outage never crashes your app:
+Tracing is best-effort. Langfuse delivery failures do not fail the generation:
 
-- `OnFlushError` receives flush errors if set; otherwise they are silently discarded
-- If the LLM call fails, a partial trace is flushed with `level: ERROR`
+- Delivery errors can be reported to `OnFlushError` if set; otherwise they are silently discarded. In async mode, callbacks may run after `Flush` returns.
+- If the LLM call fails, a partial trace with `level: ERROR` is submitted for delivery.
 
 ### Concurrency
 
