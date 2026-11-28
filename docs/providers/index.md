@@ -44,7 +44,6 @@ Most use the shared `internal/openaicompat` codec (some wrappers delegate via `p
 | [DeepInfra](deepinfra.md)   | `api.deepinfra.com` | `DEEPINFRA_API_KEY`                           |
 | [OpenRouter](openrouter.md) | `openrouter.ai`     | `OPENROUTER_API_KEY`                          |
 | [Requesty](requesty.md)     | `router.requesty.ai` | `REQUESTY_API_KEY`                           |
-| [LLMTR](llmtr.md)           | `llmtr.com`          | `LLMTR_API_KEY`                               |
 | [Perplexity](perplexity.md) | `api.perplexity.ai` | `PERPLEXITY_API_KEY`                          |
 | [Cerebras](cerebras.md)     | `api.cerebras.ai`   | `CEREBRAS_API_KEY`                            |
 | [RunPod](runpod.md)         | `api.runpod.ai`     | `RUNPOD_API_KEY`                              |
@@ -56,6 +55,7 @@ Most use the shared `internal/openaicompat` codec (some wrappers delegate via `p
 | [Runcrate](runcrate.md)     | `api.runcrate.ai`   | `RUNCRATE_API_KEY`, `RUNCRATE_BASE_URL`       |
 | [Cheaper Inference](cheaperinference.md) | `api.cheaperinference.com/v1` | `CHEAPER_INFERENCE_API_KEY`, `CHEAPER_INFERENCE_BASE_URL` |
 | [CloudGPU](cloudgpu.md)     | `cloudgpu.app/v1`   | `CLOUDGPU_API_KEY`, `CLOUDGPU_BASE_URL`       |
+| [LLMTR](llmtr.md)           | `llmtr.com`          | `LLMTR_API_KEY`                               |
 
 ## Local / Custom
 

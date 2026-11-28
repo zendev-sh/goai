@@ -57,5 +57,6 @@ fmt.Println(result.Text)
 
 - Declares text-only chat capability with tool calling. Image parts are sent in the standard `image_url` format for models that accept them.
 - Streaming requests set `stream_options.include_usage` so the final chunk carries token usage.
+- Reasoning-field round-trip (`IncludeReasoningContent`, `reasoning`, `enable_thinking`, `reasoning_effort`) has not been verified against the live LLMTR API. A follow-up can record that once a live check is run.
 - The package provides `Chat` only.
 - Environment variable `LLMTR_BASE_URL` can override the default endpoint.

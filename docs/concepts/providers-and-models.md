@@ -156,11 +156,11 @@ Many providers read credentials from environment variables when explicit auth op
 | vLLM       | `github.com/zendev-sh/goai/provider/vllm`       | `Chat`, `Embedding`          |
 | Compat     | `github.com/zendev-sh/goai/provider/compat`     | `Chat`, `Embedding`          |
 | Requesty   | `github.com/zendev-sh/goai/provider/requesty`   | `Chat`                       |
-| LLMTR      | `github.com/zendev-sh/goai/provider/llmtr`      | `Chat`                       |
 | Opper      | `github.com/zendev-sh/goai/provider/opper`      | `Chat`                       |
 | Runcrate   | `github.com/zendev-sh/goai/provider/runcrate`   | `Chat`                       |
 | Cheaper Inference | `github.com/zendev-sh/goai/provider/cheaperinference` | `Chat`               |
 | CloudGPU   | `github.com/zendev-sh/goai/provider/cloudgpu`   | `Chat`                       |
+| LLMTR      | `github.com/zendev-sh/goai/provider/llmtr`      | `Chat`                       |
 | llama.cpp  | `github.com/zendev-sh/goai/provider/llamacpp`   | `Chat`, `Embedding`          |
 
 The `compat` provider works with any OpenAI-compatible API. Pass a custom base URL:

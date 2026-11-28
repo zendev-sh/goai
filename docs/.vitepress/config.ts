@@ -164,7 +164,6 @@ export default defineConfig({
                 { text: 'DeepInfra', link: '/providers/deepinfra' },
                 { text: 'OpenRouter', link: '/providers/openrouter' },
                 { text: 'Requesty', link: '/providers/requesty' },
-                { text: 'LLMTR', link: '/providers/llmtr' },
                 { text: 'Perplexity', link: '/providers/perplexity' },
                 { text: 'Cerebras', link: '/providers/cerebras' },
                 { text: 'NVIDIA NIM', link: '/providers/nvidia' },
@@ -176,6 +175,7 @@ export default defineConfig({
                 { text: 'Runcrate', link: '/providers/runcrate' },
                 { text: 'Cheaper Inference', link: '/providers/cheaperinference' },
                 { text: 'CloudGPU', link: '/providers/cloudgpu' },
+                { text: 'LLMTR', link: '/providers/llmtr' },
               ],
             },
             {
