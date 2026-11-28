@@ -1298,7 +1298,7 @@ func doGoogleJSON(ctx context.Context, o options, method, url string, body any, 
 		req.Header.Set("x-goog-api-key", token)
 	}
 
-	resp, err := httpClientFor(o).Do(req)
+	resp, err := httpc.Do(httpClientFor(o), req)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}

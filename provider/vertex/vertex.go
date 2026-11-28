@@ -464,7 +464,7 @@ func (m *chatModel) doHTTP(ctx context.Context, body map[string]any) (*http.Resp
 		}
 	}
 
-	resp, err := m.httpClient().Do(req)
+	resp, err := httpc.Do(m.httpClient(), req)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}

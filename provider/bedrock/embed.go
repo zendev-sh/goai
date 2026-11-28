@@ -521,7 +521,7 @@ func (m *embeddingModel) invokeModel(ctx context.Context, jsonBody []byte) ([]by
 		httpClient = http.DefaultClient
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := httpc.Do(httpClient, req)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}

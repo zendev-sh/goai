@@ -268,7 +268,7 @@ func (m *embeddingModel) DoEmbed(ctx context.Context, values []string, params pr
 	// named like the auth header.
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := m.httpClient().Do(req)
+	resp, err := httpc.Do(m.httpClient(), req)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}

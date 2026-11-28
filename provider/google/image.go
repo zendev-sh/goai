@@ -132,7 +132,7 @@ func (m *imagenModel) DoGenerate(ctx context.Context, params provider.ImageParam
 	// named like the auth header.
 	req.Header.Set("x-goog-api-key", token)
 
-	resp, err := m.httpClient().Do(req)
+	resp, err := httpc.Do(m.httpClient(), req)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}
@@ -280,7 +280,7 @@ func (m *geminiImageModel) DoGenerate(ctx context.Context, params provider.Image
 	// named like the auth header.
 	req.Header.Set("x-goog-api-key", token)
 
-	resp, err := m.httpClient().Do(req)
+	resp, err := httpc.Do(m.httpClient(), req)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}
