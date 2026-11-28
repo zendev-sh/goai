@@ -1,7 +1,6 @@
 package langfuse
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"math"
@@ -46,25 +45,9 @@ func TestFormatTime_NonZero(t *testing.T) {
 	}
 }
 
-func TestFlush_Empty(t *testing.T) {
-	called := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
+var testPayload = []byte(`{"batch":[{"id":"e1","type":"trace-create"}]}`)
 
-	c := newClient(srv.URL, "pub", "sec")
-	err := c.flush(t.Context())
-	if err != nil {
-		t.Fatalf("flush(empty) returned error: %v", err)
-	}
-	if called {
-		t.Error("flush(empty) should not make any HTTP request")
-	}
-}
-
-func TestFlush_SendsBatch(t *testing.T) {
+func TestSend_SendsBatch(t *testing.T) {
 	var gotAuth string
 	var gotBody map[string]any
 
@@ -78,10 +61,8 @@ func TestFlush_SendsBatch(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(srv.URL, "pub", "sec")
-	c.appendEvents([]ingestionEvent{
-		{ID: "e1", Type: eventTrace, Timestamp: "2024-01-01T00:00:00.000Z", Body: map[string]any{"id": "t1"}},
-	})
-	if err := c.flush(t.Context()); err != nil {
+
+	if err := c.send(t.Context(), testPayload); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
 
@@ -94,42 +75,15 @@ func TestFlush_SendsBatch(t *testing.T) {
 	}
 }
 
-func TestFlush_ClearsAfterSend(t *testing.T) {
-	reqCount := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reqCount++
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	c := newClient(srv.URL, "pub", "sec")
-	c.appendEvents([]ingestionEvent{
-		{ID: "e1", Type: eventTrace, Timestamp: "2024-01-01T00:00:00.000Z", Body: nil},
-	})
-	if err := c.flush(t.Context()); err != nil {
-		t.Fatalf("first flush: %v", err)
-	}
-	// second flush should be no-op
-	if err := c.flush(t.Context()); err != nil {
-		t.Fatalf("second flush: %v", err)
-	}
-
-	if reqCount != 1 {
-		t.Errorf("HTTP requests = %d, want 1 (second flush should be no-op)", reqCount)
-	}
-}
-
-func TestFlush_HTTPError(t *testing.T) {
+func TestSend_HTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer srv.Close()
 
 	c := newClient(srv.URL, "bad-pub", "bad-sec")
-	c.appendEvents([]ingestionEvent{
-		{ID: "e1", Type: eventTrace, Timestamp: "2024-01-01T00:00:00.000Z", Body: nil},
-	})
-	err := c.flush(context.Background())
+
+	err := c.send(t.Context(), testPayload)
 	if err == nil {
 		t.Error("flush with 401 response should return error")
 	}
@@ -157,12 +111,11 @@ func respondWith(t *testing.T, status int, body string) (*httptest.Server, *int3
 // invalid event (error detail shortened).
 const partial207 = `{"successes":[{"id":"ok-1","status":201}],"errors":[{"id":"bad-1","status":400,"message":"Invalid request data","error":"[\n {\"code\": \"invalid_format\", \"path\": [\"timestamp\"], \"message\": \"Invalid ISO datetime\"}\n]"}]}`
 
-func TestFlush_ReportsEventsRejectedInsideA207(t *testing.T) {
+func TestSend_ReportsEventsRejectedInsideA207(t *testing.T) {
 	srv, calls := respondWith(t, http.StatusMultiStatus, partial207)
 	c := newClient(srv.URL, "pub", "sec")
-	c.appendEvents([]ingestionEvent{{ID: "ok-1", Type: eventTrace}, {ID: "bad-1", Type: eventSpan}})
 
-	err := c.flush(t.Context())
+	err := c.send(t.Context(), []byte(`{"batch":[{"id":"ok-1"},{"id":"bad-1"}]}`))
 	var rej *IngestionRejectedError
 	if !errors.As(err, &rej) {
 		t.Fatalf("flush error = %v, want *IngestionRejectedError", err)
@@ -184,33 +137,33 @@ func TestFlush_ReportsEventsRejectedInsideA207(t *testing.T) {
 	}
 }
 
-func TestFlush_207WithOnlySuccesses(t *testing.T) {
+func TestSend_207WithOnlySuccesses(t *testing.T) {
 	srv, _ := respondWith(t, http.StatusMultiStatus, `{"successes":[{"id":"e1","status":201}],"errors":[]}`)
 	c := newClient(srv.URL, "pub", "sec")
-	c.appendEvents([]ingestionEvent{{ID: "e1", Type: eventTrace}})
-	if err := c.flush(t.Context()); err != nil {
+
+	if err := c.send(t.Context(), testPayload); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
 }
 
 // A body that is empty or not the documented shape says nothing about
 // rejection; the status already said the batch was accepted.
-func TestFlush_UnrecognizedSuccessBody(t *testing.T) {
+func TestSend_UnrecognizedSuccessBody(t *testing.T) {
 	for _, body := range []string{"", "not json", `{"unexpected":true}`} {
 		srv, _ := respondWith(t, http.StatusMultiStatus, body)
 		c := newClient(srv.URL, "pub", "sec")
-		c.appendEvents([]ingestionEvent{{ID: "e1", Type: eventTrace}})
-		if err := c.flush(t.Context()); err != nil {
+
+		if err := c.send(t.Context(), testPayload); err != nil {
 			t.Errorf("body %q: flush: %v", body, err)
 		}
 	}
 }
 
-func TestFlush_HTTPErrorIncludesResponseBody(t *testing.T) {
+func TestSend_HTTPErrorIncludesResponseBody(t *testing.T) {
 	srv, _ := respondWith(t, http.StatusUnauthorized, `{"message":"Invalid public key"}`)
 	c := newClient(srv.URL, "pub", "sec")
-	c.appendEvents([]ingestionEvent{{ID: "e1", Type: eventTrace}})
-	err := c.flush(t.Context())
+
+	err := c.send(t.Context(), testPayload)
 	if err == nil || !strings.Contains(err.Error(), "status 401") || !strings.Contains(err.Error(), "Invalid public key") {
 		t.Fatalf("flush error = %v, want status and response body", err)
 	}

@@ -2653,7 +2653,7 @@ func (m *chatModel) doHTTP(ctx context.Context, body map[string]any, toolBetas .
 		req.Header.Set("x-api-key", token)
 	}
 
-	resp, err := m.httpClient().Do(req)
+	resp, err := httpc.Do(m.httpClient(), req)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}

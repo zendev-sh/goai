@@ -31,7 +31,6 @@
 package langfuse
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -75,14 +74,22 @@ func PromptName(name string) TracingOption { return func(c *Config) { c.PromptNa
 // PromptVersion sets the Langfuse prompt version for linking generations.
 func PromptVersion(v int) TracingOption { return func(c *Config) { c.PromptVersion = v } }
 
-// OnFlushError sets a callback for flush errors (default: silently discard).
+// Async enables background delivery instead of waiting for Langfuse in hooks.
+// Pending batches are bounded; new batches are dropped when the limit is reached.
+// Short-lived programs using Async should call [Flush] after the tracing hooks
+// finish, before exiting. By default delivery is synchronous.
+func Async(b bool) TracingOption { return func(c *Config) { c.Async = b } }
+
+// OnFlushError sets a callback for encoding or delivery errors. By default it
+// runs before the hook returns. With [Async], queue overflows are also reported;
+// callbacks may run concurrently, even after [Flush] returns, and notifications
+// are dropped if all callback slots are busy.
 func OnFlushError(fn func(error)) TracingOption { return func(c *Config) { c.OnFlushError = fn } }
 
-// EagerToolSpans enables creating tool spans in OnToolCallStart (before execution)
-// with an immediate flush, providing real-time "in-progress" visibility on the
-// Langfuse dashboard. The span is finalized with output/error in OnToolCall.
-// This adds an extra HTTP round-trip per tool call -- only enable for long-running
-// tools where in-progress visibility is valuable.
+// EagerToolSpans submits an in-progress span before each tool executes. By
+// default the tool waits for that HTTP attempt. With [Async], independent tool
+// spans are sent concurrently; only the final batch waits for this trace's
+// accepted eager sends. Batches can be dropped when the queue is full.
 func EagerToolSpans(b bool) TracingOption { return func(c *Config) { c.EagerToolSpans = b } }
 
 // PublicKey overrides the LANGFUSE_PUBLIC_KEY env var.
@@ -97,11 +104,13 @@ func Host(host string) TracingOption { return func(c *Config) { c.Host = host } 
 // WithTracing returns a goai.Option that enables Langfuse tracing for a single call.
 // Credentials are read from env vars unless overridden via PublicKey/SecretKey/Host options.
 // Each invocation creates a fresh trace -- safe for concurrent use.
+// Delivery is synchronous by default. Use [Async] to opt into background delivery.
 //
 // Ordering: WithTracing wraps the singleton hooks (OnBeforeToolExecute, OnAfterToolExecute,
 // OnBeforeStep) to add observability without replacing user hooks. For this to work,
-// WithTracing must be applied AFTER any user-registered singleton hooks. Place it last
-// in the option list, or use WithOptions to group user hooks before WithTracing.
+// WithTracing must be applied AFTER any user-registered singleton hooks. An
+// additive goai.WithOnFinish hook may follow WithTracing to signal that its
+// final batch has been submitted (or dropped).
 //
 // Each call allocates a small amount of state for trace isolation. The underlying
 // HTTP connections are pooled by Go's default transport, so creating a new
@@ -152,12 +161,13 @@ type Config struct {
 	PromptName    string
 	PromptVersion int
 
-	// OnFlushError is called when the HTTP flush to Langfuse fails.
-	// If nil, flush errors are silently discarded (tracing must not crash the app).
+	// Async opts into best-effort background delivery (see [Async]).
+	Async bool
+
+	// OnFlushError receives delivery errors (see [OnFlushError]).
 	OnFlushError func(error)
 
-	// EagerToolSpans creates tool spans in OnToolCallStart with an immediate flush
-	// for real-time in-progress visibility. Adds an extra HTTP round-trip per tool call.
+	// EagerToolSpans submits in-progress tool spans (see [EagerToolSpans]).
 	EagerToolSpans bool
 }
 
@@ -232,7 +242,7 @@ func (h *Hooks) With(opts ...goai.Option) func() []goai.Option {
 // Deprecated: Use [WithTracing] instead.
 func (h *Hooks) Run() []goai.Option {
 	cfg := h.cfg
-	lc := h.client()
+	sender := delivery{client: h.client(), async: cfg.Async, onError: cfg.OnFlushError}
 
 	// Per-run state. Isolated per Run() call. Most hooks are called
 	// sequentially by goai, but OnToolCall may fire from parallel
@@ -260,7 +270,7 @@ func (h *Hooks) Run() []goai.Option {
 
 		// Per-tool state for C1-C2 (keyed by toolCallID).
 		// Written by OnAfterToolExecute, read by OnToolCall.
-		toolOutputModified = make(map[string]bool) // C1: output was modified
+		toolOutputModified = make(map[string]bool)   // C1: output was modified
 		toolErrorModified  = make(map[string]string) // C2: "injected" or "replaced"
 
 		// D1-D2: termination tracking.
@@ -305,6 +315,14 @@ func (h *Hooks) Run() []goai.Option {
 			}
 
 			step++
+			// All tools from the previous step have returned, but a panic can
+			// skip OnToolCall's cleanup. Providers may reuse call IDs in this step.
+			clear(toolEagerSpanIDs)
+			clear(toolSkipReasons)
+			clear(toolInputOverrides)
+			clear(toolCtxOverrides)
+			clear(toolOutputModified)
+			clear(toolErrorModified)
 
 			// Offset the generation start time so it appears after preceding tool spans
 			// in Langfuse's timeline. Langfuse sorts observations by startTime, so if
@@ -573,12 +591,6 @@ func (h *Hooks) Run() []goai.Option {
 			spanID := newID()
 			now := time.Now()
 
-			mu.Lock()
-			// Store span ID for OnToolCall to reuse.
-			toolEagerSpanIDs[info.ToolCallID] = spanID
-			mu.Unlock()
-
-			// Create partial span and flush immediately for real-time visibility.
 			partial := ingestionEvent{
 				ID:        newID(),
 				Type:      eventSpan,
@@ -599,9 +611,11 @@ func (h *Hooks) Run() []goai.Option {
 				},
 			}
 
-			lc.appendEvents([]ingestionEvent{partial})
-			if err := lc.flush(context.Background()); err != nil && cfg.OnFlushError != nil {
-				cfg.OnFlushError(err)
+			if sender.submit(eagerBatch, []ingestionEvent{partial}) {
+				// Without a submitted create, OnToolCall must emit a complete span.
+				mu.Lock()
+				toolEagerSpanIDs[info.ToolCallID] = spanID
+				mu.Unlock()
 			}
 		}))
 	}
@@ -799,10 +813,7 @@ func (h *Hooks) Run() []goai.Option {
 		agentSpanID = ""
 		obs = nil
 
-		lc.appendEvents(batch)
-		if err := lc.flush(context.Background()); err != nil && cfg.OnFlushError != nil {
-			cfg.OnFlushError(err)
-		}
+		sender.submit(finalBatch, batch)
 	}
 
 	return opts

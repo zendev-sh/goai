@@ -118,7 +118,7 @@ An optional `CapableModel` interface allows providers to declare feature support
 
 | Package                 | Description                                                                                                                                                                                                    |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `internal/openaicompat` | Shared request building and response parsing for all OpenAI-compatible APIs. `BuildRequest` constructs the wire format, `ParseStream`/`ParseResponse` decode responses into GoAI types. Used by 24 provider implementation files directly. |
+| `internal/openaicompat` | Shared request building and response parsing for all OpenAI-compatible APIs. `BuildRequest` constructs the wire format, `ParseStream`/`ParseResponse` decode responses into GoAI types. Used by 25 provider implementation files directly. |
 | `internal/gemini`       | Gemini schema sanitization (`SanitizeSchema`). Used by the Vertex and Google providers to conform JSON Schemas to Gemini's stricter requirements.                                                                     |
 | `internal/sse`          | Minimal SSE (Server-Sent Events) scanner. Handles `data:` prefix, blank lines, `[DONE]` sentinel. JSON deserialization is left to the caller.                                                                         |
 | `internal/httpc`        | HTTP utilities: `MustMarshalJSON`, `MustNewRequest`, `ParseDataURL`. Shared across all providers.                                                                                                                     |
@@ -141,14 +141,14 @@ These providers implement their own request/response codec because their APIs di
 
 ### OpenAI-Compatible Providers (shared codec)
 
-24 provider implementation files directly import `internal/openaicompat` (including `openai` for its Chat Completions path). Each thin wrapper:
+25 provider implementation files directly import `internal/openaicompat` (including `openai` for its Chat Completions path). Each thin wrapper:
 
 1. Sets the correct base URL and auth headers
 2. Resolves credentials from environment variables
 3. Delegates to `openaicompat.BuildRequest` / `ParseStream` / `ParseResponse`
 
 ```
-Direct openaicompat importers (24 provider files):
+Direct openaicompat importers (25 provider files):
 ├── openai/      ← Chat Completions path uses openaicompat; Responses path is native
 ├── vertex/      ← Uses OAuth2 ADC for auth
 ├── mistral/     ├── groq/       ├── xai/
@@ -157,7 +157,8 @@ Direct openaicompat importers (24 provider files):
 ├── cerebras/    ├── runpod/      ├── cloudflare/
 ├── fptcloud/    ├── nvidia/      ├── requesty/
 ├── heabsy/      ├── opper/       ├── runcrate/
-├── cheaperinference/ ├── cloudgpu/ ├── martllm/
+├── cheaperinference/ ├── cloudgpu/  ├── cheapaimodel/
+├── martllm/
 ├── compat/      ← Generic, user-configured endpoint
 
 Indirect users (via delegation):

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zendev-sh/goai/internal/httpc"
 	"github.com/zendev-sh/goai/provider"
 )
 
@@ -412,6 +413,62 @@ func TestAnthropicChat_BaseRoundTripError(t *testing.T) {
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func TestBedrockAnthropicTransportCanReleaseReplay(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		base http.RoundTripper
+		want bool
+	}{
+		{"standard", &http.Transport{}, true},
+		{"custom", roundTripperFunc(http.DefaultTransport.RoundTrip), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wrapper := &bedrockAnthropicTransport{base: tc.base}
+			if got := httpc.CanReleaseReplay(wrapper); got != tc.want {
+				t.Errorf("CanReleaseReplay = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBedrockAnthropicTransport_ReplayRewrittenBody(t *testing.T) {
+	const original = `{"stream":true,"prompt":"hello"}`
+	const rewritten = `{"prompt":"hello"}`
+	req := httpc.MustNewRequest(t.Context(), http.MethodPost, "https://bedrock.test/invoke", []byte(original))
+	read := func(r io.ReadCloser) string {
+		t.Helper()
+		defer r.Close()
+		b, err := io.ReadAll(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	transport := &bedrockAnthropicTransport{bearerToken: "test", base: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		replay, err := r.GetBody()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, copied := read(r.Body), read(replay); got != rewritten || copied != got || r.ContentLength != int64(len(got)) {
+			t.Fatalf("body=%q replay=%q ContentLength=%d", got, copied, r.ContentLength)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+	})}
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	// http.Client may still need the original payload after a 307/308.
+	replay, err := req.GetBody()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := read(replay); got != original {
+		t.Fatalf("original replay = %q, want %q", got, original)
+	}
+}
 
 // TestAnthropicChat_BearerAuth covers the bearer-token branch of the
 // SigV4/bearer transport: when WithBearerToken is set the transport sends

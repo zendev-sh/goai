@@ -26,7 +26,6 @@
 package ollama
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -35,6 +34,7 @@ import (
 	"strings"
 
 	goai "github.com/zendev-sh/goai"
+	"github.com/zendev-sh/goai/internal/httpc"
 	"github.com/zendev-sh/goai/internal/sse"
 	"github.com/zendev-sh/goai/provider"
 )
@@ -526,7 +526,7 @@ func sendPost(ctx context.Context, baseURL, path string, headers map[string]stri
 		return nil, fmt.Errorf("ollama: marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, bytes.NewReader(data))
+	req, err := httpc.NewRequest(ctx, http.MethodPost, baseURL+path, data)
 	if err != nil {
 		return nil, fmt.Errorf("ollama: create request: %w", err)
 	}
@@ -541,7 +541,7 @@ func sendPost(ctx context.Context, baseURL, path string, headers map[string]stri
 		client = http.DefaultClient
 	}
 
-	resp, err := client.Do(req)
+	resp, err := httpc.Do(client, req)
 	if err != nil {
 		return nil, fmt.Errorf("ollama: send request: %w", err)
 	}
