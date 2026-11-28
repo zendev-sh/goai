@@ -176,6 +176,7 @@ export default defineConfig({
                 { text: 'Cheaper Inference', link: '/providers/cheaperinference' },
                 { text: 'CloudGPU', link: '/providers/cloudgpu' },
                 { text: 'cheapaimodel', link: '/providers/cheapaimodel' },
+                { text: 'MartLLM', link: '/providers/martllm' },
               ],
             },
             {
